@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import Spinner from '../../components/ui/Spinner';
@@ -29,16 +29,15 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex">
-      {/* Left brand panel */}
       <div className="hidden lg:flex lg:w-[45%] bg-brand-950 text-white flex-col justify-between p-12">
         <div>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-brand-500 flex items-center justify-center font-display text-lg font-bold">
-              SR
+              TB
             </div>
-            <span className="font-display text-2xl">SelRic SA</span>
+            <span className="font-display text-2xl">TheBar</span>
           </div>
-          <p className="text-brand-300 text-sm mt-2 uppercase tracking-widest">College Bar Finance & Inventory</p>
+          <p className="text-brand-300 text-sm mt-2 uppercase tracking-widest">SelRic SA — Finance & Inventory</p>
         </div>
         <div>
           <h1 className="font-display text-4xl leading-tight">
@@ -49,18 +48,17 @@ export default function LoginPage() {
           </p>
         </div>
         <div className="text-xs text-brand-400">
-          &copy; {new Date().getFullYear()} SelRic SA. Built for efficiency.
+          &copy; {new Date().getFullYear()} TheBar by SelRic SA. Built for efficiency.
         </div>
       </div>
 
-      {/* Right form panel */}
       <div className="flex-1 flex items-center justify-center px-6 py-12 bg-white">
         <div className="w-full max-w-sm">
           <div className="lg:hidden flex items-center gap-3 mb-10">
             <div className="w-9 h-9 rounded-lg bg-brand-600 flex items-center justify-center font-display text-sm font-bold text-white">
-              SR
+              TB
             </div>
-            <span className="font-display text-xl">SelRic SA</span>
+            <span className="font-display text-xl">TheBar</span>
           </div>
 
           <h2 className="font-display text-2xl">Sign in</h2>
@@ -103,22 +101,13 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end">
-              <Link to="/auth/forgot-password" className="text-sm text-brand-600 hover:text-brand-700 font-medium">
-                Forgot password?
-              </Link>
-            </div>
-
             <button type="submit" disabled={loading} className="btn-primary w-full">
               {loading ? <Spinner size="sm" className="text-white" /> : <><LogIn size={16} /> Sign in</>}
             </button>
           </form>
 
-          <p className="text-center text-sm text-surface-500 mt-8">
-            Don't have an account?{' '}
-            <Link to="/auth/register" className="text-brand-600 hover:text-brand-700 font-medium">
-              Register
-            </Link>
+          <p className="text-center text-xs text-surface-400 mt-8">
+            Contact your administrator if you need an account.
           </p>
         </div>
       </div>
