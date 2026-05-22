@@ -5,7 +5,12 @@ import Modal from '../../components/ui/Modal';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
+import emailjs from '@emailjs/browser';
 import { Plus, Users, Trash2, Eye, EyeOff, Shield, User } from 'lucide-react';
+
+const EMAILJS_SERVICE_ID = 'service_mk5fq2w';
+const EMAILJS_TEMPLATE_ID = 'template_vabe69k';
+const EMAILJS_PUBLIC_KEY = 'dKZsPbu7hwlYMA9tg';
 
 export default function ManageUsersPage() {
   const { user: currentUser } = useAuth();
@@ -14,6 +19,7 @@ export default function ManageUsersPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showPw, setShowPw] = useState(false);
+  const [sendEmail, setSendEmail] = useState(true);
   const [formData, setFormData] = useState({
     full_name: '',
     email: '',
@@ -42,6 +48,28 @@ export default function ManageUsersPage() {
     }
   }
 
+  async function sendWelcomeEmail(name, email, password, role) {
+    try {
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        {
+          to_name: name,
+          to_email: email,
+          user_email: email,
+          user_password: password,
+          user_role: role === 'admin' ? 'Admin (Full Access)' : 'Limited (Dashboard & Inventory)',
+          login_url: window.location.origin + '/login',
+        },
+        EMAILJS_PUBLIC_KEY
+      );
+      return true;
+    } catch (err) {
+      console.error('Email send failed:', err);
+      return false;
+    }
+  }
+
   async function handleCreateUser(e) {
     e.preventDefault();
     if (!formData.email || !formData.password || !formData.full_name) {
@@ -54,7 +82,6 @@ export default function ManageUsersPage() {
     }
     setSaving(true);
     try {
-      // Create the auth user via Supabase signUp
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
@@ -67,7 +94,6 @@ export default function ManageUsersPage() {
       });
       if (authError) throw authError;
 
-      // Check if profile was auto-created by trigger, if not create it
       if (authData.user) {
         const { data: existingProfile } = await supabase
           .from('profiles')
@@ -86,7 +112,6 @@ export default function ManageUsersPage() {
             });
           if (profileError) throw profileError;
         } else {
-          // Update the profile with correct role
           await supabase
             .from('profiles')
             .update({ full_name: formData.full_name, role: formData.role })
@@ -94,7 +119,22 @@ export default function ManageUsersPage() {
         }
       }
 
-      toast.success(`Account created for ${formData.full_name}`);
+      if (sendEmail) {
+        const emailSent = await sendWelcomeEmail(
+          formData.full_name,
+          formData.email,
+          formData.password,
+          formData.role
+        );
+        if (emailSent) {
+          toast.success(`Account created & email sent to ${formData.email}`);
+        } else {
+          toast.success('Account created but email failed to send');
+        }
+      } else {
+        toast.success(`Account created for ${formData.full_name}`);
+      }
+
       setShowAddModal(false);
       setFormData({ full_name: '', email: '', password: '', role: 'limited' });
       loadUsers();
@@ -288,6 +328,16 @@ export default function ManageUsersPage() {
               <option value="limited">Limited — Dashboard & Inventory only</option>
               <option value="admin">Admin — Full access</option>
             </select>
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              id="sendEmail"
+              checked={sendEmail}
+              onChange={(e) => setSendEmail(e.target.checked)}
+              className="rounded border-surface-300"
+            />
+            <label htmlFor="sendEmail" className="text-sm text-surface-600">Send welcome email with login details</label>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setShowAddModal(false)} className="btn-ghost">Cancel</button>
