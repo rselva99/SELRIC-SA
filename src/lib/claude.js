@@ -135,4 +135,18 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
  * Smart categorization: given a transaction description and existing categories, suggest a category
  */
 export async function suggestCategory(description, existingCategories) {
-  const
+  const systemPrompt = `You categorize business transactions for a college bar.
+Given the transaction description and existing category list, return the single best matching category name.
+If none fit well, suggest a new category name.
+Return ONLY the category name as plain text, nothing else.`;
+
+  const messages = [
+    {
+      role: 'user',
+      content: `Transaction: "${description}"\n\nExisting categories:\n${existingCategories.join('\n')}\n\nReturn only the category name.`,
+    },
+  ];
+
+  const result = await callClaude(messages, systemPrompt);
+  return result.trim();
+}
