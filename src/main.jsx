@@ -6,7 +6,6 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import AppLayout from './components/layout/AppLayout';
 import LoginPage from './pages/auth/LoginPage';
-import RegisterPage from './pages/auth/RegisterPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
@@ -15,6 +14,7 @@ import ReconciliationPage from './pages/bookkeeping/ReconciliationPage';
 import AccountsPage from './pages/accounts/AccountsPage';
 import ReportsPage from './pages/reports/ReportsPage';
 import InventoryPage from './pages/inventory/InventoryPage';
+import ManageUsersPage from './pages/admin/ManageUsersPage';
 import './index.css';
 
 function ProtectedRoute({ children, adminOnly = false }) {
@@ -38,13 +38,10 @@ function App() {
       <AuthProvider>
         <DataProvider>
           <Routes>
-            {/* Public */}
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-            <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
             <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-            {/* Protected inside AppLayout */}
             <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
               <Route index element={<DashboardPage />} />
               <Route path="bookkeeping" element={<ProtectedRoute adminOnly><BookkeepingPage /></ProtectedRoute>} />
@@ -52,7 +49,10 @@ function App() {
               <Route path="accounts" element={<ProtectedRoute adminOnly><AccountsPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
               <Route path="inventory" element={<InventoryPage />} />
+              <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />
             </Route>
+
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <Toaster
             position="top-right"
