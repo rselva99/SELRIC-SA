@@ -15,7 +15,7 @@ async function callClaude(messages, systemPrompt) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 10000,
       system: systemPrompt,
       messages,
     }),
