@@ -27,7 +27,6 @@ export default function BookkeepingPage() {
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [editingTxn, setEditingTxn] = useState(null);
-  const [viewDoc, setViewDoc] = useState(null);
 
   const allCategories = useMemo(() => {
     const set = new Set([...DEFAULT_CATEGORIES, ...categories.map((c) => c.name)]);
@@ -41,7 +40,7 @@ export default function BookkeepingPage() {
       list = list.filter(
         (t) =>
           t.description?.toLowerCase().includes(q) ||
-          t.supplier_name?.toLowerCase().includes(q) ||
+          t.supplier?.toLowerCase().includes(q) ||
           t.category?.toLowerCase().includes(q)
       );
     }
@@ -59,11 +58,12 @@ export default function BookkeepingPage() {
 
         if (uploadType === 'bank') {
           const extracted = await extractBankStatement(base64, mediaType);
-          const fileUrl = await uploadFile('bank-statements', `${Date.now()}_${file.name}`, file);
+          const uploadResult = await uploadFile('bank-statements', `${Date.now()}_${file.name}`, file);
+          const fileUrl = uploadResult?.path || '';
           const stmt = await addBankStatement({
-            filename: file.name,
+            file_name: file.name,
             file_url: fileUrl,
-            uploaded_at: new Date().toISOString(),
+            upload_date: new Date().toISOString(),
             transaction_count: extracted.transactions?.length || 0,
           });
           if (extracted.transactions?.length) {
@@ -74,29 +74,29 @@ export default function BookkeepingPage() {
               await addTransaction({
                 date: t.date,
                 description: t.description || '',
-                supplier_name: t.description || '',
+                supplier: t.description || '',
                 amount: parseFloat(t.amount) || 0,
                 type: t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
                 category: suggestedCat,
                 bank_statement_id: stmt?.id,
-                status: 'unreconciled',
               });
             }
             toast.success(`Extracted ${extracted.transactions.length} transactions from ${file.name}`);
           }
         } else {
           const extracted = await extractInvoice(base64, mediaType);
-          const fileUrl = await uploadFile('invoices', `${Date.now()}_${file.name}`, file);
+          const uploadResult = await uploadFile('invoices', `${Date.now()}_${file.name}`, file);
+          const fileUrl = uploadResult?.path || '';
           const suggestedCat = typeof supplierCategories === 'object' && !Array.isArray(supplierCategories)
             ? supplierCategories[extracted.supplier_name?.toLowerCase()] || ''
             : '';
           await addInvoice({
-            filename: file.name,
+            file_name: file.name,
             file_url: fileUrl,
-            supplier_name: extracted.supplier_name || '',
+            supplier: extracted.supplier_name || '',
             amount: parseFloat(extracted.total_amount) || 0,
             date: extracted.invoice_date || new Date().toISOString().slice(0, 10),
-            due_date: extracted.due_date || '',
+            due_date: extracted.due_date || null,
             payment_terms: extracted.payment_terms || '',
             category: suggestedCat,
             status: 'pending',
@@ -206,7 +206,7 @@ export default function BookkeepingPage() {
                       <th className="table-header">Description</th>
                       <th className="table-header">Category</th>
                       <th className="table-header text-right">Amount</th>
-                      <th className="table-header">Status</th>
+                      <th className="table-header">Type</th>
                       <th className="table-header w-10"></th>
                     </tr>
                   </thead>
@@ -214,7 +214,7 @@ export default function BookkeepingPage() {
                     {filteredTransactions.map((t) => (
                       <tr key={t.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
                         <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
-                        <td className="table-cell font-medium max-w-[220px] truncate">{t.description || t.supplier_name || '—'}</td>
+                        <td className="table-cell font-medium max-w-[220px] truncate">{t.description || t.supplier || '—'}</td>
                         <td className="table-cell">
                           {editingTxn === t.id ? (
                             <select
@@ -247,9 +247,9 @@ export default function BookkeepingPage() {
                         </td>
                         <td className="table-cell">
                           <span className={`text-xs rounded-full px-2 py-0.5 ${
-                            t.status === 'reconciled' ? 'badge-green' : 'bg-amber-100 text-amber-700'
+                            t.type === 'credit' ? 'badge-green' : 'bg-amber-100 text-amber-700'
                           }`}>
-                            {t.status || 'unreconciled'}
+                            {t.type || 'debit'}
                           </span>
                         </td>
                         <td className="table-cell">
@@ -288,9 +288,9 @@ export default function BookkeepingPage() {
                       <FileText size={18} className="text-brand-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-sm">{s.filename}</p>
+                      <p className="font-medium text-sm">{s.file_name}</p>
                       <p className="text-xs text-surface-500">
-                        {formatDate(s.uploaded_at)} · {s.transaction_count || 0} transactions
+                        {formatDate(s.upload_date || s.created_at)} · {s.transaction_count || 0} transactions
                       </p>
                     </div>
                   </div>
@@ -326,7 +326,7 @@ export default function BookkeepingPage() {
                       <Receipt size={18} className="text-purple-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-sm">{inv.supplier_name || inv.filename}</p>
+                      <p className="font-medium text-sm">{inv.supplier || inv.file_name}</p>
                       <p className="text-xs text-surface-500">
                         {formatDate(inv.date)} · {formatCurrency(inv.amount)}
                         {inv.category ? ` · ${inv.category}` : ''}
