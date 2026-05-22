@@ -1,0 +1,248 @@
+import { useState, useMemo } from 'react';
+import { useData } from '../../contexts/DataContext';
+import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf } from '../../lib/reports';
+import { formatCurrency } from '../../lib/utils';
+import Spinner from '../../components/ui/Spinner';
+import toast from 'react-hot-toast';
+import {
+  Download, Eye, BarChart3, Scale, TrendingUp, Calendar,
+} from 'lucide-react';
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+export default function ReportsPage() {
+  const { transactions, categories } = useData();
+
+  const now = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [generating, setGenerating] = useState('');
+
+  // Filter transactions for selected period
+  const periodTxns = useMemo(() => {
+    return transactions.filter((t) => {
+      const d = new Date(t.date);
+      return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+    });
+  }, [transactions, selectedMonth, selectedYear]);
+
+  const summary = useMemo(() => {
+    const revenue = periodTxns
+      .filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue'))
+      .reduce((s, t) => s + Math.abs(t.amount), 0);
+    const expenses = periodTxns
+      .filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue'))
+      .reduce((s, t) => s + Math.abs(t.amount), 0);
+
+    // Group expenses by category
+    const expensesByCategory = {};
+    periodTxns
+      .filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue'))
+      .forEach((t) => {
+        const cat = t.category || 'Uncategorized';
+        expensesByCategory[cat] = (expensesByCategory[cat] || 0) + Math.abs(t.amount);
+      });
+
+    return {
+      revenue,
+      expenses,
+      netProfit: revenue - expenses,
+      expensesByCategory: Object.entries(expensesByCategory).sort((a, b) => b[1] - a[1]),
+      txnCount: periodTxns.length,
+    };
+  }, [periodTxns]);
+
+  const periodLabel = `${MONTHS[selectedMonth]} ${selectedYear}`;
+
+  function buildPdf(type) {
+    const data = { transactions: periodTxns, period: periodLabel, categories };
+    if (type === 'pnl') return generatePnLPdf(data);
+    if (type === 'balance') return generateBalanceSheetPdf(data);
+    return generateIncomeStatementPdf(data);
+  }
+
+  async function handleDownload(type) {
+    setGenerating(type + '-dl');
+    try {
+      const pdf = buildPdf(type);
+      pdf.save(`SelRic_${type}_${periodLabel.replace(' ', '_')}.pdf`);
+      toast.success('Report downloaded');
+    } catch (err) {
+      toast.error('Failed to generate report');
+      console.error(err);
+    } finally {
+      setGenerating('');
+    }
+  }
+
+  async function handlePreview(type) {
+    setGenerating(type + '-view');
+    try {
+      const pdf = buildPdf(type);
+      const blobUrl = pdf.output('bloburl');
+      window.open(blobUrl, '_blank');
+    } catch (err) {
+      toast.error('Failed to generate preview');
+      console.error(err);
+    } finally {
+      setGenerating('');
+    }
+  }
+
+  const reports = [
+    {
+      id: 'pnl',
+      title: 'Profit & Loss',
+      description: 'Revenue, expenses, and net profit for the period',
+      icon: BarChart3,
+      color: 'bg-brand-50 text-brand-600',
+    },
+    {
+      id: 'balance',
+      title: 'Balance Sheet',
+      description: 'Assets, liabilities, and equity snapshot',
+      icon: Scale,
+      color: 'bg-blue-50 text-blue-600',
+    },
+    {
+      id: 'income',
+      title: 'Income Statement',
+      description: 'Detailed income and expense breakdown',
+      icon: TrendingUp,
+      color: 'bg-purple-50 text-purple-600',
+    },
+  ];
+
+  return (
+    <div className="animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="page-title">Financial Reports</h1>
+          <p className="text-surface-500 text-sm mt-0.5">Generate and download professional financial reports</p>
+        </div>
+      </div>
+
+      {/* Period Selector */}
+      <div className="card p-4 mb-6">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Calendar size={18} className="text-surface-400" />
+          <span className="text-sm font-medium text-surface-600">Report Period:</span>
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+            className="input-field w-auto"
+          >
+            {MONTHS.map((m, i) => (
+              <option key={i} value={i}>{m}</option>
+            ))}
+          </select>
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+            className="input-field w-auto"
+          >
+            {[2024, 2025, 2026, 2027].map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Quick Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+        <div className="card p-4">
+          <p className="text-xs text-surface-500 uppercase tracking-wider">Revenue</p>
+          <p className="text-xl font-display text-green-600 mt-1">{formatCurrency(summary.revenue)}</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs text-surface-500 uppercase tracking-wider">Expenses</p>
+          <p className="text-xl font-display text-red-600 mt-1">{formatCurrency(summary.expenses)}</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs text-surface-500 uppercase tracking-wider">Net Profit</p>
+          <p className={`text-xl font-display mt-1 ${summary.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {formatCurrency(summary.netProfit)}
+          </p>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs text-surface-500 uppercase tracking-wider">Transactions</p>
+          <p className="text-xl font-display text-surface-800 mt-1">{summary.txnCount}</p>
+        </div>
+      </div>
+
+      {/* Report Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {reports.map((r) => (
+          <div key={r.id} className="card p-5">
+            <div className="flex items-start gap-3 mb-4">
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${r.color}`}>
+                <r.icon size={20} />
+              </div>
+              <div>
+                <h3 className="font-display text-lg">{r.title}</h3>
+                <p className="text-xs text-surface-500 mt-0.5">{r.description}</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleDownload(r.id)}
+                disabled={generating === r.id + '-dl'}
+                className="btn-primary flex-1 flex items-center justify-center gap-2 text-sm"
+              >
+                {generating === r.id + '-dl' ? <Spinner size="sm" className="text-white" /> : <Download size={14} />}
+                Download
+              </button>
+              <button
+                onClick={() => handlePreview(r.id)}
+                disabled={generating === r.id + '-view'}
+                className="btn-secondary flex items-center justify-center gap-2 text-sm px-3"
+                title="Preview in browser"
+              >
+                {generating === r.id + '-view' ? <Spinner size="sm" /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Expense Breakdown Table */}
+      {summary.expensesByCategory.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="px-5 py-4 border-b border-surface-100">
+            <h3 className="section-title">Expense Breakdown — {periodLabel}</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-surface-100">
+                  <th className="table-header">Category</th>
+                  <th className="table-header text-right">Amount</th>
+                  <th className="table-header text-right">% of Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.expensesByCategory.map(([cat, amount]) => (
+                  <tr key={cat} className="border-b border-surface-50 hover:bg-surface-50 transition">
+                    <td className="table-cell font-medium">{cat}</td>
+                    <td className="table-cell text-right font-mono">{formatCurrency(amount)}</td>
+                    <td className="table-cell text-right font-mono text-surface-500">
+                      {summary.expenses > 0 ? ((amount / summary.expenses) * 100).toFixed(1) : 0}%
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-surface-50 font-semibold">
+                  <td className="table-cell">Total Expenses</td>
+                  <td className="table-cell text-right font-mono">{formatCurrency(summary.expenses)}</td>
+                  <td className="table-cell text-right font-mono">100%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
