@@ -17,12 +17,12 @@ export default function BookkeepingPage() {
   const {
     transactions, bankStatements, invoices, categories,
     addTransaction, addBankStatement, addInvoice, updateTransaction,
-    deleteTransaction, uploadFile, supplierCategories, addSupplierCategory,
+    deleteTransaction, uploadFile, supplierCategories,
   } = useData();
 
   const [activeTab, setActiveTab] = useState('transactions');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadType, setUploadType] = useState('bank'); // bank | invoice
+  const [uploadType, setUploadType] = useState('bank');
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
@@ -59,27 +59,25 @@ export default function BookkeepingPage() {
 
         if (uploadType === 'bank') {
           const extracted = await extractBankStatement(base64, mediaType);
-          // Upload file to storage
-          const fileUrl = await uploadFile(file, 'bank-statements');
+          const fileUrl = await uploadFile('bank-statements', `${Date.now()}_${file.name}`, file);
           const stmt = await addBankStatement({
             filename: file.name,
             file_url: fileUrl,
             uploaded_at: new Date().toISOString(),
             transaction_count: extracted.transactions?.length || 0,
           });
-          // Add extracted transactions
           if (extracted.transactions?.length) {
             for (const t of extracted.transactions) {
-              const suggestedCat = supplierCategories.find(
-                (sc) => sc.supplier_name?.toLowerCase() === t.description?.toLowerCase()
-              );
+              const suggestedCat = typeof supplierCategories === 'object' && !Array.isArray(supplierCategories)
+                ? supplierCategories[t.description?.toLowerCase()] || ''
+                : '';
               await addTransaction({
                 date: t.date,
                 description: t.description || '',
                 supplier_name: t.description || '',
                 amount: parseFloat(t.amount) || 0,
                 type: t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
-                category: suggestedCat?.category || '',
+                category: suggestedCat,
                 bank_statement_id: stmt?.id,
                 status: 'unreconciled',
               });
@@ -88,10 +86,10 @@ export default function BookkeepingPage() {
           }
         } else {
           const extracted = await extractInvoice(base64, mediaType);
-          const fileUrl = await uploadFile(file, 'invoices');
-          const suggestedCat = supplierCategories.find(
-            (sc) => sc.supplier_name?.toLowerCase() === extracted.supplier_name?.toLowerCase()
-          );
+          const fileUrl = await uploadFile('invoices', `${Date.now()}_${file.name}`, file);
+          const suggestedCat = typeof supplierCategories === 'object' && !Array.isArray(supplierCategories)
+            ? supplierCategories[extracted.supplier_name?.toLowerCase()] || ''
+            : '';
           await addInvoice({
             filename: file.name,
             file_url: fileUrl,
@@ -100,7 +98,7 @@ export default function BookkeepingPage() {
             date: extracted.invoice_date || new Date().toISOString().slice(0, 10),
             due_date: extracted.due_date || '',
             payment_terms: extracted.payment_terms || '',
-            category: suggestedCat?.category || '',
+            category: suggestedCat,
             status: 'pending',
             extracted_data: extracted,
           });
@@ -117,24 +115,13 @@ export default function BookkeepingPage() {
   }
 
   async function handleCategorize(txnId, category) {
-    const txn = transactions.find((t) => t.id === txnId);
     await updateTransaction(txnId, { category });
-    // Remember supplier→category mapping
-    if (txn?.supplier_name && category) {
-      const existing = supplierCategories.find(
-        (sc) => sc.supplier_name?.toLowerCase() === txn.supplier_name.toLowerCase()
-      );
-      if (!existing) {
-        await addSupplierCategory({ supplier_name: txn.supplier_name, category });
-      }
-    }
     toast.success('Category updated');
     setEditingTxn(null);
   }
 
   return (
     <div className="animate-fade-in">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="page-title">Bookkeeping</h1>
@@ -159,7 +146,6 @@ export default function BookkeepingPage() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 bg-surface-100 rounded-lg p-1 mb-6 w-fit">
         {[
           { id: 'transactions', label: 'Transactions', count: transactions.length },
@@ -178,7 +164,6 @@ export default function BookkeepingPage() {
         ))}
       </div>
 
-      {/* Transactions Tab */}
       {activeTab === 'transactions' && (
         <>
           <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -285,7 +270,6 @@ export default function BookkeepingPage() {
         </>
       )}
 
-      {/* Bank Statements Tab */}
       {activeTab === 'statements' && (
         <>
           {bankStatements.length === 0 ? (
@@ -324,7 +308,6 @@ export default function BookkeepingPage() {
         </>
       )}
 
-      {/* Invoices Tab */}
       {activeTab === 'invoices' && (
         <>
           {invoices.length === 0 ? (
@@ -367,12 +350,11 @@ export default function BookkeepingPage() {
         </>
       )}
 
-      {/* Upload Modal */}
       <Modal open={showUploadModal} onClose={() => setShowUploadModal(false)} title={uploadType === 'bank' ? 'Upload Bank Statement' : 'Upload Invoice'} size="lg">
         <div className="p-1">
           <p className="text-sm text-surface-500 mb-4">
             {uploadType === 'bank'
-              ? 'Upload a bank statement PDF. Claude AI will extract all transactions automatically.'
+              ? 'Upload a bank statement PDF. Claude AI will extract all withdrawal transactions automatically.'
               : 'Upload an invoice (PDF or image). Claude AI will extract supplier, amount, date, and more.'}
           </p>
           {uploading ? (
