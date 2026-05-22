@@ -9,7 +9,8 @@ import {
   Plus, Layers, ChevronRight, Edit3, Trash2, DollarSign, BookOpen, Search,
 } from 'lucide-react';
 
-const ACCOUNT_TYPES = ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
+const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+const DISPLAY_LABELS = { asset: 'Asset', liability: 'Liability', equity: 'Equity', revenue: 'Revenue', expense: 'Expense' };
 
 export default function AccountsPage() {
   const {
@@ -22,14 +23,14 @@ export default function AccountsPage() {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [showEquityModal, setShowEquityModal] = useState(false);
   const [search, setSearch] = useState('');
-  const [formData, setFormData] = useState({ name: '', type: 'Expense', description: '' });
+  const [formData, setFormData] = useState({ name: '', type: 'expense', description: '' });
   const [equityForm, setEquityForm] = useState({ description: '', amount: '', date: new Date().toISOString().slice(0, 10) });
 
   const allAccounts = useMemo(() => {
     const custom = categories.map((c) => ({ ...c, source: 'custom' }));
     const defaults = DEFAULT_CATEGORIES
       .filter((name) => !categories.find((c) => c.name === name))
-      .map((name) => ({ id: `default-${name}`, name, type: 'Expense', source: 'default' }));
+      .map((name) => ({ id: `default-${name}`, name, type: 'expense', source: 'default' }));
     return [...custom, ...defaults].sort((a, b) => a.name.localeCompare(b.name));
   }, [categories]);
 
@@ -45,7 +46,7 @@ export default function AccountsPage() {
     const map = {};
     ACCOUNT_TYPES.forEach((t) => { map[t] = []; });
     filteredAccounts.forEach((a) => {
-      const type = a.type || 'Expense';
+      const type = (a.type || 'expense').toLowerCase();
       if (!map[type]) map[type] = [];
       map[type].push(a);
     });
@@ -74,17 +75,16 @@ export default function AccountsPage() {
     if (!formData.name.trim()) { toast.error('Name required'); return; }
     try {
       if (editingAccount) {
-        // For editing, delete old and create new since we don't have updateCategory
         await deleteCategory(editingAccount.id);
-        await addCategory(formData.name, formData.type);
+        await addCategory(formData.name, formData.type.toLowerCase());
         toast.success('Account updated');
       } else {
-        await addCategory(formData.name, formData.type);
+        await addCategory(formData.name, formData.type.toLowerCase());
         toast.success('Account created');
       }
       setShowAddModal(false);
       setEditingAccount(null);
-      setFormData({ name: '', type: 'Expense', description: '' });
+      setFormData({ name: '', type: 'expense', description: '' });
     } catch (err) {
       toast.error(err.message || 'Failed');
     }
@@ -129,7 +129,7 @@ export default function AccountsPage() {
             <DollarSign size={16} /> Equity Entry
           </button>
           <button
-            onClick={() => { setEditingAccount(null); setFormData({ name: '', type: 'Expense', description: '' }); setShowAddModal(true); }}
+            onClick={() => { setEditingAccount(null); setFormData({ name: '', type: 'expense', description: '' }); setShowAddModal(true); }}
             className="btn-primary flex items-center gap-2"
           >
             <Plus size={16} /> New Account
@@ -156,7 +156,7 @@ export default function AccountsPage() {
               if (accts.length === 0) return null;
               return (
                 <div key={type}>
-                  <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2">{type}</h3>
+                  <h3 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2">{DISPLAY_LABELS[type] || type}</h3>
                   <div className="space-y-1">
                     {accts.map((a) => (
                       <button
@@ -173,7 +173,7 @@ export default function AccountsPage() {
                           {a.source === 'custom' && (
                             <>
                               <button
-                                onClick={(e) => { e.stopPropagation(); setEditingAccount(a); setFormData({ name: a.name, type: a.type || 'Expense', description: a.description || '' }); setShowAddModal(true); }}
+                                onClick={(e) => { e.stopPropagation(); setEditingAccount(a); setFormData({ name: a.name, type: a.type || 'expense', description: a.description || '' }); setShowAddModal(true); }}
                                 className="p-1 hover:text-brand-600"
                               >
                                 <Edit3 size={12} />
@@ -210,7 +210,7 @@ export default function AccountsPage() {
                 <div>
                   <h3 className="font-display text-lg text-surface-900">{selectedAccount.name}</h3>
                   <p className="text-xs text-surface-400">
-                    {selectedAccount.type} · {ledger.length} transactions ·
+                    {DISPLAY_LABELS[selectedAccount.type] || selectedAccount.type} · {ledger.length} transactions ·
                     Total: {formatCurrency(ledger.reduce((s, t) => s + Math.abs(t.amount), 0))}
                   </p>
                 </div>
@@ -269,7 +269,7 @@ export default function AccountsPage() {
               className="input-field"
             >
               {ACCOUNT_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
+                <option key={t} value={t}>{DISPLAY_LABELS[t] || t}</option>
               ))}
             </select>
           </div>
