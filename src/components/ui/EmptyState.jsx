@@ -10,7 +10,17 @@ export default function EmptyState({ icon: Icon, title, description, action, cla
       )}
       <h3 className="font-display text-lg text-surface-700">{title}</h3>
       {description && <p className="text-sm text-surface-500 mt-1.5 max-w-sm">{description}</p>}
-      {action && <div className="mt-5">{action}</div>}
+      {action && (
+        <div className="mt-5">
+          {typeof action === 'object' && action.label ? (
+            <button onClick={action.onClick} className="btn-primary">
+              {action.label}
+            </button>
+          ) : (
+            action
+          )}
+        </div>
+      )}
     </div>
   );
 }
