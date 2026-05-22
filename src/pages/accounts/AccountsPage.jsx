@@ -13,7 +13,7 @@ const ACCOUNT_TYPES = ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
 
 export default function AccountsPage() {
   const {
-    categories, transactions, addCategory, updateCategory, deleteCategory,
+    categories, transactions, addCategory, deleteCategory,
     addTransaction,
   } = useData();
 
@@ -52,7 +52,6 @@ export default function AccountsPage() {
     return map;
   }, [filteredAccounts]);
 
-  // Ledger for selected account
   const ledger = useMemo(() => {
     if (!selectedAccount) return [];
     return transactions
@@ -75,10 +74,12 @@ export default function AccountsPage() {
     if (!formData.name.trim()) { toast.error('Name required'); return; }
     try {
       if (editingAccount) {
-        await updateCategory(editingAccount.id, formData);
+        // For editing, delete old and create new since we don't have updateCategory
+        await deleteCategory(editingAccount.id);
+        await addCategory(formData.name, formData.type);
         toast.success('Account updated');
       } else {
-        await addCategory(formData);
+        await addCategory(formData.name, formData.type);
         toast.success('Account created');
       }
       setShowAddModal(false);
@@ -103,11 +104,10 @@ export default function AccountsPage() {
       await addTransaction({
         date: equityForm.date,
         description: equityForm.description || 'Equity adjustment',
-        supplier_name: 'Equity Adjustment',
+        supplier: 'Equity Adjustment',
         amount: parseFloat(equityForm.amount),
         type: parseFloat(equityForm.amount) >= 0 ? 'credit' : 'debit',
-        category: 'Owner\'s Equity',
-        status: 'reconciled',
+        category: "Owner's Equity",
       });
       toast.success('Equity entry added');
       setShowEquityModal(false);
@@ -138,7 +138,6 @@ export default function AccountsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Accounts List */}
         <div className="lg:col-span-1">
           <div className="relative mb-4">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
@@ -198,7 +197,6 @@ export default function AccountsPage() {
           </div>
         </div>
 
-        {/* Ledger */}
         <div className="lg:col-span-2">
           {!selectedAccount ? (
             <EmptyState
@@ -233,7 +231,7 @@ export default function AccountsPage() {
                       {txns.map((t) => (
                         <div key={t.id} className="px-5 py-3 flex items-center justify-between hover:bg-surface-50 transition">
                           <div>
-                            <p className="text-sm font-medium">{t.supplier_name || t.description || '—'}</p>
+                            <p className="text-sm font-medium">{t.supplier || t.description || '—'}</p>
                             <p className="text-xs text-surface-400 font-mono">{formatDate(t.date)}</p>
                           </div>
                           <span className={`font-mono text-sm font-semibold ${t.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
@@ -250,7 +248,6 @@ export default function AccountsPage() {
         </div>
       </div>
 
-      {/* Add/Edit Account Modal */}
       <Modal open={showAddModal} onClose={() => { setShowAddModal(false); setEditingAccount(null); }} title={editingAccount ? 'Edit Account' : 'New Account'}>
         <form onSubmit={handleSaveAccount} className="space-y-4 p-1">
           <div>
@@ -293,7 +290,6 @@ export default function AccountsPage() {
         </form>
       </Modal>
 
-      {/* Equity Entry Modal */}
       <Modal open={showEquityModal} onClose={() => setShowEquityModal(false)} title="Equity Adjustment">
         <form onSubmit={handleEquityEntry} className="space-y-4 p-1">
           <p className="text-sm text-surface-500">Add a manual equity entry (owner investment, withdrawal, retained earnings adjustment).</p>
