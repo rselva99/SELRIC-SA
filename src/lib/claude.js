@@ -15,7 +15,7 @@ async function callClaude(messages, systemPrompt) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 10000,
+      max_tokens: 16000,
       system: systemPrompt,
       messages,
     }),
@@ -34,10 +34,10 @@ async function callClaude(messages, systemPrompt) {
 }
 
 /**
- * Extract transactions from a bank statement PDF
+ * Extract withdrawal transactions from a bank statement PDF
  */
 export async function extractBankStatement(base64Pdf) {
-  const systemPrompt = `You are a financial document parser. Extract ALL transactions from this bank statement.
+  const systemPrompt = `You are a financial document parser. Extract ONLY withdrawal/debit transactions from this bank statement. Ignore all deposits, credits, and incoming payments.
 Return ONLY valid JSON (no markdown, no backticks) in this exact format:
 {
   "bank_name": "string",
@@ -51,12 +51,12 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
       "description": "string",
       "reference": "string or null",
       "amount": number,
-      "type": "debit" | "credit",
+      "type": "debit",
       "balance": number or null
     }
   ]
 }
-Use negative numbers for debits. Be thorough — extract every single transaction.`;
+Use negative numbers for the amounts. Only include withdrawals, payments, fees, and debits. Do NOT include any deposits or credits.`;
 
   const messages = [
     {
@@ -72,14 +72,13 @@ Use negative numbers for debits. Be thorough — extract every single transactio
         },
         {
           type: 'text',
-          text: 'Extract all transactions from this bank statement. Return only JSON.',
+          text: 'Extract ONLY withdrawal/debit transactions from this bank statement. Ignore deposits and credits. Return only JSON.',
         },
       ],
     },
   ];
 
   const raw = await callClaude(messages, systemPrompt);
-  // Strip markdown fences if present
   const clean = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
   return JSON.parse(clean);
 }
@@ -136,18 +135,4 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
  * Smart categorization: given a transaction description and existing categories, suggest a category
  */
 export async function suggestCategory(description, existingCategories) {
-  const systemPrompt = `You categorize business transactions for a college bar.
-Given the transaction description and existing category list, return the single best matching category name.
-If none fit well, suggest a new category name.
-Return ONLY the category name as plain text, nothing else.`;
-
-  const messages = [
-    {
-      role: 'user',
-      content: `Transaction: "${description}"\n\nExisting categories:\n${existingCategories.join('\n')}\n\nReturn only the category name.`,
-    },
-  ];
-
-  const result = await callClaude(messages, systemPrompt);
-  return result.trim();
-}
+  const
