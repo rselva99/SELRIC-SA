@@ -150,9 +150,19 @@ export default function BookkeepingPage() {
 
   async function handleCategorize(txn, category) {
     await updateTransaction(txn.id, { category });
-    const supplier = txn.description || txn.supplier;
-    if (supplier && category) await learnSupplierCategory(supplier, category);
     setEditingTxn(null);
+    const supplier = txn.description || txn.supplier;
+    if (supplier && category) {
+      const propagated = await learnSupplierCategory(supplier, category);
+      if (propagated > 0)
+        toast.success(`Auto-categorized ${propagated} more transaction${propagated !== 1 ? 's' : ''}`);
+    }
+  }
+
+  async function handlePost(txnId) {
+    const propagated = await postTransaction(txnId);
+    if (propagated > 0)
+      toast.success(`Auto-categorized ${propagated} transaction${propagated !== 1 ? 's' : ''}`);
   }
 
   // ── Upload handler ────────────────────────────────────────
@@ -325,7 +335,7 @@ export default function BookkeepingPage() {
           <div className="flex items-center gap-1 justify-end">
             {showPost && (
               <button
-                onClick={() => postTransaction(t.id)}
+                onClick={() => handlePost(t.id)}
                 title="Post to Ledger"
                 className="p-1.5 text-surface-400 hover:text-brand-600 transition"
               >

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { fuzzyMatchCategory } from '../lib/utils';
@@ -17,6 +17,13 @@ export function DataProvider({ children }) {
   const [inventoryLogs, setInventoryLogs] = useState([]);
   const [supplierCategories, setSupplierCategories] = useState({});
   const [loading, setLoading] = useState(false);
+
+  // Refs give async functions a non-stale view of the latest state
+  // without needing to re-create those functions on every render.
+  const transactionsRef = useRef([]);
+  const supplierCategoriesRef = useRef({});
+  useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
+  useEffect(() => { supplierCategoriesRef.current = supplierCategories; }, [supplierCategories]);
 
   const loadAll = useCallback(async () => {
     if (!user) return;
@@ -127,8 +134,45 @@ export function DataProvider({ children }) {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
   }
 
+  // Scan every uncategorized, unposted transaction and apply the supplier map.
+  // Returns the number of transactions that were auto-assigned a category.
+  async function propagateCategories(supplierMap) {
+    const map = supplierMap || supplierCategoriesRef.current;
+    if (Object.keys(map).length === 0) return 0;
+
+    const targets = transactionsRef.current.filter((t) => !t.posted && !t.category);
+    if (targets.length === 0) return 0;
+
+    const matches = targets
+      .map((t) => ({ t, cat: fuzzyMatchCategory(t.description || t.supplier || '', map) }))
+      .filter(({ cat }) => !!cat);
+
+    await Promise.all(
+      matches.map(async ({ t, cat }) => {
+        const { data } = await supabase
+          .from('transactions')
+          .update({ category: cat })
+          .eq('id', t.id)
+          .select()
+          .single();
+        if (data) setTransactions((prev) => prev.map((x) => (x.id === data.id ? data : x)));
+      })
+    );
+
+    return matches.length;
+  }
+
   async function postTransaction(id) {
-    return updateTransaction(id, { posted: true });
+    const txn = transactionsRef.current.find((t) => t.id === id);
+    await updateTransaction(id, { posted: true });
+
+    // Learn from the posted transaction's category, then propagate to others.
+    // If there's no category, still run propagation with existing knowledge.
+    const supplier = txn?.description || txn?.supplier;
+    if (supplier && txn?.category) {
+      return learnSupplierCategory(supplier, txn.category);
+    }
+    return propagateCategories();
   }
 
   async function unpostTransaction(id) {
@@ -136,8 +180,10 @@ export function DataProvider({ children }) {
   }
 
   // --- Supplier category learning ---
+  // Saves the mapping, updates local state, propagates to all uncategorized
+  // transactions, and returns how many were auto-assigned.
   async function learnSupplierCategory(supplier, category) {
-    if (!supplier || !category || !user) return;
+    if (!supplier || !category || !user) return 0;
     try {
       await supabase
         .from('supplier_categories')
@@ -145,12 +191,12 @@ export function DataProvider({ children }) {
           { supplier, category, user_id: user.id },
           { onConflict: 'supplier,user_id' }
         );
-      setSupplierCategories((prev) => ({
-        ...prev,
-        [supplier.toLowerCase()]: category,
-      }));
+      const updatedMap = { ...supplierCategoriesRef.current, [supplier.toLowerCase()]: category };
+      setSupplierCategories(updatedMap);
+      return propagateCategories(updatedMap);
     } catch (err) {
       console.error('Failed to learn supplier category:', err);
+      return 0;
     }
   }
 
