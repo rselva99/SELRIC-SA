@@ -13,17 +13,23 @@ import {
   Menu,
   X,
   ChevronRight,
+  TrendingUp,
+  CalendarDays,
+  Megaphone,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const adminNav = [
-  { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
-  { label: 'Bookkeeping', icon: BookOpen, path: '/bookkeeping' },
-  { label: 'Ledger', icon: Landmark, path: '/ledger' },
-  { label: 'Chart of Accounts', icon: FileText, path: '/accounts' },
-  { label: 'Reports', icon: BarChart3, path: '/reports' },
-  { label: 'Inventory', icon: Package, path: '/inventory' },
-  { label: 'Manage Users', icon: Users, path: '/users' },
+  { label: 'Dashboard',         icon: LayoutDashboard, path: '/' },
+  { label: 'Bookkeeping',       icon: BookOpen,        path: '/bookkeeping' },
+  { label: 'General Ledger',    icon: Landmark,        path: '/ledger' },
+  { label: 'Chart of Accounts', icon: FileText,        path: '/accounts' },
+  { label: 'Daily Sales',       icon: TrendingUp,      path: '/sales' },
+  { label: 'Reports',           icon: BarChart3,       path: '/reports' },
+  { label: 'Calendar',          icon: CalendarDays,    path: '/calendar' },
+  { label: 'Marketing',         icon: Megaphone,       path: '/marketing' },
+  { label: 'Inventory',         icon: Package,         path: '/inventory' },
+  { label: 'Manage Users',      icon: Users,           path: '/users' },
 ];
 
 const limitedNav = [

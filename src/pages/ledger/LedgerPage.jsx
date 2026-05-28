@@ -10,8 +10,19 @@ export default function LedgerPage() {
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState('');
+  const [selectedPeriod, setSelectedPeriod] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+
+  const availablePeriods = useMemo(() => {
+    const set = new Set(
+      transactions.filter((t) => t.posted && t.date).map((t) => t.date.slice(0, 7))
+    );
+    return [...set].sort().map((key) => ({
+      key,
+      label: format(parseISO(key + '-01'), 'MMM-yy').toUpperCase(),
+    }));
+  }, [transactions]);
 
   const years = useMemo(() => {
     const set = new Set(
@@ -36,7 +47,8 @@ export default function LedgerPage() {
     return transactions
       .filter((t) => {
         if (!t.posted) return false;
-        if (selectedYear && new Date(t.date + 'T00:00:00').getFullYear() !== parseInt(selectedYear)) return false;
+        if (selectedPeriod && t.date.slice(0, 7) !== selectedPeriod) return false;
+        if (!selectedPeriod && selectedYear && new Date(t.date + 'T00:00:00').getFullYear() !== parseInt(selectedYear)) return false;
         if (selectedAccountId && t.account_id !== selectedAccountId) return false;
         if (selectedCategory && t.category !== selectedCategory) return false;
         return true;
@@ -85,7 +97,7 @@ export default function LedgerPage() {
     count: filteredPosted.length,
   }), [filteredPosted]);
 
-  const hasFilters = selectedYear || selectedAccountId || selectedCategory;
+  const hasFilters = selectedYear || selectedPeriod || selectedAccountId || selectedCategory;
 
   const accountMap = useMemo(() => {
     const m = {};
@@ -126,8 +138,19 @@ export default function LedgerPage() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <select
+          value={selectedPeriod}
+          onChange={(e) => { setSelectedPeriod(e.target.value); if (e.target.value) setSelectedYear(''); }}
+          className="input-field w-auto min-w-[130px]"
+        >
+          <option value="">All Periods</option>
+          {availablePeriods.map((p) => (
+            <option key={p.key} value={p.key}>{p.label}</option>
+          ))}
+        </select>
+
+        <select
           value={selectedYear}
-          onChange={(e) => setSelectedYear(e.target.value)}
+          onChange={(e) => { setSelectedYear(e.target.value); if (e.target.value) setSelectedPeriod(''); }}
           className="input-field w-auto"
         >
           <option value="">All Years</option>
@@ -160,7 +183,7 @@ export default function LedgerPage() {
 
         {hasFilters && (
           <button
-            onClick={() => { setSelectedYear(''); setSelectedAccountId(''); setSelectedCategory(''); }}
+            onClick={() => { setSelectedYear(''); setSelectedPeriod(''); setSelectedAccountId(''); setSelectedCategory(''); }}
             className="btn-ghost text-xs flex items-center gap-1"
           >
             <X size={12} /> Clear filters
@@ -197,6 +220,7 @@ export default function LedgerPage() {
                   <thead>
                     <tr className="border-b border-surface-100">
                       <th className="table-header">Date</th>
+                      <th className="table-header">Period</th>
                       <th className="table-header">Description</th>
                       <th className="table-header">Category</th>
                       <th className="table-header">Account</th>
@@ -210,6 +234,9 @@ export default function LedgerPage() {
                       <tr key={t.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
                         <td className="table-cell font-mono text-xs whitespace-nowrap">
                           {formatDate(t.date)}
+                        </td>
+                        <td className="table-cell font-mono text-xs text-surface-500 whitespace-nowrap">
+                          {t.date ? format(parseISO(t.date.slice(0, 7) + '-01'), 'MMM-yy').toUpperCase() : '—'}
                         </td>
                         <td className="table-cell font-medium max-w-[200px] truncate" title={t.description}>
                           {t.description || '—'}
