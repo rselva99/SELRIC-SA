@@ -59,3 +59,53 @@ export async function getPdfPageCount(file) {
   await pdf.destroy();
   return count;
 }
+
+/**
+ * Extract all readable text from a PDF using PDF.js's text layer.
+ * Works for digitally-created PDFs (the vast majority of bank statements).
+ * Returns an empty string for scanned/image-only PDFs.
+ *
+ * The returned text is typically 20–100 KB even for 9 MB PDFs — completely
+ * avoiding Vercel's 4.5 MB serverless request body limit.
+ */
+export async function extractPdfText(file) {
+  initWorker();
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pageTexts = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+
+    // Sort text items by vertical position (top → bottom) so table rows
+    // come out in reading order regardless of internal PDF object order.
+    const sorted = [...content.items].sort((a, b) => {
+      const yDiff = b.transform[5] - a.transform[5]; // descending y (PDF coords are bottom-up)
+      return Math.abs(yDiff) > 2 ? yDiff : a.transform[4] - b.transform[4]; // then left→right
+    });
+
+    // Group items into lines (same y position ± 2 units)
+    const lines = [];
+    let currentLine = [];
+    let lastY = null;
+    for (const item of sorted) {
+      const y = item.transform[5];
+      if (lastY === null || Math.abs(y - lastY) > 2) {
+        if (currentLine.length) lines.push(currentLine.map(i => i.str).join(' '));
+        currentLine = [item];
+      } else {
+        currentLine.push(item);
+      }
+      lastY = y;
+    }
+    if (currentLine.length) lines.push(currentLine.map(i => i.str).join(' '));
+
+    pageTexts.push(`--- Page ${pageNum} ---\n${lines.join('\n')}`);
+    page.cleanup();
+  }
+
+  await pdf.destroy();
+  return pageTexts.join('\n\n');
+}

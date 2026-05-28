@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { extractBankStatement, extractInvoice, extractBankStatementFromImages } from '../../lib/claude';
+import { extractBankStatementFromText, extractBankStatementFromImages, extractInvoice } from '../../lib/claude';
 import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES } from '../../lib/utils';
 import FileDropZone from '../../components/ui/FileDropZone';
 import Modal from '../../components/ui/Modal';
@@ -376,24 +376,32 @@ export default function BookkeepingPage() {
       for (const file of files) {
         const mediaType = file.type || 'application/pdf';
         if (uploadType === 'bank') {
-          // Vercel Serverless Functions have a hard 4.5 MB request body limit.
-          // A PDF > ~3.4 MB becomes > 4.5 MB in base64 and gets rejected with 504.
-          // For large PDFs: render each page to a compressed JPEG and send page-by-page.
-          // For small PDFs: send the whole file directly (preserves text-layer quality).
-          const DIRECT_LIMIT = 3 * 1024 * 1024; // 3 MB raw
+          // PRIMARY PATH: extract the PDF's text layer in the browser with PDF.js.
+          // The resulting plain text is typically 20–100 KB regardless of PDF file
+          // size, completely bypassing Vercel's 4.5 MB request body limit.
+          //
+          // FALLBACK: if the PDF is image-only (scanned paper statement) PDF.js
+          // returns no text. We then fall back to page-by-page JPEG rendering,
+          // which keeps each request under ~400 KB.
+
+          setUploadProgress('Reading PDF text…');
+          const { extractPdfText, pdfToPageImages } = await import('../../lib/pdfPages');
+          const pdfText = await extractPdfText(file);
 
           let extracted;
-          if (file.size > DIRECT_LIMIT) {
-            setUploadProgress('Rendering PDF pages…');
-            const { pdfToPageImages } = await import('../../lib/pdfPages');
-            const pageImages = await pdfToPageImages(file);
-            extracted = await extractBankStatementFromImages(pageImages, (page, total) => {
-              setUploadProgress(`Processing page ${page} of ${total}…`);
-            });
+          const hasText = pdfText.replace(/[-\s|]/g, '').length > 200;
+
+          if (hasText) {
+            // Digital PDF — send text only (tiny payload, no size issues)
+            setUploadProgress('Analyzing transactions…');
+            extracted = await extractBankStatementFromText(pdfText);
           } else {
-            setUploadProgress('Extracting transactions…');
-            const base64 = await fileToBase64(file);
-            extracted = await extractBankStatement(base64, mediaType);
+            // Scanned/image PDF — fall back to page-by-page JPEG
+            setUploadProgress('Scanned PDF — rendering pages…');
+            const pageImages = await pdfToPageImages(file);
+            extracted = await extractBankStatementFromImages(pageImages, (pg, total) => {
+              setUploadProgress(`Processing page ${pg} of ${total}…`);
+            });
           }
           setUploadProgress('');
 

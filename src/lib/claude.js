@@ -73,6 +73,56 @@ Use negative numbers for amounts. If you are unsure whether an item is a check, 
   return JSON.parse(clean);
 }
 
+// ── Text-based extraction (primary path for all bank statement PDFs) ─────────
+//
+// PDF.js extracts the text layer from a digital PDF in the browser.
+// The resulting string is typically 20–100 KB — well under Vercel's 4.5 MB
+// request body limit even for 9 MB PDFs. No base64, no images, no size issues.
+
+export async function extractBankStatementFromText(text) {
+  const systemPrompt = `You are a financial document parser. The following is text extracted from a bank statement PDF. The text preserves the original line structure but column alignment may be imperfect.
+
+STRICT EXCLUSION RULES — do NOT include:
+- Checks of any kind: paper checks, check payments, items listed under a "Checks" or "Checks Paid" section, entries with check numbers (e.g. "Check 1234", "Ck #5678", "CHK 0042", or any description that is just a number)
+- Deposits, credits, or incoming payments of any kind
+
+INCLUDE ONLY:
+- Electronic debits: ACH payments, wire transfers, direct debits
+- Card purchases and point-of-sale transactions
+- Bank fees, service charges, interest charges
+- Online bill payments (non-check)
+- ATM withdrawals
+
+Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. Amounts may appear in separate columns. Return ONLY valid JSON (no markdown, no backticks):
+{
+  "bank_name": "string",
+  "account_number_last4": "string",
+  "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
+  "opening_balance": number,
+  "closing_balance": number,
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "string",
+      "reference": "string or null",
+      "amount": number,
+      "type": "debit",
+      "balance": number or null
+    }
+  ]
+}
+Use negative numbers for amounts. If unsure whether an item is a check, exclude it.`;
+
+  const messages = [{
+    role: 'user',
+    content: `Extract only electronic withdrawal/debit transactions from this bank statement text. Exclude ALL checks and deposits.\n\n${text}`,
+  }];
+
+  const raw = await callClaude(messages, systemPrompt);
+  const clean = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  return JSON.parse(clean);
+}
+
 // ── Page-by-page extraction for large PDFs ────────────────────────────────
 //
 // Vercel Serverless Functions have a hard 4.5 MB request body limit that
