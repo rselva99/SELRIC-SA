@@ -3,10 +3,10 @@ import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Check, X, Link2, Unlink, Search } from 'lucide-react';
+import { ArrowLeft, Check, X, Link2, Unlink, Search, Eye } from 'lucide-react';
 
 export default function ReconciliationPage() {
-  const { transactions, invoices, updateTransaction, updateInvoice } = useData();
+  const { transactions, invoices, updateTransaction, updateInvoice, getSignedUrl } = useData();
   const [selectedTxn, setSelectedTxn] = useState(null);
   const [selectedInv, setSelectedInv] = useState(null);
   const [search, setSearch] = useState('');
@@ -166,15 +166,20 @@ export default function ReconciliationPage() {
                         {formatCurrency(inv.amount)}
                       </p>
                       {inv.file_url && (
-                        <a
-                          href={inv.file_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-xs text-brand-600 hover:underline"
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const url = await getSignedUrl('invoices', inv.file_url);
+                              window.open(url, '_blank', 'noreferrer');
+                            } catch {
+                              toast.error('Could not open file');
+                            }
+                          }}
+                          className="text-xs text-brand-600 hover:underline flex items-center gap-1"
                         >
-                          View file
-                        </a>
+                          <Eye size={12} /> View file
+                        </button>
                       )}
                     </div>
                   </div>

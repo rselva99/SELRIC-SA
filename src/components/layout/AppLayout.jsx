@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   LayoutDashboard,
   BookOpen,
+  Landmark,
   FileText,
   BarChart3,
   Package,
@@ -18,6 +19,7 @@ import { cn } from '../../lib/utils';
 const adminNav = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { label: 'Bookkeeping', icon: BookOpen, path: '/bookkeeping' },
+  { label: 'Ledger', icon: Landmark, path: '/ledger' },
   { label: 'Chart of Accounts', icon: FileText, path: '/accounts' },
   { label: 'Reports', icon: BarChart3, path: '/reports' },
   { label: 'Inventory', icon: Package, path: '/inventory' },

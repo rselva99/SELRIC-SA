@@ -8,9 +8,9 @@ import toast from 'react-hot-toast';
 import emailjs from '@emailjs/browser';
 import { Plus, Users, Trash2, Eye, EyeOff, Shield, User } from 'lucide-react';
 
-const EMAILJS_SERVICE_ID = 'service_mk5fq2w';
-const EMAILJS_TEMPLATE_ID = 'template_vabe69k';
-const EMAILJS_PUBLIC_KEY = 'dKZsPbu7hwlYMA9tg';
+const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
+const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
+const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
 export default function ManageUsersPage() {
   const { user: currentUser } = useAuth();

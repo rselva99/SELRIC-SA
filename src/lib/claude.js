@@ -1,41 +1,19 @@
-const CLAUDE_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-
-/**
- * Send a document (PDF as base64 or image) to Claude for extraction
- */
 async function callClaude(messages, systemPrompt) {
-  const response = await fetch(CLAUDE_API_URL, {
+  const response = await fetch('/api/claude', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': CLAUDE_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 32000,
-      system: systemPrompt,
-      messages,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, systemPrompt }),
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Claude API error: ${response.status} — ${err}`);
+    const err = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(`Claude API error: ${response.status} — ${err.error}`);
   }
 
   const data = await response.json();
-  return data.content
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n');
+  return data.text;
 }
 
-/**
- * Extract withdrawal transactions from a bank statement PDF
- */
 export async function extractBankStatement(base64Pdf) {
   const systemPrompt = `You are a financial document parser. Extract ONLY withdrawal/debit transactions from this bank statement. Ignore all deposits, credits, and incoming payments.
 Return ONLY valid JSON (no markdown, no backticks) in this exact format:
@@ -83,9 +61,6 @@ Use negative numbers for the amounts. Only include withdrawals, payments, fees, 
   return JSON.parse(clean);
 }
 
-/**
- * Extract data from an invoice (PDF or image)
- */
 export async function extractInvoice(base64Data, mediaType) {
   const systemPrompt = `You are an invoice data extractor. Extract key information from this invoice.
 Return ONLY valid JSON (no markdown, no backticks) in this exact format:
@@ -131,9 +106,6 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
   return JSON.parse(clean);
 }
 
-/**
- * Smart categorization: given a transaction description and existing categories, suggest a category
- */
 export async function suggestCategory(description, existingCategories) {
   const systemPrompt = `You categorize business transactions for a college bar.
 Given the transaction description and existing category list, return the single best matching category name.

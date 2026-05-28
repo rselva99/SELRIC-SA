@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
-import { DEFAULT_CATEGORIES } from '../lib/utils';
+import { fuzzyMatchCategory } from '../lib/utils';
 
 const DataContext = createContext({});
 
@@ -41,10 +41,10 @@ export function DataProvider({ children }) {
       setProducts(prodRes.data || []);
       setInventoryLogs(logRes.data || []);
 
-      // Build supplier->category map
+      // Build supplier→category lookup map (column is 'supplier', not 'supplier_name')
       const map = {};
       (scRes.data || []).forEach((sc) => {
-        map[sc.supplier_name.toLowerCase()] = sc.category;
+        if (sc.supplier) map[sc.supplier.toLowerCase()] = sc.category;
       });
       setSupplierCategories(map);
     } catch (err) {
@@ -100,18 +100,10 @@ export function DataProvider({ children }) {
     if (error) throw error;
     setTransactions((prev) => [data, ...prev]);
 
-    // Remember supplier -> category
-    if (txn.supplier_name && txn.category) {
-      await supabase
-        .from('supplier_categories')
-        .upsert(
-          { supplier_name: txn.supplier_name, category: txn.category },
-          { onConflict: 'supplier_name' }
-        );
-      setSupplierCategories((prev) => ({
-        ...prev,
-        [txn.supplier_name.toLowerCase()]: txn.category,
-      }));
+    // Learn supplier→category if both are present
+    const supplier = txn.supplier || txn.description;
+    if (supplier && txn.category) {
+      await learnSupplierCategory(supplier, txn.category);
     }
 
     return data;
@@ -135,11 +127,50 @@ export function DataProvider({ children }) {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
   }
 
+  async function postTransaction(id) {
+    return updateTransaction(id, { posted: true });
+  }
+
+  async function unpostTransaction(id) {
+    return updateTransaction(id, { posted: false });
+  }
+
+  // --- Supplier category learning ---
+  async function learnSupplierCategory(supplier, category) {
+    if (!supplier || !category || !user) return;
+    try {
+      await supabase
+        .from('supplier_categories')
+        .upsert(
+          { supplier, category, user_id: user.id },
+          { onConflict: 'supplier,user_id' }
+        );
+      setSupplierCategories((prev) => ({
+        ...prev,
+        [supplier.toLowerCase()]: category,
+      }));
+    } catch (err) {
+      console.error('Failed to learn supplier category:', err);
+    }
+  }
+
   // --- Invoice CRUD ---
   async function addInvoice(invoice) {
     const { data, error } = await supabase.from('invoices').insert(invoice).select().single();
     if (error) throw error;
     setInvoices((prev) => [data, ...prev]);
+    return data;
+  }
+
+  async function updateInvoice(id, updates) {
+    const { data, error } = await supabase
+      .from('invoices')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    setInvoices((prev) => prev.map((inv) => (inv.id === id ? data : inv)));
     return data;
   }
 
@@ -183,7 +214,6 @@ export function DataProvider({ children }) {
     if (error) throw error;
     setInventoryLogs((prev) => [data, ...prev]);
 
-    // Update product stock
     if (log.product_id) {
       const product = products.find((p) => p.id === log.product_id);
       if (product) {
@@ -192,7 +222,6 @@ export function DataProvider({ children }) {
         else if (log.type === 'sold' || log.type === 'used' || log.type === 'waste')
           newQty -= log.quantity;
         else if (log.type === 'adjustment') newQty = log.quantity;
-
         await updateProduct(log.product_id, { current_stock: Math.max(0, newQty) });
       }
     }
@@ -200,10 +229,10 @@ export function DataProvider({ children }) {
     return data;
   }
 
-  // --- Supplier category suggestion ---
-  function getSuggestedCategory(supplierName) {
-    if (!supplierName) return null;
-    return supplierCategories[supplierName.toLowerCase()] || null;
+  // --- Fuzzy category suggestion ---
+  function getSuggestedCategory(description) {
+    if (!description) return '';
+    return fuzzyMatchCategory(description, supplierCategories);
   }
 
   // --- File storage ---
@@ -216,9 +245,10 @@ export function DataProvider({ children }) {
     return data;
   }
 
-  function getFileUrl(bucket, path) {
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    return data.publicUrl;
+  async function getSignedUrl(bucket, path) {
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 3600);
+    if (error) throw error;
+    return data.signedUrl;
   }
 
   const value = {
@@ -238,7 +268,11 @@ export function DataProvider({ children }) {
     addTransaction,
     updateTransaction,
     deleteTransaction,
+    postTransaction,
+    unpostTransaction,
+    learnSupplierCategory,
     addInvoice,
+    updateInvoice,
     addBankStatement,
     addProduct,
     updateProduct,
@@ -246,7 +280,7 @@ export function DataProvider({ children }) {
     addInventoryLog,
     getSuggestedCategory,
     uploadFile,
-    getFileUrl,
+    getSignedUrl,
     refresh: loadAll,
   };
 

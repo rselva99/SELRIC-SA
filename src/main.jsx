@@ -15,6 +15,7 @@ import AccountsPage from './pages/accounts/AccountsPage';
 import ReportsPage from './pages/reports/ReportsPage';
 import InventoryPage from './pages/inventory/InventoryPage';
 import ManageUsersPage from './pages/admin/ManageUsersPage';
+import LedgerPage from './pages/ledger/LedgerPage';
 import './index.css';
 
 function ProtectedRoute({ children, adminOnly = false }) {
@@ -46,6 +47,7 @@ function App() {
               <Route index element={<DashboardPage />} />
               <Route path="bookkeeping" element={<ProtectedRoute adminOnly><BookkeepingPage /></ProtectedRoute>} />
               <Route path="bookkeeping/reconcile" element={<ProtectedRoute adminOnly><ReconciliationPage /></ProtectedRoute>} />
+              <Route path="ledger" element={<ProtectedRoute adminOnly><LedgerPage /></ProtectedRoute>} />
               <Route path="accounts" element={<ProtectedRoute adminOnly><AccountsPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
               <Route path="inventory" element={<InventoryPage />} />

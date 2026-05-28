@@ -309,3 +309,112 @@ ON CONFLICT DO NOTHING;
 -- ==========================================
 -- DONE! Your database is ready.
 -- ==========================================
+
+-- ============================================================
+-- SECURITY MIGRATION — Run this block in Supabase SQL Editor
+-- to enforce role-based access control at the database level.
+-- ============================================================
+
+-- Fix new-user trigger: never trust role from metadata (prevents self-registration as admin)
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name, email, role)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
+    COALESCE(NEW.email, ''),
+    'limited'
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Helper function to check admin role WITHOUT querying profiles through RLS.
+-- SECURITY DEFINER bypasses RLS on the internal SELECT, breaking the recursion
+-- that would occur if policies on 'profiles' subqueried 'profiles' directly.
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'
+  )
+$$;
+
+-- Profiles: admins have full access; non-admins can update their own row but not their role
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+DROP POLICY IF EXISTS "Admins can manage all profiles" ON profiles;
+
+CREATE POLICY "Admins can manage all profiles"
+  ON profiles FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+CREATE POLICY "Users can update own profile"
+  ON profiles FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id AND role = 'limited');
+
+-- Financial tables: admin-only access (uses is_admin() to avoid any recursive checks)
+DROP POLICY IF EXISTS "Authenticated users can CRUD categories" ON categories;
+CREATE POLICY "Admins can CRUD categories"
+  ON categories FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Authenticated users can CRUD accounts" ON accounts;
+CREATE POLICY "Admins can CRUD accounts"
+  ON accounts FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Authenticated users can CRUD transactions" ON transactions;
+CREATE POLICY "Admins can CRUD transactions"
+  ON transactions FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Authenticated users can CRUD invoices" ON invoices;
+CREATE POLICY "Admins can CRUD invoices"
+  ON invoices FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Authenticated users can CRUD bank_statements" ON bank_statements;
+CREATE POLICY "Admins can CRUD bank_statements"
+  ON bank_statements FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Authenticated users can CRUD supplier_categories" ON supplier_categories;
+CREATE POLICY "Admins can CRUD supplier_categories"
+  ON supplier_categories FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- Inventory tables: all authenticated users (limited users need these)
+DROP POLICY IF EXISTS "Authenticated users can CRUD products" ON products;
+CREATE POLICY "Authenticated users can CRUD products"
+  ON products FOR ALL TO authenticated
+  USING (true)
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Authenticated users can CRUD inventory_logs" ON inventory_logs;
+CREATE POLICY "Authenticated users can CRUD inventory_logs"
+  ON inventory_logs FOR ALL TO authenticated
+  USING (true)
+  WITH CHECK (true);
+
+-- Storage: make buckets private and restrict to authenticated users
+-- Run these separately in Supabase SQL Editor:
+-- UPDATE storage.buckets SET public = false WHERE id IN ('documents', 'invoices', 'bank-statements');
+
+-- ============================================================
+-- END SECURITY MIGRATION
+-- ============================================================
