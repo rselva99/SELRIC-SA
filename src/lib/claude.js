@@ -15,7 +15,19 @@ async function callClaude(messages, systemPrompt) {
 }
 
 export async function extractBankStatement(base64Pdf) {
-  const systemPrompt = `You are a financial document parser. Extract ONLY withdrawal/debit transactions from this bank statement. Ignore all deposits, credits, and incoming payments.
+  const systemPrompt = `You are a financial document parser. Extract electronic withdrawal/debit transactions from this bank statement.
+
+STRICT EXCLUSION RULES — do NOT include any of the following:
+- Checks of any kind: paper checks, check payments, items listed under a "Checks" or "Checks Paid" section, entries with check numbers (e.g. "Check 1234", "Ck #5678", "CHK 0042", or any item whose description is just a number)
+- Deposits, credits, or incoming payments of any kind
+
+INCLUDE ONLY:
+- Electronic debits: ACH payments, wire transfers, direct debits
+- Card purchases and point-of-sale transactions
+- Bank fees, service charges, interest charges
+- Online bill payments (non-check)
+- ATM withdrawals
+
 Return ONLY valid JSON (no markdown, no backticks) in this exact format:
 {
   "bank_name": "string",
@@ -34,7 +46,7 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
     }
   ]
 }
-Use negative numbers for the amounts. Only include withdrawals, payments, fees, and debits. Do NOT include any deposits or credits.`;
+Use negative numbers for amounts. If you are unsure whether an item is a check, exclude it.`;
 
   const messages = [
     {
@@ -50,7 +62,7 @@ Use negative numbers for the amounts. Only include withdrawals, payments, fees, 
         },
         {
           type: 'text',
-          text: 'Extract ONLY withdrawal/debit transactions from this bank statement. Ignore deposits and credits. Return only JSON.',
+          text: 'Extract only electronic withdrawal/debit transactions. Exclude ALL checks (any item in a Checks section, any check number, any paper check payment). Exclude all deposits and credits. Return only JSON.',
         },
       ],
     },
