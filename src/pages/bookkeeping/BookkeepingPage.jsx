@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { extractBankStatement, extractInvoice } from '../../lib/claude';
 import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES } from '../../lib/utils';
 import FileDropZone from '../../components/ui/FileDropZone';
@@ -12,7 +13,7 @@ import { Link } from 'react-router-dom';
 import {
   FileText, Receipt, ArrowRightLeft, Search, Eye, Trash2,
   ChevronDown, ChevronRight, BookCheck, RotateCcw, PenLine,
-  FolderOpen, Folder,
+  FolderOpen, Folder, MessageSquare,
 } from 'lucide-react';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
@@ -54,7 +55,88 @@ function PageBar({ page, total, pageSize, onPage }) {
   );
 }
 
+// ── Notes panel — rendered as an extra <tr> below any transaction row ────────
+function NotesPanel({ txnId, currentUserId, isAdmin, profileMap, onCountChange }) {
+  const [notes,   setNotes]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [input,   setInput]   = useState('');
+  const [saving,  setSaving]  = useState(false);
+
+  useEffect(() => {
+    supabase.from('transaction_notes').select('*')
+      .eq('transaction_id', txnId).order('created_at', { ascending: false })
+      .then(({ data }) => { setNotes(data || []); setLoading(false); });
+  }, [txnId]);
+
+  async function addNote() {
+    const text = input.trim();
+    if (!text) return;
+    setSaving(true);
+    const { data, error } = await supabase.from('transaction_notes')
+      .insert({ transaction_id: txnId, content: text, user_id: currentUserId })
+      .select().single();
+    if (!error && data) {
+      setNotes(prev => [data, ...prev]);
+      onCountChange(txnId, notes.length + 1);
+    }
+    setInput('');
+    setSaving(false);
+  }
+
+  async function deleteNote(noteId) {
+    await supabase.from('transaction_notes').delete().eq('id', noteId);
+    const updated = notes.filter(n => n.id !== noteId);
+    setNotes(updated);
+    onCountChange(txnId, updated.length);
+  }
+
+  return (
+    <div className="px-5 py-3 bg-blue-50/40 border-t border-blue-100">
+      {/* Add note */}
+      <div className="flex gap-2 mb-3">
+        <input
+          type="text" value={input} autoFocus
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') addNote(); }}
+          placeholder="Add a note… (Enter to submit)"
+          className="input-field text-sm py-1.5 flex-1"
+        />
+        <button onClick={addNote} disabled={saving || !input.trim()} className="btn-primary text-xs px-3 py-1.5">
+          {saving ? <Spinner size="sm" className="text-white" /> : 'Add'}
+        </button>
+      </div>
+
+      {/* Thread */}
+      {loading ? (
+        <div className="flex justify-center py-2"><Spinner size="sm" /></div>
+      ) : notes.length === 0 ? (
+        <p className="text-xs text-surface-400 text-center py-1">No notes yet.</p>
+      ) : (
+        <div className="space-y-2 max-h-52 overflow-y-auto">
+          {notes.map(note => (
+            <div key={note.id} className="flex items-start gap-2">
+              <div className="flex-1 bg-white rounded-lg px-3 py-2 border border-surface-100 text-xs">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="font-semibold text-surface-700">{profileMap[note.user_id] || 'User'}</span>
+                  <span className="text-surface-400">{formatDate(note.created_at)}</span>
+                </div>
+                <p className="text-surface-600">{note.content}</p>
+              </div>
+              {(note.user_id === currentUserId || isAdmin) && (
+                <button onClick={() => deleteNote(note.id)} className="p-1 mt-1 text-surface-300 hover:text-red-500 transition shrink-0">
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BookkeepingPage() {
+  const { user, isAdmin } = useAuth();
   const {
     categories, supplierCategories,
     addTransaction, updateTransaction, deleteTransaction,
@@ -75,6 +157,20 @@ export default function BookkeepingPage() {
   const [editingTxn, setEditingTxn]     = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [collapsedYears, setCollapsedYears]   = useState(new Set());
+
+  // ── Notes state ───────────────────────────────────────────────────────────
+  const [activeNotesTxnId, setActiveNotesTxnId] = useState(null);
+  const [noteCounts, setNoteCounts]             = useState({});
+  const [profileMap, setProfileMap]             = useState({});
+
+  useEffect(() => {
+    supabase.from('profiles').select('id, full_name')
+      .then(({ data }) => {
+        const m = {};
+        (data || []).forEach(p => { m[p.id] = p.full_name || 'Unknown'; });
+        setProfileMap(m);
+      });
+  }, []);
 
   // ── Transactions (unposted) — paginated by bank statement ─────────────────
   const [stmts, setStmts]                   = useState([]);
@@ -127,9 +223,10 @@ export default function BookkeepingPage() {
 
     // 2. Fetch ALL unposted transactions for these statements, bypassing the
     //    1,000-row cap by looping with .range() until no more rows are returned.
+    let stmtTxnData = [];
     if (stmtData?.length) {
       const ids = stmtData.map(s => s.id);
-      const txnData = await fetchAllPages((f, t) => {
+      stmtTxnData = await fetchAllPages((f, t) => {
         let q = supabase.from('transactions').select('*')
           .eq('posted', false).in('bank_statement_id', ids)
           .order('date', { ascending: false }).range(f, t);
@@ -138,7 +235,7 @@ export default function BookkeepingPage() {
         return q;
       });
       const grouped = {};
-      txnData.forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
+      stmtTxnData.forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
       setTxnsByStmt(grouped);
     } else {
       setTxnsByStmt({});
@@ -155,6 +252,16 @@ export default function BookkeepingPage() {
     });
     setManualTxns(manData);
 
+    // 4. Load note counts for all visible transactions in one query
+    const allIds = [...stmtTxnData, ...manData].map(t => t.id);
+    if (allIds.length) {
+      const { data: nc } = await supabase
+        .from('transaction_notes').select('transaction_id').in('transaction_id', allIds);
+      const counts = {};
+      (nc || []).forEach(n => { counts[n.transaction_id] = (counts[n.transaction_id] || 0) + 1; });
+      setNoteCounts(prev => ({ ...prev, ...counts }));
+    }
+
     setStmtsLoading(false);
   }, [stmtsPage, search, filterCategory]);
 
@@ -165,6 +272,15 @@ export default function BookkeepingPage() {
       .eq('posted', true).order('date', { ascending: false }).range(from, from + POSTED_PAGE_SIZE - 1);
     setPostedTxns(data || []);
     setPostedTotal(count || 0);
+    // Load note counts for this page of posted transactions
+    const ids = (data || []).map(t => t.id);
+    if (ids.length) {
+      const { data: nc } = await supabase
+        .from('transaction_notes').select('transaction_id').in('transaction_id', ids);
+      const counts = {};
+      (nc || []).forEach(n => { counts[n.transaction_id] = (counts[n.transaction_id] || 0) + 1; });
+      setNoteCounts(prev => ({ ...prev, ...counts }));
+    }
     setPostedLoading(false);
   }, [postedPage]);
 
@@ -305,37 +421,69 @@ export default function BookkeepingPage() {
   // ── Shared row renderer ───────────────────────────────────────────────────
 
   function TxnRow({ t, showPost = false, showUnpost = false }) {
+    const noteCount   = noteCounts[t.id] || 0;
+    const notesOpen   = activeNotesTxnId === t.id;
     return (
-      <tr className="border-b border-surface-50 hover:bg-surface-50 transition">
-        <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
-        <td className="table-cell font-medium max-w-[200px] truncate" title={t.description}>{t.description||'—'}</td>
-        <td className="table-cell">
-          {editingTxn === t.id ? (
-            <select autoFocus defaultValue={t.category||''} onChange={e => handleCategorize(t, e.target.value)} onBlur={() => setEditingTxn(null)} className="input-field text-xs py-1 w-44">
-              <option value="">Uncategorized</option>
-              {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          ) : (
-            <button onClick={() => setEditingTxn(t.id)}
-              className={`text-xs rounded-full px-2.5 py-0.5 transition ${t.category ? 'badge-green cursor-pointer hover:opacity-80' : 'bg-surface-100 text-surface-500 hover:bg-surface-200 cursor-pointer'}`}>
-              {t.category||'+ Categorize'}
-            </button>
-          )}
-        </td>
-        <td className={`table-cell text-right font-mono text-sm ${t.type==='credit'?'text-green-600':'text-red-600'}`}>
-          {t.type==='credit'?'+':'−'}{formatCurrency(Math.abs(t.amount))}
-        </td>
-        <td className="table-cell">
-          <span className={`text-xs rounded-full px-2 py-0.5 ${t.type==='credit'?'badge-green':'bg-amber-100 text-amber-700'}`}>{t.type}</span>
-        </td>
-        <td className="table-cell">
-          <div className="flex items-center gap-1 justify-end">
-            {showPost   && <button onClick={() => handlePost(t)}   title="Post to Ledger" className="p-1.5 text-surface-400 hover:text-brand-600 transition"><BookCheck size={14} /></button>}
-            {showUnpost && <button onClick={() => handleUnpost(t.id)} title="Unpost" className="p-1.5 text-surface-400 hover:text-amber-600 transition"><RotateCcw size={14} /></button>}
-            <button onClick={() => handleDeleteTxn(t)} title="Delete" className="p-1.5 text-surface-400 hover:text-red-500 transition"><Trash2 size={14} /></button>
-          </div>
-        </td>
-      </tr>
+      <>
+        <tr className={`border-b border-surface-50 transition ${notesOpen ? 'bg-blue-50/30' : 'hover:bg-surface-50'}`}>
+          <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
+          <td className="table-cell font-medium max-w-[200px] truncate" title={t.description}>{t.description||'—'}</td>
+          <td className="table-cell">
+            {editingTxn === t.id ? (
+              <select autoFocus defaultValue={t.category||''} onChange={e => handleCategorize(t, e.target.value)} onBlur={() => setEditingTxn(null)} className="input-field text-xs py-1 w-44">
+                <option value="">Uncategorized</option>
+                {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            ) : (
+              <button onClick={() => setEditingTxn(t.id)}
+                className={`text-xs rounded-full px-2.5 py-0.5 transition ${t.category ? 'badge-green cursor-pointer hover:opacity-80' : 'bg-surface-100 text-surface-500 hover:bg-surface-200 cursor-pointer'}`}>
+                {t.category||'+ Categorize'}
+              </button>
+            )}
+          </td>
+          <td className={`table-cell text-right font-mono text-sm ${t.type==='credit'?'text-green-600':'text-red-600'}`}>
+            {t.type==='credit'?'+':'−'}{formatCurrency(Math.abs(t.amount))}
+          </td>
+          <td className="table-cell">
+            <span className={`text-xs rounded-full px-2 py-0.5 ${t.type==='credit'?'badge-green':'bg-amber-100 text-amber-700'}`}>{t.type}</span>
+          </td>
+          <td className="table-cell">
+            <div className="flex items-center gap-1 justify-end">
+              {/* Note icon — filled/highlighted when notes exist */}
+              <button
+                onClick={() => setActiveNotesTxnId(notesOpen ? null : t.id)}
+                title={noteCount ? `${noteCount} note${noteCount!==1?'s':''}` : 'Add note'}
+                className={`p-1.5 relative transition ${noteCount > 0 ? 'text-brand-600' : 'text-surface-300 hover:text-surface-500'}`}
+              >
+                <MessageSquare size={14} />
+                {noteCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 bg-brand-600 text-white rounded-full text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">
+                    {noteCount > 9 ? '9+' : noteCount}
+                  </span>
+                )}
+              </button>
+              {showPost   && <button onClick={() => handlePost(t)}      title="Post to Ledger" className="p-1.5 text-surface-400 hover:text-brand-600 transition"><BookCheck size={14} /></button>}
+              {showUnpost && <button onClick={() => handleUnpost(t.id)} title="Unpost"         className="p-1.5 text-surface-400 hover:text-amber-600 transition"><RotateCcw size={14} /></button>}
+              <button onClick={() => handleDeleteTxn(t)} title="Delete" className="p-1.5 text-surface-400 hover:text-red-500 transition"><Trash2 size={14} /></button>
+            </div>
+          </td>
+        </tr>
+        {notesOpen && (
+          <tr>
+            <td colSpan={6} className="p-0">
+              <NotesPanel
+                txnId={t.id}
+                currentUserId={user?.id}
+                isAdmin={isAdmin}
+                profileMap={profileMap}
+                onCountChange={(txnId, count) =>
+                  setNoteCounts(prev => ({ ...prev, [txnId]: Math.max(0, count) }))
+                }
+              />
+            </td>
+          </tr>
+        )}
+      </>
     );
   }
 
