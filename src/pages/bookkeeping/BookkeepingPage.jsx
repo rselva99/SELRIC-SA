@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { extractBankStatement, extractInvoice } from '../../lib/claude';
+import { extractBankStatement, extractInvoice, extractBankStatementFromImages } from '../../lib/claude';
 import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES } from '../../lib/utils';
 import FileDropZone from '../../components/ui/FileDropZone';
 import Modal from '../../components/ui/Modal';
@@ -150,8 +150,9 @@ export default function BookkeepingPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
   const [uploadType, setUploadType]     = useState('bank');
-  const [uploading, setUploading]       = useState(false);
-  const [savingManual, setSavingManual] = useState(false);
+  const [uploading, setUploading]         = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
+  const [savingManual, setSavingManual]   = useState(false);
   const [search, setSearch]             = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [editingTxn, setEditingTxn]     = useState(null);
@@ -373,10 +374,29 @@ export default function BookkeepingPage() {
     setUploading(true);
     try {
       for (const file of files) {
-        const base64 = await fileToBase64(file);
         const mediaType = file.type || 'application/pdf';
         if (uploadType === 'bank') {
-          const extracted = await extractBankStatement(base64, mediaType);
+          // Vercel Serverless Functions have a hard 4.5 MB request body limit.
+          // A PDF > ~3.4 MB becomes > 4.5 MB in base64 and gets rejected with 504.
+          // For large PDFs: render each page to a compressed JPEG and send page-by-page.
+          // For small PDFs: send the whole file directly (preserves text-layer quality).
+          const DIRECT_LIMIT = 3 * 1024 * 1024; // 3 MB raw
+
+          let extracted;
+          if (file.size > DIRECT_LIMIT) {
+            setUploadProgress('Rendering PDF pages…');
+            const { pdfToPageImages } = await import('../../lib/pdfPages');
+            const pageImages = await pdfToPageImages(file);
+            extracted = await extractBankStatementFromImages(pageImages, (page, total) => {
+              setUploadProgress(`Processing page ${page} of ${total}…`);
+            });
+          } else {
+            setUploadProgress('Extracting transactions…');
+            const base64 = await fileToBase64(file);
+            extracted = await extractBankStatement(base64, mediaType);
+          }
+          setUploadProgress('');
+
           const uploadResult = await uploadFile('documents', `${Date.now()}_${file.name}`, file);
           const stmt = await addBankStatement({ file_name: file.name, file_url: uploadResult?.path || '', upload_date: new Date().toISOString(), transaction_count: extracted.transactions?.length || 0 });
           if (extracted.transactions?.length) {
@@ -387,6 +407,7 @@ export default function BookkeepingPage() {
             toast.success(`Extracted ${extracted.transactions.length} transactions from ${file.name}`);
           }
         } else {
+          const base64 = await fileToBase64(file);
           const extracted = await extractInvoice(base64, mediaType);
           const uploadResult = await uploadFile('invoices', `${Date.now()}_${file.name}`, file);
           const suggestedCat = fuzzyMatchCategory(extracted.supplier_name||'', supplierCategories);
@@ -398,7 +419,7 @@ export default function BookkeepingPage() {
       loadUnpostedCount();
       if (activeTab === 'invoices') loadInvoices();
     } catch (err) { toast.error(err.message || 'Upload failed'); console.error(err); }
-    finally { setUploading(false); setShowUploadModal(false); }
+    finally { setUploading(false); setUploadProgress(''); setShowUploadModal(false); }
   }
 
   // ── Manual transaction ────────────────────────────────────────────────────
@@ -685,7 +706,11 @@ export default function BookkeepingPage() {
             {uploadType==='bank' ? 'Upload a bank statement PDF. Claude AI extracts withdrawals and auto-categorizes based on history.' : 'Upload an invoice (PDF or image). Claude AI extracts supplier, amount, date, and more.'}
           </p>
           {uploading ? (
-            <div className="flex flex-col items-center py-12 gap-3"><Spinner size="lg" /><p className="text-sm text-surface-500">Processing with Claude AI…</p><p className="text-xs text-surface-400">This may take 10–30 seconds</p></div>
+            <div className="flex flex-col items-center py-12 gap-3">
+              <Spinner size="lg" />
+              <p className="text-sm text-surface-500">{uploadProgress || 'Processing with Claude AI…'}</p>
+              <p className="text-xs text-surface-400">Large PDFs are processed page by page — this may take up to 60s</p>
+            </div>
           ) : (
             <FileDropZone accept={uploadType==='bank'?'.pdf':'.pdf,.png,.jpg,.jpeg,.webp'} multiple={true} onFiles={handleUpload} label={uploadType==='bank'?'Drop bank statement PDF here':'Drop invoice PDF or image here'} />
           )}
