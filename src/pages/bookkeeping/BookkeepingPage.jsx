@@ -21,6 +21,22 @@ const MAX_FILE_SIZE_MB      = 3;
 const POSTED_PAGE_SIZE      = 50;
 const STMTS_PER_PAGE        = 8;
 const INV_YEAR              = new Date().getFullYear();
+const TXN_BATCH             = 1000; // Supabase's per-request row limit
+
+// Fetch every row from a Supabase query by looping with .range() until
+// fewer than TXN_BATCH rows are returned, bypassing the 1,000-row default cap.
+async function fetchAllPages(buildQuery) {
+  let all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildQuery(from, from + TXN_BATCH - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < TXN_BATCH) break;
+    from += TXN_BATCH;
+  }
+  return all;
+}
 
 function PageBar({ page, total, pageSize, onPage }) {
   const pages = Math.ceil(total / pageSize);
@@ -61,12 +77,14 @@ export default function BookkeepingPage() {
   const [collapsedYears, setCollapsedYears]   = useState(new Set());
 
   // ── Transactions (unposted) — paginated by bank statement ─────────────────
-  const [stmts, setStmts]             = useState([]);    // bank statements (paginated)
-  const [stmtsTotal, setStmtsTotal]   = useState(0);
-  const [stmtsPage, setStmtsPage]     = useState(0);
-  const [txnsByStmt, setTxnsByStmt]   = useState({});   // stmtId → txn[]
-  const [manualTxns, setManualTxns]   = useState([]);
-  const [stmtsLoading, setStmtsLoading] = useState(true);
+  const [stmts, setStmts]                   = useState([]);
+  const [stmtsTotal, setStmtsTotal]         = useState(0);
+  const [stmtsPage, setStmtsPage]           = useState(0);
+  const [txnsByStmt, setTxnsByStmt]         = useState({});
+  const [manualTxns, setManualTxns]         = useState([]);
+  const [stmtsLoading, setStmtsLoading]     = useState(true);
+  // Real unposted count from DB (not capped by what's currently rendered)
+  const [unpostedTotalCount, setUnpostedTotalCount] = useState(0);
 
   // ── Posted transactions ───────────────────────────────────────────────────
   const [postedTxns, setPostedTxns]     = useState([]);
@@ -87,9 +105,19 @@ export default function BookkeepingPage() {
 
   // ── Load functions ────────────────────────────────────────────────────────
 
+  // Fetch the real unposted count with a head-only query (no row data transferred)
+  const loadUnpostedCount = useCallback(async () => {
+    const { count } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('posted', false);
+    setUnpostedTotalCount(count || 0);
+  }, []);
+
   const loadUnposted = useCallback(async () => {
     setStmtsLoading(true);
-    // 1. Paginate bank statements
+
+    // 1. Paginate bank statements (small table — one query is fine)
     const from = stmtsPage * STMTS_PER_PAGE;
     const { data: stmtData, count: stmtCount } = await supabase
       .from('bank_statements').select('*', { count: 'exact' })
@@ -97,28 +125,36 @@ export default function BookkeepingPage() {
     setStmts(stmtData || []);
     setStmtsTotal(stmtCount || 0);
 
-    // 2. Load unposted transactions for these statements in one query
+    // 2. Fetch ALL unposted transactions for these statements, bypassing the
+    //    1,000-row cap by looping with .range() until no more rows are returned.
     if (stmtData?.length) {
       const ids = stmtData.map(s => s.id);
-      let q = supabase.from('transactions').select('*')
-        .eq('posted', false).in('bank_statement_id', ids).order('date', { ascending: false });
-      if (search) q = q.ilike('description', `%${search}%`);
-      if (filterCategory) q = q.eq('category', filterCategory);
-      const { data: txnData } = await q;
+      const txnData = await fetchAllPages((f, t) => {
+        let q = supabase.from('transactions').select('*')
+          .eq('posted', false).in('bank_statement_id', ids)
+          .order('date', { ascending: false }).range(f, t);
+        if (search) q = q.ilike('description', `%${search}%`);
+        if (filterCategory) q = q.eq('category', filterCategory);
+        return q;
+      });
       const grouped = {};
-      (txnData || []).forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
+      txnData.forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
       setTxnsByStmt(grouped);
     } else {
       setTxnsByStmt({});
     }
 
-    // 3. Manual (no bank_statement_id) unposted transactions
-    let mq = supabase.from('transactions').select('*')
-      .eq('posted', false).is('bank_statement_id', null).order('date', { ascending: false }).limit(100);
-    if (search) mq = mq.ilike('description', `%${search}%`);
-    if (filterCategory) mq = mq.eq('category', filterCategory);
-    const { data: manData } = await mq;
-    setManualTxns(manData || []);
+    // 3. Manual transactions (no bank_statement_id) — also fully paginated
+    const manData = await fetchAllPages((f, t) => {
+      let q = supabase.from('transactions').select('*')
+        .eq('posted', false).is('bank_statement_id', null)
+        .order('date', { ascending: false }).range(f, t);
+      if (search) q = q.ilike('description', `%${search}%`);
+      if (filterCategory) q = q.eq('category', filterCategory);
+      return q;
+    });
+    setManualTxns(manData);
+
     setStmtsLoading(false);
   }, [stmtsPage, search, filterCategory]);
 
@@ -141,6 +177,7 @@ export default function BookkeepingPage() {
     setInvLoading(false);
   }, [invoiceYear]);
 
+  useEffect(() => { loadUnpostedCount(); }, [loadUnpostedCount]);
   useEffect(() => { if (activeTab === 'transactions') loadUnposted(); }, [loadUnposted, activeTab]);
   useEffect(() => { if (activeTab === 'posted') loadPosted(); }, [loadPosted, activeTab]);
   useEffect(() => { if (activeTab === 'invoices') loadInvoices(); }, [loadInvoices, activeTab]);
@@ -187,20 +224,25 @@ export default function BookkeepingPage() {
   async function handlePost(txn) {
     if (txn.bank_statement_id) setTxnsByStmt(prev => ({ ...prev, [txn.bank_statement_id]: (prev[txn.bank_statement_id]||[]).filter(t => t.id!==txn.id) }));
     else setManualTxns(prev => prev.filter(t => t.id!==txn.id));
+    setUnpostedTotalCount(prev => Math.max(0, prev - 1));
     const propagated = await postTransaction(txn.id, txn);
     if (propagated > 0) { toast.success(`Auto-categorized ${propagated} transaction${propagated!==1?'s':''}`); loadUnposted(); }
+    loadUnpostedCount();
   }
 
   async function handleUnpost(txnId) {
     setPostedTxns(prev => prev.filter(t => t.id!==txnId));
     setPostedTotal(prev => prev - 1);
     await unpostTransaction(txnId);
+    loadUnpostedCount();
   }
 
   async function handleDeleteTxn(txn) {
     if (txn.bank_statement_id) setTxnsByStmt(prev => ({ ...prev, [txn.bank_statement_id]: (prev[txn.bank_statement_id]||[]).filter(t => t.id!==txn.id) }));
     else setManualTxns(prev => prev.filter(t => t.id!==txn.id));
+    setUnpostedTotalCount(prev => Math.max(0, prev - 1));
     await deleteTransaction(txn.id);
+    loadUnpostedCount();
   }
 
   // ── Upload ────────────────────────────────────────────────────────────────
@@ -237,6 +279,7 @@ export default function BookkeepingPage() {
         }
       }
       loadUnposted();
+      loadUnpostedCount();
       if (activeTab === 'invoices') loadInvoices();
     } catch (err) { toast.error(err.message || 'Upload failed'); console.error(err); }
     finally { setUploading(false); setShowUploadModal(false); }
@@ -254,6 +297,7 @@ export default function BookkeepingPage() {
       setShowManualModal(false);
       setManualForm({ date: new Date().toISOString().slice(0,10), description:'', amount:'', type:'debit', category:'', account_id:'', reference:'' });
       loadUnposted();
+      loadUnpostedCount();
     } catch (err) { toast.error(err.message || 'Failed'); }
     finally { setSavingManual(false); }
   }
@@ -303,7 +347,9 @@ export default function BookkeepingPage() {
     </tr></thead>
   );
 
-  const unpostedCount = Object.values(txnsByStmt).reduce((s,a) => s+a.length, 0) + manualTxns.length;
+  // Use the DB-sourced count so the tab always shows the real number,
+  // not just what's visible on the current statement page.
+  const unpostedCount = unpostedTotalCount;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
