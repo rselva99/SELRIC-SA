@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   Cell, PieChart, Pie, Legend, ResponsiveContainer,
@@ -31,30 +31,59 @@ const STOCK_STATUS = (p) =>
   : 'ok';
 const STATUS_COLOR = { critical: '#dc2626', low: '#f59e0b', ok: '#22c55e' };
 
-// ── Thumbnail component (fetches its own signed URL) ──────────────────────
+// ── Thumbnail — lazy: only requests signed URL when the element scrolls into view ──
 function ProductThumbnail({ imageUrl, size = 'sm' }) {
-  const [src, setSrc] = useState('');
+  const [src, setSrc]       = useState('');
+  const [visible, setVisible] = useState(false);
+  const ref = useRef(null);
+
   useEffect(() => {
     if (!imageUrl) return;
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); obs.disconnect(); }
+    }, { threshold: 0.1 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [imageUrl]);
+
+  useEffect(() => {
+    if (!visible || !imageUrl) return;
     supabase.storage.from('product-images').createSignedUrl(imageUrl, 3600)
       .then(({ data }) => { if (data) setSrc(data.signedUrl); });
-  }, [imageUrl]);
+  }, [visible, imageUrl]);
+
   const dim = size === 'sm' ? 'w-10 h-10' : 'w-full h-40';
-  if (!src) return (
-    <div className={`${dim} rounded-lg bg-surface-100 flex items-center justify-center shrink-0`}>
-      <Package size={size === 'sm' ? 16 : 36} className="text-surface-300" />
-    </div>
-  );
-  return <img src={src} alt="" className={`${dim} rounded-lg object-cover border border-surface-200 shrink-0`} />;
+  return src
+    ? <img ref={ref} src={src} alt="" className={`${dim} rounded-lg object-cover border border-surface-200 shrink-0`} />
+    : <div ref={ref} className={`${dim} rounded-lg bg-surface-100 flex items-center justify-center shrink-0`}><Package size={size==='sm'?16:36} className="text-surface-300" /></div>;
 }
 
-// ── Expandable product row content ────────────────────────────────────────
-function ExpandedRow({ p, logs, profileMap, onLog, onEdit }) {
-  const [showAll, setShowAll] = useState(false);
-  const [page, setPage] = useState(0);
+// ── Expandable product row — fetches its own logs from DB on open ────────
+function ExpandedRow({ p, profileMap, onLog, onEdit }) {
+  const [logs, setLogs]         = useState([]);
+  const [logsLoading, setLogsLoading] = useState(true);
+  const [total, setTotal]       = useState(0);
+  const [showAll, setShowAll]   = useState(false);
+  const [page, setPage]         = useState(0);
   const PAGE_SIZE = 10;
-  const total = logs.length;
-  const displayed = showAll ? logs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : logs.slice(0, 5);
+
+  const load = useCallback(async (pg, all) => {
+    const from = all ? 0 : pg * PAGE_SIZE;
+    const to   = all ? 999 : from + (showAll ? PAGE_SIZE - 1 : 4);
+    const { data, count } = await supabase
+      .from('inventory_logs').select('*', { count: 'exact' })
+      .eq('product_id', p.id).order('created_at', { ascending: false }).range(from, to);
+    setLogs(data || []);
+    setTotal(count || 0);
+    setLogsLoading(false);
+  }, [p.id, showAll]);
+
+  useEffect(() => { load(page, false); }, []); // eslint-disable-line
+  useEffect(() => { if (!logsLoading) load(page, showAll); }, [page, showAll]); // eslint-disable-line
+
+  const displayed = logs;
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const status = STOCK_STATUS(p);
 
@@ -159,9 +188,66 @@ function ExpandedRow({ p, logs, profileMap, onLog, onEdit }) {
   );
 }
 
+// ── Movement History tab — paginated, self-fetching ───────────────────────
+function MovementHistoryTab({ products }) {
+  const [logs, setLogs]   = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage]   = useState(0);
+  const PAGE_SIZE = 50;
+
+  useEffect(() => {
+    const from = page * PAGE_SIZE;
+    supabase.from('inventory_logs').select('*', { count: 'exact' })
+      .order('created_at', { ascending: false }).range(from, from + PAGE_SIZE - 1)
+      .then(({ data, count }) => { setLogs(data || []); setTotal(count || 0); });
+  }, [page]);
+
+  const productMap = useMemo(() => { const m = {}; products.forEach(p => { m[p.id] = p.name; }); return m; }, [products]);
+  const pages = Math.ceil(total / PAGE_SIZE);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead><tr className="border-b border-surface-100">
+            <th className="table-header">Date</th><th className="table-header">Product</th>
+            <th className="table-header">Type</th><th className="table-header text-center">Qty</th>
+            <th className="table-header">Notes</th>
+          </tr></thead>
+          <tbody>
+            {logs.map(log => {
+              const lt = LOG_TYPES.find(t => t.value === log.type);
+              return (
+                <tr key={log.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
+                  <td className="table-cell font-mono text-xs">{formatDate(log.date||log.created_at)}</td>
+                  <td className="table-cell font-medium">{productMap[log.product_id]||'—'}</td>
+                  <td className="table-cell"><span className={`text-xs font-medium ${lt?.color||''}`}>{lt?.label||log.type}</span></td>
+                  <td className={`table-cell text-center font-mono text-sm font-semibold ${log.quantity>=0?'text-green-600':'text-red-600'}`}>{log.quantity>=0?'+':''}{log.quantity}</td>
+                  <td className="table-cell text-surface-500 text-xs max-w-[200px] truncate">{log.notes||'—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {total === 0 && <div className="p-8 text-center text-sm text-surface-400">No movement history yet</div>}
+      {pages > 1 && (
+        <div className="flex items-center justify-between px-5 py-3 border-t border-surface-100 bg-surface-50 text-xs text-surface-500">
+          <span>{total.toLocaleString()} entries · page {page+1} / {pages}</span>
+          <div className="flex gap-1">
+            {[['‹',page-1],['›',page+1]].map(([l,p]) => (
+              <button key={l} onClick={() => setPage(p)} disabled={p<0||p>=pages} className="btn-ghost px-2 py-1 text-xs disabled:opacity-30">{l}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────
 export default function InventoryPage() {
-  const { products, inventoryLogs, addProduct, updateProduct, deleteProduct, addInventoryLog } = useData();
+  const { products, addProduct, updateProduct, deleteProduct, addInventoryLog } = useData();
   const { isAdmin } = useAuth();
 
   // Core state
@@ -228,13 +314,6 @@ export default function InventoryPage() {
     if (filterStatus === 'restock') list = list.filter((p) => (p.current_stock || 0) < (p.target_stock || 0));
     return list;
   }, [products, search, filterCat, filterStatus]);
-
-  const logsForProduct = useMemo(() => {
-    const m = {};
-    inventoryLogs.forEach((l) => { (m[l.product_id] = m[l.product_id] || []).push(l); });
-    Object.values(m).forEach((arr) => arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
-    return m;
-  }, [inventoryLogs]);
 
   // ── Dashboard data ────────────────────────────────────────────────────────
 
@@ -634,7 +713,6 @@ export default function InventoryPage() {
                     {filteredProducts.map((p) => {
                       const status  = STOCK_STATUS(p);
                       const isOpen  = expandedId === p.id;
-                      const pLogs   = logsForProduct[p.id] || [];
                       return (
                         <>
                           <tr
@@ -691,7 +769,6 @@ export default function InventoryPage() {
                               <td colSpan={6} className="p-0">
                                 <ExpandedRow
                                   p={p}
-                                  logs={pLogs}
                                   profileMap={profileMap}
                                   onLog={(type) => openLogModal(p.id, type)}
                                   onEdit={() => openEditProduct(p)}
@@ -715,44 +792,7 @@ export default function InventoryPage() {
       )}
 
       {/* ── MOVEMENT HISTORY TAB ── */}
-      {activeTab === 'history' && (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-surface-100">
-                  <th className="table-header">Date</th>
-                  <th className="table-header">Product</th>
-                  <th className="table-header">Type</th>
-                  <th className="table-header text-center">Qty</th>
-                  <th className="table-header">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...inventoryLogs]
-                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                  .slice(0, 100)
-                  .map((log) => {
-                    const prod = products.find((p) => p.id === log.product_id);
-                    const lt   = LOG_TYPES.find((t) => t.value === log.type);
-                    return (
-                      <tr key={log.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
-                        <td className="table-cell font-mono text-xs">{formatDate(log.date || log.created_at)}</td>
-                        <td className="table-cell font-medium">{prod?.name || '—'}</td>
-                        <td className="table-cell"><span className={`text-xs font-medium ${lt?.color || ''}`}>{lt?.label || log.type}</span></td>
-                        <td className={`table-cell text-center font-mono text-sm font-semibold ${log.quantity >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {log.quantity >= 0 ? '+' : ''}{log.quantity}
-                        </td>
-                        <td className="table-cell text-surface-500 text-xs max-w-[200px] truncate">{log.notes || '—'}</td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
-          </div>
-          {inventoryLogs.length === 0 && <div className="p-8 text-center text-sm text-surface-400">No movement history yet</div>}
-        </div>
-      )}
+      {activeTab === 'history' && <MovementHistoryTab products={products} />}
 
       {/* ── ADD / EDIT PRODUCT MODAL ── */}
       <Modal open={showProductModal} onClose={() => { setShowProductModal(false); setEditingProduct(null); }} title={editingProduct ? 'Edit Product' : 'Add Product'} size="lg">

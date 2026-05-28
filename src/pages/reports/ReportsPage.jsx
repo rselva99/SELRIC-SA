@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf } from '../../lib/reports';
 import { formatCurrency } from '../../lib/utils';
@@ -14,20 +15,24 @@ const MONTHS = [
 ];
 
 export default function ReportsPage() {
-  const { transactions, categories } = useData();
+  const { categories } = useData();
 
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedYear, setSelectedYear]   = useState(now.getFullYear());
+  const [transactions, setTransactions]   = useState([]);
+
+  useEffect(() => {
+    const m     = selectedMonth + 1;
+    const start = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
+    const end   = `${selectedYear}-${String(m).padStart(2, '0')}-${new Date(selectedYear, m, 0).getDate()}`;
+    supabase.from('transactions').select('*').gte('date', start).lte('date', end)
+      .then(({ data }) => setTransactions(data || []));
+  }, [selectedMonth, selectedYear]);
   const [generating, setGenerating] = useState('');
 
-  // Filter transactions for selected period
-  const periodTxns = useMemo(() => {
-    return transactions.filter((t) => {
-      const d = new Date(t.date);
-      return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
-    });
-  }, [transactions, selectedMonth, selectedYear]);
+  // transactions is already filtered to the selected period by the useEffect above
+  const periodTxns = transactions;
 
   const summary = useMemo(() => {
     const revenue = periodTxns

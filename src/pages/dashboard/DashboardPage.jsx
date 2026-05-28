@@ -1,4 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
+import { subMonths, startOfMonth, format } from 'date-fns';
+import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import StatCard from '../../components/ui/StatCard';
@@ -30,7 +32,17 @@ const COLORS = ['#368a67', '#276e52', '#55a683', '#84c3a7', '#f59f00', '#1971c2'
 
 export default function DashboardPage() {
   const { profile, isAdmin } = useAuth();
-  const { transactions, products, inventoryLogs, invoices } = useData();
+  const { products } = useData();
+
+  const [transactions, setTransactions] = useState([]);
+
+  // Fetch only the last 6 months of posted transactions — targeted query, not the entire table
+  useEffect(() => {
+    if (!isAdmin) return;
+    const sixMonthsAgo = format(startOfMonth(subMonths(new Date(), 5)), 'yyyy-MM-dd');
+    supabase.from('transactions').select('*').gte('date', sixMonthsAgo).order('date', { ascending: false })
+      .then(({ data }) => setTransactions(data || []));
+  }, [isAdmin]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -38,54 +50,30 @@ export default function DashboardPage() {
       const d = new Date(t.date);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
-
-    const revenue = thisMonth
-      .filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue'))
-      .reduce((s, t) => s + Math.abs(t.amount), 0);
-
-    const expenses = thisMonth
-      .filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue'))
-      .reduce((s, t) => s + Math.abs(t.amount), 0);
-
+    const revenue  = thisMonth.filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0);
+    const expenses = thisMonth.filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0);
     const lowStock = products.filter((p) => p.current_stock <= (p.reorder_level || 5));
-
     return { revenue, expenses, netProfit: revenue - expenses, lowStock, totalProducts: products.length };
   }, [transactions, products]);
 
-  // Monthly chart data (last 6 months)
   const chartData = useMemo(() => {
-    const months = [];
     const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
       const label = d.toLocaleDateString('en-US', { month: 'short' });
-      const monthTxns = transactions.filter((t) => {
-        const td = new Date(t.date);
-        return td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear();
-      });
-      const rev = monthTxns
-        .filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue'))
-        .reduce((s, t) => s + Math.abs(t.amount), 0);
-      const exp = monthTxns
-        .filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue'))
-        .reduce((s, t) => s + Math.abs(t.amount), 0);
-      months.push({ month: label, Revenue: rev, Expenses: exp });
-    }
-    return months;
+      const mt = transactions.filter((t) => { const td = new Date(t.date); return td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear(); });
+      return {
+        month: label,
+        Revenue:  mt.filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0),
+        Expenses: mt.filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0),
+      };
+    });
   }, [transactions]);
 
-  // Category breakdown for pie
   const categoryData = useMemo(() => {
     const map = {};
-    transactions
-      .filter((t) => t.category && t.type === 'debit')
-      .forEach((t) => {
-        map[t.category] = (map[t.category] || 0) + Math.abs(t.amount);
-      });
-    return Object.entries(map)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 7);
+    transactions.filter((t) => t.category && t.type === 'debit').forEach((t) => { map[t.category] = (map[t.category] || 0) + Math.abs(t.amount); });
+    return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 7);
   }, [transactions]);
 
   return (
