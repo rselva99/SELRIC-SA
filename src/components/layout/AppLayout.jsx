@@ -15,6 +15,7 @@ import {
   ChevronRight,
   TrendingUp,
   CalendarDays,
+  ListChecks,
   Megaphone,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -27,6 +28,7 @@ const adminNav = [
   { label: 'Daily Sales',       icon: TrendingUp,      path: '/sales' },
   { label: 'Reports',           icon: BarChart3,       path: '/reports' },
   { label: 'Calendar',          icon: CalendarDays,    path: '/calendar' },
+  { label: 'Tasks',             icon: ListChecks,      path: '/tasks' },
   { label: 'Marketing',         icon: Megaphone,       path: '/marketing' },
   { label: 'Inventory',         icon: Package,         path: '/inventory' },
   { label: 'Manage Users',      icon: Users,           path: '/users' },

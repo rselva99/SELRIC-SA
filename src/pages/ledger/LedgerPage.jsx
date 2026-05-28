@@ -58,8 +58,13 @@ export default function LedgerPage() {
         .order('date', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-      if (selectedPeriod)    q = q.like('date', `${selectedPeriod}%`);
-      else if (selectedYear) q = q.like('date', `${selectedYear}%`);
+      if (selectedPeriod) {
+        const [yr, mo] = selectedPeriod.split('-');
+        const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        q = q.gte('date', `${yr}-${mo}-01`).lte('date', `${yr}-${mo}-${String(lastDay).padStart(2,'0')}`);
+      } else if (selectedYear) {
+        q = q.gte('date', `${selectedYear}-01-01`).lte('date', `${selectedYear}-12-31`);
+      }
       if (selectedAccountId) q = q.eq('account_id', selectedAccountId);
       if (selectedCategory)  q = q.eq('category', selectedCategory);
 
