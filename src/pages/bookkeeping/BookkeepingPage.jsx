@@ -13,7 +13,7 @@ import { Link } from 'react-router-dom';
 import {
   FileText, Receipt, ArrowRightLeft, Search, Eye, Trash2,
   ChevronDown, ChevronRight, BookCheck, RotateCcw, PenLine,
-  FolderOpen, Folder, MessageSquare,
+  FolderOpen, Folder, MessageSquare, Layers, X,
 } from 'lucide-react';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
@@ -27,6 +27,16 @@ const POSTED_PAGE_SIZE      = 50;
 const STMTS_PER_PAGE        = 8;
 const INV_YEAR              = new Date().getFullYear();
 const TXN_BATCH             = 1000; // Supabase's per-request row limit
+
+// Extract the first 1-2 meaningful tokens from a bank description for vendor grouping.
+// "SYSCO FOOD SERVICE 0483 TX" → "SYSCO FOOD"
+// "VENMO PAYMENT *JOE" → "VENMO PAYMENT"
+function vendorKey(desc) {
+  if (!desc) return 'Other';
+  const tokens = desc.toUpperCase().replace(/[*#@.,]/g, ' ').split(/\s+/);
+  const meaningful = tokens.filter(t => t.length >= 3 && !/^\d+$/.test(t));
+  return meaningful.slice(0, 2).join(' ') || tokens[0]?.slice(0, 10) || 'Other';
+}
 
 // Fetch every row from a Supabase query by looping with .range() until
 // fewer than TXN_BATCH rows are returned, bypassing the 1,000-row default cap.
@@ -162,6 +172,12 @@ export default function BookkeepingPage() {
   const [editingTxn, setEditingTxn]     = useState(null);
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [collapsedYears, setCollapsedYears]   = useState(new Set());
+
+  // ── Bulk selection & smart filters ───────────────────────────────────────
+  const [selectedTxnIds, setSelectedTxnIds] = useState(new Set());
+  const [groupBy,      setGroupBy]      = useState('none');   // 'none'|'category'|'vendor'
+  const [quickFilter,  setQuickFilter]  = useState('all');    // 'all'|'categorized'|'uncategorized'
+  const [bulkPosting,  setBulkPosting]  = useState(false);
 
   // ── Notes state ───────────────────────────────────────────────────────────
   const [activeNotesTxnId, setActiveNotesTxnId] = useState(null);
@@ -366,6 +382,108 @@ export default function BookkeepingPage() {
     loadUnpostedCount();
   }
 
+  // ── Derived flat lists for bulk/group operations ─────────────────────────
+
+  const allVisibleTxns = useMemo(() => {
+    const fromStmts = Object.values(txnsByStmt).flat();
+    return [...fromStmts, ...manualTxns];
+  }, [txnsByStmt, manualTxns]);
+
+  const filteredTxns = useMemo(() => {
+    if (quickFilter === 'categorized')   return allVisibleTxns.filter(t => t.category);
+    if (quickFilter === 'uncategorized') return allVisibleTxns.filter(t => !t.category);
+    return allVisibleTxns;
+  }, [allVisibleTxns, quickFilter]);
+
+  const categorizedCount = useMemo(
+    () => allVisibleTxns.filter(t => t.category).length,
+    [allVisibleTxns]
+  );
+
+  const categoryGroups = useMemo(() => {
+    if (groupBy !== 'category') return [];
+    const groups = {};
+    filteredTxns.forEach(t => {
+      const key = t.category || 'Uncategorized';
+      (groups[key] = groups[key] || []).push(t);
+    });
+    return Object.entries(groups).sort(([a,,], [b,,]) => {
+      if (a === 'Uncategorized') return 1;
+      if (b === 'Uncategorized') return -1;
+      return groups[b].length - groups[a].length;
+    });
+  }, [filteredTxns, groupBy]);
+
+  const vendorGroups = useMemo(() => {
+    if (groupBy !== 'vendor') return [];
+    const groups = {};
+    filteredTxns.forEach(t => {
+      const key = vendorKey(t.description || t.supplier || '');
+      (groups[key] = groups[key] || []).push(t);
+    });
+    return Object.entries(groups).sort(([, a], [, b]) => b.length - a.length);
+  }, [filteredTxns, groupBy]);
+
+  // ── Bulk handlers ─────────────────────────────────────────────────────────
+
+  function toggleSelectTxn(id, checked) {
+    setSelectedTxnIds(prev => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  }
+
+  function selectGroup(txns, checked) {
+    setSelectedTxnIds(prev => {
+      const next = new Set(prev);
+      txns.forEach(t => checked ? next.add(t.id) : next.delete(t.id));
+      return next;
+    });
+  }
+
+  async function bulkPostTxns(txns) {
+    if (!txns.length) return;
+    setBulkPosting(true);
+    try {
+      const ids = txns.map(t => t.id);
+      const idSet = new Set(ids);
+      const { error } = await supabase.from('transactions').update({ posted: true }).in('id', ids);
+      if (error) throw error;
+      // Optimistic: remove from local state
+      setTxnsByStmt(prev => {
+        const next = {};
+        for (const [k, v] of Object.entries(prev)) next[k] = v.filter(t => !idSet.has(t.id));
+        return next;
+      });
+      setManualTxns(prev => prev.filter(t => !idSet.has(t.id)));
+      setSelectedTxnIds(new Set());
+      setUnpostedTotalCount(prev => Math.max(0, prev - ids.length));
+      toast.success(`Posted ${ids.length} transaction${ids.length !== 1 ? 's' : ''}`);
+      loadUnpostedCount();
+    } catch (err) {
+      toast.error(err.message || 'Bulk post failed');
+      loadUnposted();
+    } finally {
+      setBulkPosting(false);
+    }
+  }
+
+  async function handleBulkCategorize(category) {
+    if (!selectedTxnIds.size || !category) return;
+    const ids = [...selectedTxnIds];
+    const idSet = new Set(ids);
+    // Optimistic update
+    setTxnsByStmt(prev => {
+      const next = {};
+      for (const [k, v] of Object.entries(prev)) next[k] = v.map(t => idSet.has(t.id) ? { ...t, category } : t);
+      return next;
+    });
+    setManualTxns(prev => prev.map(t => idSet.has(t.id) ? { ...t, category } : t));
+    await supabase.from('transactions').update({ category }).in('id', ids);
+    toast.success(`Set category "${category}" on ${ids.length} transactions`);
+  }
+
   // ── Upload ────────────────────────────────────────────────────────────────
 
   async function handleUpload(files) {
@@ -454,12 +572,22 @@ export default function BookkeepingPage() {
 
   // ── Shared row renderer ───────────────────────────────────────────────────
 
-  function TxnRow({ t, showPost = false, showUnpost = false }) {
-    const noteCount   = noteCounts[t.id] || 0;
-    const notesOpen   = activeNotesTxnId === t.id;
+  function TxnRow({ t, showPost = false, showUnpost = false, selectable = false }) {
+    const noteCount  = noteCounts[t.id] || 0;
+    const notesOpen  = activeNotesTxnId === t.id;
+    const isSelected = selectedTxnIds.has(t.id);
+    const colSpan    = selectable ? 7 : 6;
     return (
       <>
-        <tr className={`border-b border-surface-50 transition ${notesOpen ? 'bg-blue-50/30' : 'hover:bg-surface-50'}`}>
+        <tr className={`border-b border-surface-50 transition ${notesOpen ? 'bg-blue-50/30' : isSelected ? 'bg-brand-50/40' : 'hover:bg-surface-50'}`}>
+          {selectable && (
+            <td className="pl-4 pr-1 py-2 w-10">
+              <input type="checkbox" checked={isSelected}
+                onChange={e => toggleSelectTxn(t.id, e.target.checked)}
+                className="rounded accent-brand-600 cursor-pointer"
+              />
+            </td>
+          )}
           <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
           <td className="table-cell font-medium max-w-[200px] truncate" title={t.description}>{t.description||'—'}</td>
           <td className="table-cell">
@@ -504,7 +632,7 @@ export default function BookkeepingPage() {
         </tr>
         {notesOpen && (
           <tr>
-            <td colSpan={6} className="p-0">
+            <td colSpan={colSpan} className="p-0">
               <NotesPanel
                 txnId={t.id}
                 currentUserId={user?.id}
@@ -521,8 +649,25 @@ export default function BookkeepingPage() {
     );
   }
 
+  // Table header without checkbox (Posted tab, group sub-tables)
   const TABLE_HEAD = (
     <thead><tr className="border-b border-surface-100">
+      <th className="table-header">Date</th><th className="table-header">Description</th>
+      <th className="table-header">Category</th><th className="table-header text-right">Amount</th>
+      <th className="table-header">Type</th><th className="table-header w-24"></th>
+    </tr></thead>
+  );
+
+  // Table header with global select-all checkbox (Transactions tab, 'none' groupBy)
+  const allPageChecked = allVisibleTxns.length > 0 && allVisibleTxns.every(t => selectedTxnIds.has(t.id));
+  const TABLE_HEAD_SEL = (
+    <thead><tr className="border-b border-surface-100">
+      <th className="pl-4 pr-1 py-3 w-10">
+        <input type="checkbox" checked={allPageChecked}
+          onChange={e => setSelectedTxnIds(e.target.checked ? new Set(allVisibleTxns.map(t => t.id)) : new Set())}
+          className="rounded accent-brand-600 cursor-pointer"
+        />
+      </th>
       <th className="table-header">Date</th><th className="table-header">Description</th>
       <th className="table-header">Category</th><th className="table-header text-right">Amount</th>
       <th className="table-header">Type</th><th className="table-header w-24"></th>
@@ -569,7 +714,8 @@ export default function BookkeepingPage() {
       {/* ── TRANSACTIONS TAB ── */}
       {activeTab === 'transactions' && (
         <>
-          <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          {/* Search + category filter row */}
+          <div className="flex flex-col sm:flex-row gap-3 mb-3">
             <div className="relative flex-1">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
               <input type="text" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} className="input-field pl-9" />
@@ -580,51 +726,196 @@ export default function BookkeepingPage() {
             </select>
           </div>
 
+          {/* Smart filter toolbar */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {/* Quick filter pills */}
+            <div className="flex gap-1 bg-surface-100 rounded-lg p-1 text-xs">
+              {[['all','All'],['categorized','Categorized'],['uncategorized','Uncategorized']].map(([val, lbl]) => (
+                <button key={val} onClick={() => setQuickFilter(val)}
+                  className={`px-3 py-1.5 rounded-md font-medium transition ${quickFilter===val?'bg-white shadow-sm text-surface-900':'text-surface-500 hover:text-surface-700'}`}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+
+            {/* Group by */}
+            <div className="flex items-center gap-1.5">
+              <Layers size={14} className="text-surface-400" />
+              <select value={groupBy} onChange={e => { setGroupBy(e.target.value); setSelectedTxnIds(new Set()); }}
+                className="input-field w-auto text-sm py-1.5">
+                <option value="none">By Statement</option>
+                <option value="category">By Category</option>
+                <option value="vendor">By Vendor</option>
+              </select>
+            </div>
+
+            {/* Post All Categorized — the power move */}
+            {categorizedCount > 0 && (
+              <button onClick={() => bulkPostTxns(allVisibleTxns.filter(t => t.category))}
+                disabled={bulkPosting}
+                className="btn-primary text-sm flex items-center gap-2 ml-auto">
+                {bulkPosting ? <Spinner size="sm" className="text-white" /> : <BookCheck size={14} />}
+                Post All Categorized ({categorizedCount})
+              </button>
+            )}
+          </div>
+
+          {/* Sticky bulk action bar — appears when rows are selected */}
+          {selectedTxnIds.size > 0 && (
+            <div className="sticky top-2 z-20 bg-brand-700 text-white rounded-xl px-4 py-3 flex flex-wrap items-center gap-3 mb-4 shadow-xl">
+              <span className="font-semibold text-sm">{selectedTxnIds.size} selected</span>
+              <div className="flex-1" />
+              <button onClick={() => bulkPostTxns([...selectedTxnIds].map(id => allVisibleTxns.find(t => t.id === id)).filter(Boolean))}
+                disabled={bulkPosting}
+                className="bg-white text-brand-700 text-xs px-3 py-1.5 rounded-lg font-semibold hover:bg-brand-50 transition flex items-center gap-1.5">
+                {bulkPosting ? <Spinner size="sm" /> : <BookCheck size={13} />} Post Selected
+              </button>
+              <select onChange={e => { if (e.target.value) { handleBulkCategorize(e.target.value); e.target.value = ''; } }}
+                defaultValue=""
+                className="bg-brand-600 text-white text-xs px-2 py-1.5 rounded-lg border border-brand-500 hover:bg-brand-500 transition cursor-pointer">
+                <option value="" disabled>Categorize Selected…</option>
+                {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={() => setSelectedTxnIds(new Set())} className="bg-brand-600 hover:bg-brand-500 text-white text-xs px-3 py-1.5 rounded-lg transition flex items-center gap-1">
+                <X size={12} /> Deselect All
+              </button>
+            </div>
+          )}
+
           {stmtsLoading ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
-          : unpostedCount === 0 && stmtsTotal === 0 ? (
+          : allVisibleTxns.length === 0 && stmtsTotal === 0 ? (
             <EmptyState icon={FileText} title="No unposted transactions" description="Upload a bank statement or add a manual entry" action={{ label:'Upload Statement', onClick:()=>{ setUploadType('bank'); setShowUploadModal(true); } }} />
-          ) : (
+          ) : filteredTxns.length === 0 ? (
+            <div className="card p-8 text-center text-sm text-surface-400">
+              No {quickFilter === 'categorized' ? 'categorized' : 'uncategorized'} transactions on this page.
+            </div>
+          ) : groupBy === 'none' ? (
+            /* ── Original bank-statement folder view ── */
             <>
               <div className="space-y-3">
                 {stmts.map(stmt => {
-                  const grpTxns = txnsByStmt[stmt.id] || [];
+                  const grpTxns = (txnsByStmt[stmt.id] || []).filter(t =>
+                    quickFilter === 'categorized'   ? !!t.category :
+                    quickFilter === 'uncategorized' ? !t.category  : true
+                  );
                   const isCollapsed = collapsedGroups.has(stmt.id);
                   const total = grpTxns.filter(t=>t.type==='debit').reduce((s,t)=>s+Math.abs(t.amount),0);
+                  const allSelected = grpTxns.length > 0 && grpTxns.every(t => selectedTxnIds.has(t.id));
                   return (
                     <div key={stmt.id} className="card overflow-hidden">
-                      <button onClick={() => toggleGroup(stmt.id)} className="w-full flex items-center justify-between px-5 py-3 bg-surface-50 hover:bg-surface-100 transition border-b border-surface-100">
-                        <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex items-center gap-2 px-4 py-3 bg-surface-50 border-b border-surface-100">
+                        <input type="checkbox" checked={allSelected}
+                          onChange={e => selectGroup(grpTxns, e.target.checked)}
+                          className="rounded accent-brand-600 cursor-pointer shrink-0"
+                        />
+                        <button onClick={() => toggleGroup(stmt.id)} className="flex-1 flex items-center gap-2.5 min-w-0 text-left">
                           {isCollapsed ? <Folder size={16} className="shrink-0 text-brand-500" /> : <FolderOpen size={16} className="shrink-0 text-brand-500" />}
                           <span className="font-medium text-sm truncate">{stmt.file_name}</span>
-                          <span className="text-xs text-surface-400 shrink-0">{grpTxns.length} unposted{total>0&&` · ${formatCurrency(total)} withdrawals`}</span>
-                        </div>
-                        {isCollapsed ? <ChevronRight size={16} className="text-surface-400 shrink-0" /> : <ChevronDown size={16} className="text-surface-400 shrink-0" />}
-                      </button>
+                          <span className="text-xs text-surface-400 shrink-0">{grpTxns.length} unposted{total>0&&` · ${formatCurrency(total)}`}</span>
+                        </button>
+                        {grpTxns.length > 0 && (
+                          <button onClick={() => bulkPostTxns(grpTxns)} disabled={bulkPosting} className="btn-ghost text-xs flex items-center gap-1 shrink-0">
+                            <BookCheck size={12} /> Post All
+                          </button>
+                        )}
+                        <button onClick={() => toggleGroup(stmt.id)} className="shrink-0">
+                          {isCollapsed ? <ChevronRight size={16} className="text-surface-400" /> : <ChevronDown size={16} className="text-surface-400" />}
+                        </button>
+                      </div>
                       {!isCollapsed && grpTxns.length > 0 && (
-                        <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost />)}</tbody></table></div>
+                        <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD_SEL}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table></div>
                       )}
-                      {!isCollapsed && grpTxns.length === 0 && <div className="px-5 py-3 text-sm text-surface-400">All transactions in this statement are posted</div>}
+                      {!isCollapsed && grpTxns.length === 0 && <div className="px-5 py-3 text-sm text-surface-400">No matching transactions in this statement</div>}
                     </div>
                   );
                 })}
-                {manualTxns.length > 0 && (
-                  <div className="card overflow-hidden">
-                    <button onClick={() => toggleGroup('manual')} className="w-full flex items-center justify-between px-5 py-3 bg-surface-50 hover:bg-surface-100 transition border-b border-surface-100">
-                      <div className="flex items-center gap-2.5">
-                        {collapsedGroups.has('manual') ? <Folder size={16} className="text-brand-500" /> : <FolderOpen size={16} className="text-brand-500" />}
-                        <span className="font-medium text-sm">Manual Transactions</span>
-                        <span className="text-xs text-surface-400">{manualTxns.length} entries</span>
+                {manualTxns.filter(t => quickFilter==='categorized'?!!t.category:quickFilter==='uncategorized'?!t.category:true).length > 0 && (() => {
+                  const grpTxns = manualTxns.filter(t => quickFilter==='categorized'?!!t.category:quickFilter==='uncategorized'?!t.category:true);
+                  const allSel = grpTxns.every(t => selectedTxnIds.has(t.id));
+                  return (
+                    <div className="card overflow-hidden">
+                      <div className="flex items-center gap-2 px-4 py-3 bg-surface-50 border-b border-surface-100">
+                        <input type="checkbox" checked={allSel}
+                          onChange={e => selectGroup(grpTxns, e.target.checked)}
+                          className="rounded accent-brand-600 cursor-pointer shrink-0"
+                        />
+                        <button onClick={() => toggleGroup('manual')} className="flex-1 flex items-center gap-2.5 text-left">
+                          {collapsedGroups.has('manual') ? <Folder size={16} className="text-brand-500" /> : <FolderOpen size={16} className="text-brand-500" />}
+                          <span className="font-medium text-sm">Manual Transactions</span>
+                          <span className="text-xs text-surface-400">{grpTxns.length} entries</span>
+                        </button>
+                        <button onClick={() => bulkPostTxns(grpTxns)} disabled={bulkPosting} className="btn-ghost text-xs flex items-center gap-1 shrink-0">
+                          <BookCheck size={12} /> Post All
+                        </button>
+                        <button onClick={() => toggleGroup('manual')}>
+                          {collapsedGroups.has('manual') ? <ChevronRight size={16} className="text-surface-400" /> : <ChevronDown size={16} className="text-surface-400" />}
+                        </button>
                       </div>
-                      {collapsedGroups.has('manual') ? <ChevronRight size={16} className="text-surface-400" /> : <ChevronDown size={16} className="text-surface-400" />}
-                    </button>
-                    {!collapsedGroups.has('manual') && (
-                      <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD}<tbody>{manualTxns.map(t => <TxnRow key={t.id} t={t} showPost />)}</tbody></table></div>
-                    )}
-                  </div>
-                )}
+                      {!collapsedGroups.has('manual') && (
+                        <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD_SEL}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table></div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <PageBar page={stmtsPage} total={stmtsTotal} pageSize={STMTS_PER_PAGE} onPage={setStmtsPage} />
             </>
+          ) : groupBy === 'category' ? (
+            /* ── Category group view ── */
+            <div className="space-y-3">
+              {categoryGroups.map(([catName, txns]) => {
+                const allSel = txns.every(t => selectedTxnIds.has(t.id));
+                const total  = txns.filter(t=>t.type==='debit').reduce((s,t)=>s+Math.abs(t.amount),0);
+                return (
+                  <div key={catName} className="card overflow-hidden">
+                    <div className="flex items-center gap-3 px-4 py-3 bg-surface-50 border-b border-surface-100">
+                      <input type="checkbox" checked={allSel}
+                        onChange={e => selectGroup(txns, e.target.checked)}
+                        className="rounded accent-brand-600 cursor-pointer shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-medium text-sm">{catName}</span>
+                        <span className="text-xs text-surface-400 ml-2">{txns.length} txns · {formatCurrency(total)}</span>
+                      </div>
+                      <button onClick={() => bulkPostTxns(txns)} disabled={bulkPosting} className="btn-secondary text-xs flex items-center gap-1">
+                        <BookCheck size={12} /> Post Group
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">{TABLE_HEAD}<tbody>{txns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* ── Vendor similarity group view ── */
+            <div className="space-y-3">
+              {vendorGroups.map(([vendor, txns]) => {
+                const allSel = txns.every(t => selectedTxnIds.has(t.id));
+                const total  = txns.filter(t=>t.type==='debit').reduce((s,t)=>s+Math.abs(t.amount),0);
+                return (
+                  <div key={vendor} className="card overflow-hidden">
+                    <div className="flex items-center gap-3 px-4 py-3 bg-surface-50 border-b border-surface-100">
+                      <input type="checkbox" checked={allSel}
+                        onChange={e => selectGroup(txns, e.target.checked)}
+                        className="rounded accent-brand-600 cursor-pointer shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className="font-semibold text-sm font-mono">{vendor}</span>
+                        <span className="text-xs text-surface-400 ml-2">{txns.length} txns · {formatCurrency(total)}</span>
+                      </div>
+                      <button onClick={() => bulkPostTxns(txns)} disabled={bulkPosting} className="btn-secondary text-xs flex items-center gap-1">
+                        <BookCheck size={12} /> Post Group
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">{TABLE_HEAD}<tbody>{txns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </>
       )}
