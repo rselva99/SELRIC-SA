@@ -18,7 +18,11 @@ import {
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
 const ALLOWED_INVOICE_TYPES = ['application/pdf','image/png','image/jpeg','image/webp'];
-const MAX_FILE_SIZE_MB      = 3;
+// Bank statements: no size limit — text is extracted locally by PDF.js,
+// so the file itself is never sent to the server.
+// Invoices: keep a reasonable cap since those are sent as base64.
+const MAX_INVOICE_SIZE_MB   = 10;
+const MAX_BANK_SIZE_MB      = 100;
 const POSTED_PAGE_SIZE      = 50;
 const STMTS_PER_PAGE        = 8;
 const INV_YEAR              = new Date().getFullYear();
@@ -367,7 +371,8 @@ export default function BookkeepingPage() {
   async function handleUpload(files) {
     if (!files.length) return;
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) { toast.error(`${file.name} exceeds ${MAX_FILE_SIZE_MB}MB`); return; }
+      const maxMB = uploadType === 'bank' ? MAX_BANK_SIZE_MB : MAX_INVOICE_SIZE_MB;
+      if (file.size > maxMB * 1024 * 1024) { toast.error(`${file.name} exceeds ${maxMB}MB`); return; }
       const allowed = uploadType === 'bank' ? ALLOWED_BANK_TYPES : ALLOWED_INVOICE_TYPES;
       if (!allowed.includes(file.type)) { toast.error(`${file.name} is not a supported type`); return; }
     }
