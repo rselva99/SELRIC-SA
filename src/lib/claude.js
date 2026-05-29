@@ -294,3 +294,63 @@ Return ONLY the category name as plain text, nothing else.`;
   const result = await callClaude(messages, systemPrompt);
   return result.trim();
 }
+
+// ── AI-powered batch categorization ──────────────────────────────────────────
+//
+// Second-pass categorizer that runs after fuzzy matching.  Sends uncategorized
+// transactions to Claude with known supplier→category examples as context, so
+// it can understand that "Recurring Card Transaction Spotify USA 4899" is the
+// same vendor as "Spotify" even when string matching fails.
+//
+// Returns [{id, category}] — only entries Claude can categorize confidently.
+
+export async function batchCategorize(transactions, knownMappings) {
+  if (!transactions.length) return [];
+
+  const mappingsText = knownMappings.length
+    ? knownMappings.slice(0, 80).map(m => `${m.supplier} → ${m.category}`).join('\n')
+    : '(no historical data yet)';
+
+  const txnsList = transactions
+    .map(t => `ID: ${t.id}\nDesc: ${(t.description || t.supplier || '').slice(0, 180)}`)
+    .join('\n---\n');
+
+  const systemPrompt = `You are an expense categorizer for a college bar in St. Louis, MO.
+
+Bank statement descriptions are messy — they include card types, location codes, reference numbers, and abbreviated names. Identify the real vendor and assign the correct category.
+
+KNOWN VENDOR→CATEGORY MAPPINGS (historical data — treat as ground truth):
+${mappingsText}
+
+CATEGORY REFERENCE:
+- Cost of Goods Sold (COGS): food/beverage/alcohol distributors (Sysco, US Foods, Southern Glazer's, Performance Food Group, PFG, Restaurant Depot)
+- Salaries & Wages: payroll processors (ADP, Paychex, Gusto, Square Payroll)
+- Bank Charges: bank fees, wire fees, ACH fees, overdraft charges, interest
+- Utilities: electricity, gas, water, internet, phone (Ameren, Evergy, Laclede, Spectrum, AT&T, Verizon)
+- Rent: rent, lease, real estate
+- Insurance: any insurance premium
+- Marketing & Advertising: Google Ads, Meta, Instagram, Facebook, promotional services
+- Entertainment: music streaming/licensing (Spotify, Apple Music, BMI, ASCAP, SESAC)
+- Licenses & Permits: permits, certifications, liquor license renewals
+- Professional Fees: accounting, legal, consulting
+- Repairs & Maintenance: repairs, plumbing, HVAC, cleaning, pest control, maintenance
+- Transport & Delivery: delivery, Uber, DoorDash, FedEx, UPS, shipping
+
+PATTERN EXAMPLES:
+"Recurring Card Transaction Spotify USA 4899" → Entertainment
+"ADP PAYROLL FEES CCD 123456" → Salaries & Wages
+"AMEREN ILLINOIS 987654 WEB" → Utilities
+"SYSCO FOOD SERV OF STL 0012 TX" → Cost of Goods Sold (COGS)
+"SOUTHERN GLAZERS WINE 00123" → Cost of Goods Sold (COGS)
+
+Return ONLY this JSON object — no markdown, no explanation:
+{"suggestions": [{"id": "the-exact-uuid", "category": "exact_category_name"}]}
+
+Only include transactions you can categorize with high confidence. Omit uncertain ones entirely.`;
+
+  const messages = [{ role: 'user', content: `Categorize these transactions:\n\n${txnsList}` }];
+  const raw   = await callClaude(messages, systemPrompt);
+  const parsed = parseClaudeJson(raw);
+  const suggestions = Array.isArray(parsed) ? parsed : (parsed.suggestions || []);
+  return suggestions.filter(s => s.id && s.category && s.category !== 'Uncategorized');
+}

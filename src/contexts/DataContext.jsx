@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { fuzzyMatchCategory } from '../lib/utils';
+import { batchCategorize } from '../lib/claude';
 
 const DataContext = createContext({});
 
@@ -140,6 +141,81 @@ export function DataProvider({ children }) {
     }
   }
 
+  // ── AI batch categorization (second pass after fuzzy match) ───────────────
+  // Fetches all uncategorized unposted transactions, sends them to Claude in
+  // batches of 50 with known supplier→category mappings as context, and writes
+  // back any high-confidence suggestions. Returns the count of newly categorized.
+  async function aiCategorizeUncategorized() {
+    if (!user) return 0;
+    const { data: targets, error: fetchErr } = await supabase
+      .from('transactions')
+      .select('id, description, supplier')
+      .eq('posted', false)
+      .or('category.is.null,category.eq.')
+      .limit(500);
+    if (fetchErr || !targets?.length) return 0;
+
+    const { data: scRows } = await supabase
+      .from('supplier_categories')
+      .select('supplier, category');
+    const mappings = scRows || [];
+
+    const BATCH_SIZE = 50;
+    let totalCategorized = 0;
+    const newSuppliers = {};
+    for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+      const batch = targets.slice(i, i + BATCH_SIZE);
+      let suggestions;
+      try {
+        suggestions = await batchCategorize(batch, mappings);
+      } catch (err) {
+        console.error('batchCategorize error:', err);
+        continue;
+      }
+      if (!suggestions?.length) continue;
+
+      // Group ids by suggested category to make bulk UPDATEs (one per category)
+      const byCategory = {};
+      const txnMap = new Map(batch.map(t => [t.id, t]));
+      for (const s of suggestions) {
+        if (!txnMap.has(s.id)) continue;
+        (byCategory[s.category] = byCategory[s.category] || []).push(s.id);
+      }
+      await Promise.all(
+        Object.entries(byCategory).map(async ([cat, ids]) => {
+          const { error } = await supabase.from('transactions').update({ category: cat }).in('id', ids);
+          if (!error) {
+            totalCategorized += ids.length;
+            // Record supplier→category mapping for the next fuzzy pass
+            ids.forEach(id => {
+              const t = txnMap.get(id);
+              const sup = t?.description || t?.supplier;
+              if (sup) newSuppliers[sup] = cat;
+            });
+          }
+        })
+      );
+    }
+
+    // Persist learned mappings so future uploads benefit from the AI's work
+    const supplierEntries = Object.entries(newSuppliers);
+    if (supplierEntries.length) {
+      try {
+        await supabase.from('supplier_categories').upsert(
+          supplierEntries.map(([supplier, category]) => ({ supplier, category, user_id: user.id })),
+          { onConflict: 'supplier,user_id' }
+        );
+        const updatedMap = { ...supplierCategoriesRef.current };
+        supplierEntries.forEach(([s, c]) => { updatedMap[s.toLowerCase()] = c; });
+        setSupplierCategories(updatedMap);
+      } catch (err) {
+        console.error('supplier upsert error:', err);
+      }
+    }
+
+    return totalCategorized;
+  }
+
   // ── Invoice CRUD (pure DB ops) ────────────────────────────────────────────
   async function addInvoice(invoice) {
     const { data, error } = await supabase.from('invoices').insert(invoice).select().single();
@@ -221,12 +297,14 @@ export function DataProvider({ children }) {
     // Transaction ops (pure DB — pages manage their own state)
     addTransaction, updateTransaction, deleteTransaction,
     postTransaction, unpostTransaction, learnSupplierCategory,
+    propagateCategories,
     // Invoice / statement ops
     addInvoice, updateInvoice, addBankStatement,
     // Inventory
     addInventoryLog,
     // Utility
     getSuggestedCategory, uploadFile, getSignedUrl,
+    aiCategorizeUncategorized,
     refresh: loadAll,
   };
 

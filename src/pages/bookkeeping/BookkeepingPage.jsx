@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,7 +13,7 @@ import { Link } from 'react-router-dom';
 import {
   FileText, Receipt, ArrowRightLeft, Search, Eye, Trash2,
   ChevronDown, ChevronRight, BookCheck, RotateCcw, PenLine,
-  FolderOpen, Folder, MessageSquare, Layers, X,
+  FolderOpen, Folder, MessageSquare, Layers, X, Sparkles,
 } from 'lucide-react';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
@@ -155,6 +155,7 @@ export default function BookkeepingPage() {
     categories, supplierCategories,
     addTransaction, updateTransaction, deleteTransaction,
     postTransaction, unpostTransaction, learnSupplierCategory,
+    propagateCategories, aiCategorizeUncategorized,
     addBankStatement, addInvoice, updateInvoice,
     uploadFile, getSignedUrl,
   } = useData();
@@ -178,6 +179,7 @@ export default function BookkeepingPage() {
   const [groupBy,      setGroupBy]      = useState('none');   // 'none'|'category'|'vendor'
   const [quickFilter,  setQuickFilter]  = useState('all');    // 'all'|'categorized'|'uncategorized'
   const [bulkPosting,  setBulkPosting]  = useState(false);
+  const [aiCategorizing, setAiCategorizing] = useState(false);
 
   // ── Notes state ───────────────────────────────────────────────────────────
   const [activeNotesTxnId, setActiveNotesTxnId] = useState(null);
@@ -316,6 +318,25 @@ export default function BookkeepingPage() {
 
   useEffect(() => { loadUnpostedCount(); }, [loadUnpostedCount]);
   useEffect(() => { if (activeTab === 'transactions') loadUnposted(); }, [loadUnposted, activeTab]);
+
+  // Run fuzzy-match propagation once on mount so any newly-learned supplier
+  // mappings get applied to historical uncategorized transactions automatically.
+  const propagatedOnMount = useRef(false);
+  useEffect(() => {
+    if (propagatedOnMount.current || !Object.keys(supplierCategories).length) return;
+    propagatedOnMount.current = true;
+    (async () => {
+      try {
+        const n = await propagateCategories();
+        if (n > 0) {
+          toast.success(`Auto-categorized ${n} transaction${n !== 1 ? 's' : ''} from history`);
+          loadUnposted();
+          loadUnpostedCount();
+        }
+      } catch (err) { console.error('propagateCategories on mount:', err); }
+    })();
+  }, [supplierCategories, propagateCategories, loadUnposted, loadUnpostedCount]);
+
   useEffect(() => { if (activeTab === 'posted') loadPosted(); }, [loadPosted, activeTab]);
   useEffect(() => { if (activeTab === 'invoices') loadInvoices(); }, [loadInvoices, activeTab]);
   useEffect(() => { setStmtsPage(0); }, [search, filterCategory]);
@@ -397,6 +418,10 @@ export default function BookkeepingPage() {
 
   const categorizedCount = useMemo(
     () => allVisibleTxns.filter(t => t.category).length,
+    [allVisibleTxns]
+  );
+  const uncategorizedCount = useMemo(
+    () => allVisibleTxns.filter(t => !t.category).length,
     [allVisibleTxns]
   );
 
@@ -484,6 +509,27 @@ export default function BookkeepingPage() {
     toast.success(`Set category "${category}" on ${ids.length} transactions`);
   }
 
+  async function handleAiCategorize() {
+    if (aiCategorizing) return;
+    setAiCategorizing(true);
+    const loadingId = toast.loading('Asking Claude to categorize the rest…');
+    try {
+      const n = await aiCategorizeUncategorized();
+      toast.dismiss(loadingId);
+      if (n > 0) {
+        toast.success(`AI categorized ${n} transaction${n !== 1 ? 's' : ''}`);
+        loadUnposted();
+      } else {
+        toast('No new matches — try uploading more bank statements to teach the model', { icon: 'ℹ️' });
+      }
+    } catch (err) {
+      toast.dismiss(loadingId);
+      toast.error(err.message || 'AI categorization failed');
+    } finally {
+      setAiCategorizing(false);
+    }
+  }
+
   // ── Upload ────────────────────────────────────────────────────────────────
 
   async function handleUpload(files) {
@@ -549,6 +595,21 @@ export default function BookkeepingPage() {
       loadUnposted();
       loadUnpostedCount();
       if (activeTab === 'invoices') loadInvoices();
+
+      // After a bank statement upload, run the AI second-pass on whatever
+      // the fuzzy match left uncategorized. Fire-and-forget so the modal
+      // closes immediately — the user gets a toast when results land.
+      if (uploadType === 'bank') {
+        (async () => {
+          try {
+            const n = await aiCategorizeUncategorized();
+            if (n > 0) {
+              toast.success(`AI categorized ${n} more transaction${n !== 1 ? 's' : ''}`);
+              loadUnposted();
+            }
+          } catch (err) { console.error('post-upload AI categorize:', err); }
+        })();
+      }
     } catch (err) { toast.error(err.message || 'Upload failed'); console.error(err); }
     finally { setUploading(false); setUploadProgress(''); setShowUploadModal(false); }
   }
@@ -749,11 +810,20 @@ export default function BookkeepingPage() {
               </select>
             </div>
 
+            {/* AI Categorize Remaining — second-pass classifier */}
+            {uncategorizedCount > 0 && (
+              <button onClick={handleAiCategorize} disabled={aiCategorizing}
+                className="btn-secondary text-sm flex items-center gap-2 ml-auto disabled:opacity-50">
+                {aiCategorizing ? <Spinner size="sm" /> : <Sparkles size={14} className="text-purple-600" />}
+                AI Categorize Remaining ({uncategorizedCount})
+              </button>
+            )}
+
             {/* Post All Categorized — the power move */}
             {categorizedCount > 0 && (
               <button onClick={() => bulkPostTxns(allVisibleTxns.filter(t => t.category))}
                 disabled={bulkPosting}
-                className="btn-primary text-sm flex items-center gap-2 ml-auto">
+                className={`btn-primary text-sm flex items-center gap-2 ${uncategorizedCount > 0 ? '' : 'ml-auto'}`}>
                 {bulkPosting ? <Spinner size="sm" className="text-white" /> : <BookCheck size={14} />}
                 Post All Categorized ({categorizedCount})
               </button>
