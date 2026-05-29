@@ -16,6 +16,7 @@ import ReportsPage from './pages/reports/ReportsPage';
 import InventoryPage from './pages/inventory/InventoryPage';
 import ManageUsersPage from './pages/admin/ManageUsersPage';
 import LedgerPage from './pages/ledger/LedgerPage';
+import JournalPage from './pages/journal/JournalPage';
 import TasksPage from './pages/tasks/TasksPage';
 import CalendarPage from './pages/calendar/CalendarPage';
 import MarketingPage from './pages/marketing/MarketingPage';
@@ -52,6 +53,7 @@ function App() {
               <Route path="bookkeeping" element={<ProtectedRoute adminOnly><BookkeepingPage /></ProtectedRoute>} />
               <Route path="bookkeeping/reconcile" element={<ProtectedRoute adminOnly><ReconciliationPage /></ProtectedRoute>} />
               <Route path="ledger" element={<ProtectedRoute adminOnly><LedgerPage /></ProtectedRoute>} />
+              <Route path="journal" element={<ProtectedRoute adminOnly><JournalPage /></ProtectedRoute>} />
               <Route path="sales" element={<ProtectedRoute adminOnly><DailySalesPage /></ProtectedRoute>} />
               <Route path="calendar" element={<ProtectedRoute adminOnly><CalendarPage /></ProtectedRoute>} />
               <Route path="tasks" element={<ProtectedRoute adminOnly><TasksPage /></ProtectedRoute>} />

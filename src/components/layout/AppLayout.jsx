@@ -17,6 +17,7 @@ import {
   CalendarDays,
   ListChecks,
   Megaphone,
+  BookText,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -24,6 +25,7 @@ const adminNav = [
   { label: 'Dashboard',         icon: LayoutDashboard, path: '/' },
   { label: 'Bookkeeping',       icon: BookOpen,        path: '/bookkeeping' },
   { label: 'General Ledger',    icon: Landmark,        path: '/ledger' },
+  { label: 'Journal',           icon: BookText,        path: '/journal' },
   { label: 'Chart of Accounts', icon: FileText,        path: '/accounts' },
   { label: 'Daily Sales',       icon: TrendingUp,      path: '/sales' },
   { label: 'Reports',           icon: BarChart3,       path: '/reports' },

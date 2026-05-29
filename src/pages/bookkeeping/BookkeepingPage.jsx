@@ -12,8 +12,8 @@ import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import {
   FileText, Receipt, ArrowRightLeft, Search, Eye, Trash2,
-  ChevronDown, ChevronRight, BookCheck, RotateCcw, PenLine,
-  FolderOpen, Folder, MessageSquare, Layers, X, Sparkles,
+  ChevronDown, ChevronRight, BookCheck, RotateCcw,
+  FolderOpen, Folder, MessageSquare, Layers, X, Sparkles, Pencil,
 } from 'lucide-react';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
@@ -163,14 +163,12 @@ export default function BookkeepingPage() {
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab]       = useState('transactions');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [showManualModal, setShowManualModal] = useState(false);
   const [uploadType, setUploadType]     = useState('bank');
   const [uploading, setUploading]         = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
-  const [savingManual, setSavingManual]   = useState(false);
   const [search, setSearch]             = useState('');
   const [filterCategory, setFilterCategory] = useState('');
-  const [editingTxn, setEditingTxn]     = useState(null);
+  const [editingField, setEditingField] = useState(null); // {id, field: 'category'|'description'|'amount'}
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [collapsedYears, setCollapsedYears]   = useState(new Set());
 
@@ -216,12 +214,6 @@ export default function BookkeepingPage() {
   const [invoices, setInvoices]       = useState([]);
   const [invLoading, setInvLoading]   = useState(true);
 
-  // ── Manual form ───────────────────────────────────────────────────────────
-  const [manualForm, setManualForm] = useState({
-    date: new Date().toISOString().slice(0,10), description: '', amount: '',
-    type: 'debit', category: '', account_id: '', reference: '',
-  });
-
   // ── Load functions ────────────────────────────────────────────────────────
 
   // Fetch the real unposted count with a head-only query (no row data transferred)
@@ -236,46 +228,75 @@ export default function BookkeepingPage() {
   const loadUnposted = useCallback(async () => {
     setStmtsLoading(true);
 
-    // 1. Paginate bank statements (small table — one query is fine)
-    const from = stmtsPage * STMTS_PER_PAGE;
-    const { data: stmtData, count: stmtCount } = await supabase
-      .from('bank_statements').select('*', { count: 'exact' })
-      .order('created_at', { ascending: false }).range(from, from + STMTS_PER_PAGE - 1);
-    setStmts(stmtData || []);
-    setStmtsTotal(stmtCount || 0);
+    const hasFilter = !!(search || filterCategory);
 
-    // 2. Fetch ALL unposted transactions for these statements, bypassing the
-    //    1,000-row cap by looping with .range() until no more rows are returned.
     let stmtTxnData = [];
-    if (stmtData?.length) {
-      const ids = stmtData.map(s => s.id);
-      stmtTxnData = await fetchAllPages((f, t) => {
+    let manData     = [];
+
+    if (hasFilter) {
+      // SEARCH/FILTER MODE — query ALL unposted transactions DB-wide, regardless
+      // of statement pagination. The statement folders shown below are derived
+      // from whichever statements have matching transactions.
+      const allMatches = await fetchAllPages((f, t) => {
         let q = supabase.from('transactions').select('*')
-          .eq('posted', false).in('bank_statement_id', ids)
+          .eq('posted', false)
           .order('date', { ascending: false }).range(f, t);
         if (search) q = q.ilike('description', `%${search}%`);
         if (filterCategory) q = q.eq('category', filterCategory);
         return q;
       });
+
       const grouped = {};
-      stmtTxnData.forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
+      allMatches.forEach(t => {
+        if (t.bank_statement_id) (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t);
+        else manData.push(t);
+      });
+      stmtTxnData = allMatches.filter(t => t.bank_statement_id);
       setTxnsByStmt(grouped);
+      setManualTxns(manData);
+
+      // Pull metadata for every statement referenced (for the folder headers)
+      const stmtIds = Object.keys(grouped);
+      if (stmtIds.length) {
+        const { data: matchedStmts } = await supabase.from('bank_statements')
+          .select('*').in('id', stmtIds).order('created_at', { ascending: false });
+        setStmts(matchedStmts || []);
+        setStmtsTotal(matchedStmts?.length || 0);
+      } else {
+        setStmts([]); setStmtsTotal(0);
+      }
     } else {
-      setTxnsByStmt({});
+      // DEFAULT MODE — paginate by bank statement, load that page's txns.
+      const from = stmtsPage * STMTS_PER_PAGE;
+      const { data: stmtData, count: stmtCount } = await supabase
+        .from('bank_statements').select('*', { count: 'exact' })
+        .order('created_at', { ascending: false }).range(from, from + STMTS_PER_PAGE - 1);
+      setStmts(stmtData || []);
+      setStmtsTotal(stmtCount || 0);
+
+      if (stmtData?.length) {
+        const ids = stmtData.map(s => s.id);
+        stmtTxnData = await fetchAllPages((f, t) =>
+          supabase.from('transactions').select('*')
+            .eq('posted', false).in('bank_statement_id', ids)
+            .order('date', { ascending: false }).range(f, t)
+        );
+        const grouped = {};
+        stmtTxnData.forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
+        setTxnsByStmt(grouped);
+      } else {
+        setTxnsByStmt({});
+      }
+
+      manData = await fetchAllPages((f, t) =>
+        supabase.from('transactions').select('*')
+          .eq('posted', false).is('bank_statement_id', null)
+          .order('date', { ascending: false }).range(f, t)
+      );
+      setManualTxns(manData);
     }
 
-    // 3. Manual transactions (no bank_statement_id) — also fully paginated
-    const manData = await fetchAllPages((f, t) => {
-      let q = supabase.from('transactions').select('*')
-        .eq('posted', false).is('bank_statement_id', null)
-        .order('date', { ascending: false }).range(f, t);
-      if (search) q = q.ilike('description', `%${search}%`);
-      if (filterCategory) q = q.eq('category', filterCategory);
-      return q;
-    });
-    setManualTxns(manData);
-
-    // 4. Load note counts for all visible transactions in one query
+    // Load note counts for everything currently visible
     const allIds = [...stmtTxnData, ...manData].map(t => t.id);
     if (allIds.length) {
       const { data: nc } = await supabase
@@ -370,12 +391,48 @@ export default function BookkeepingPage() {
     } else {
       setManualTxns(prev => prev.map(t => t.id===txn.id ? {...t,category} : t));
     }
-    setEditingTxn(null);
+    setEditingField(null);
     await updateTransaction(txn.id, { category });
     const supplier = txn.description || txn.supplier;
     if (supplier && category) {
       const propagated = await learnSupplierCategory(supplier, category);
       if (propagated > 0) { toast.success(`Auto-categorized ${propagated} more transaction${propagated!==1?'s':''}`); loadUnposted(); }
+    }
+  }
+
+  // Inline editor for description / amount on a transaction row.
+  // Validates, applies an optimistic local update, then persists to Supabase.
+  async function handleEditField(txn, field, rawValue) {
+    let value = rawValue;
+    if (field === 'amount') {
+      const n = parseFloat(rawValue);
+      if (Number.isNaN(n) || n < 0) { setEditingField(null); return; }
+      value = n;
+    }
+    if (field === 'description') {
+      value = (rawValue || '').trim();
+      if (!value || value === txn.description) { setEditingField(null); return; }
+    }
+    if (field === 'amount' && value === Math.abs(txn.amount)) { setEditingField(null); return; }
+
+    const patch = { [field]: value };
+    // Keep `supplier` aligned with `description` since both are stored
+    if (field === 'description') patch.supplier = value;
+
+    if (txn.bank_statement_id) {
+      setTxnsByStmt(prev => ({
+        ...prev,
+        [txn.bank_statement_id]: (prev[txn.bank_statement_id]||[]).map(t => t.id===txn.id ? {...t, ...patch} : t),
+      }));
+    } else {
+      setManualTxns(prev => prev.map(t => t.id===txn.id ? {...t, ...patch} : t));
+    }
+    setEditingField(null);
+    try {
+      await updateTransaction(txn.id, patch);
+    } catch (err) {
+      toast.error(err.message || 'Update failed');
+      loadUnposted();
     }
   }
 
@@ -614,23 +671,6 @@ export default function BookkeepingPage() {
     finally { setUploading(false); setUploadProgress(''); setShowUploadModal(false); }
   }
 
-  // ── Manual transaction ────────────────────────────────────────────────────
-
-  async function handleManualSubmit(e) {
-    e.preventDefault();
-    if (!manualForm.description || !manualForm.amount || !manualForm.date) { toast.error('Date, description, and amount are required'); return; }
-    setSavingManual(true);
-    try {
-      await addTransaction({ date: manualForm.date, description: manualForm.description, supplier: manualForm.description, amount: Math.abs(parseFloat(manualForm.amount)), type: manualForm.type, category: manualForm.category||'', account_id: manualForm.account_id||null, reference: manualForm.reference||'', bank_statement_id: null, posted: false });
-      toast.success('Transaction added');
-      setShowManualModal(false);
-      setManualForm({ date: new Date().toISOString().slice(0,10), description:'', amount:'', type:'debit', category:'', account_id:'', reference:'' });
-      loadUnposted();
-      loadUnpostedCount();
-    } catch (err) { toast.error(err.message || 'Failed'); }
-    finally { setSavingManual(false); }
-  }
-
   // ── Shared row renderer ───────────────────────────────────────────────────
 
   function TxnRow({ t, showPost = false, showUnpost = false, selectable = false }) {
@@ -650,22 +690,56 @@ export default function BookkeepingPage() {
             </td>
           )}
           <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
-          <td className="table-cell font-medium max-w-[200px] truncate" title={t.description}>{t.description||'—'}</td>
+          <td className="table-cell font-medium max-w-[240px]" title={t.description}>
+            {editingField?.id === t.id && editingField?.field === 'description' ? (
+              <input type="text" autoFocus defaultValue={t.description||''}
+                onBlur={e => handleEditField(t, 'description', e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.target.blur();
+                  else if (e.key === 'Escape') setEditingField(null);
+                }}
+                className="input-field text-sm py-1 w-full"
+              />
+            ) : (
+              <button onClick={() => setEditingField({ id: t.id, field: 'description' })}
+                title="Click to edit"
+                className="group/desc text-left w-full truncate hover:bg-surface-100/60 rounded px-1 -mx-1 py-0.5 transition cursor-text">
+                <span className="align-middle">{t.description||'—'}</span>
+                <Pencil size={10} className="inline ml-1 opacity-0 group-hover/desc:opacity-50 text-surface-400 align-middle" />
+              </button>
+            )}
+          </td>
           <td className="table-cell">
-            {editingTxn === t.id ? (
-              <select autoFocus defaultValue={t.category||''} onChange={e => handleCategorize(t, e.target.value)} onBlur={() => setEditingTxn(null)} className="input-field text-xs py-1 w-44">
+            {editingField?.id === t.id && editingField?.field === 'category' ? (
+              <select autoFocus defaultValue={t.category||''} onChange={e => handleCategorize(t, e.target.value)} onBlur={() => setEditingField(null)} className="input-field text-xs py-1 w-44">
                 <option value="">Uncategorized</option>
                 {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             ) : (
-              <button onClick={() => setEditingTxn(t.id)}
+              <button onClick={() => setEditingField({ id: t.id, field: 'category' })}
                 className={`text-xs rounded-full px-2.5 py-0.5 transition ${t.category ? 'badge-green cursor-pointer hover:opacity-80' : 'bg-surface-100 text-surface-500 hover:bg-surface-200 cursor-pointer'}`}>
                 {t.category||'+ Categorize'}
               </button>
             )}
           </td>
           <td className={`table-cell text-right font-mono text-sm ${t.type==='credit'?'text-green-600':'text-red-600'}`}>
-            {t.type==='credit'?'+':'−'}{formatCurrency(Math.abs(t.amount))}
+            {editingField?.id === t.id && editingField?.field === 'amount' ? (
+              <input type="number" step="0.01" min="0" autoFocus defaultValue={Math.abs(t.amount)}
+                onBlur={e => handleEditField(t, 'amount', e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.target.blur();
+                  else if (e.key === 'Escape') setEditingField(null);
+                }}
+                className="input-field text-sm py-1 w-28 text-right font-mono"
+              />
+            ) : (
+              <button onClick={() => setEditingField({ id: t.id, field: 'amount' })}
+                title="Click to edit"
+                className="group/amt hover:bg-surface-100/60 rounded px-1 -mx-1 py-0.5 transition cursor-text inline-flex items-center gap-1 justify-end">
+                <span>{t.type==='credit'?'+':'−'}{formatCurrency(Math.abs(t.amount))}</span>
+                <Pencil size={10} className="opacity-0 group-hover/amt:opacity-50 text-surface-400" />
+              </button>
+            )}
           </td>
           <td className="table-cell">
             <span className={`text-xs rounded-full px-2 py-0.5 ${t.type==='credit'?'badge-green':'bg-amber-100 text-amber-700'}`}>{t.type}</span>
@@ -751,7 +825,6 @@ export default function BookkeepingPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link to="/bookkeeping/reconcile" className="btn-secondary flex items-center gap-2"><ArrowRightLeft size={16} /> Reconcile</Link>
-          <button onClick={() => setShowManualModal(true)} className="btn-secondary flex items-center gap-2"><PenLine size={16} /> Manual Entry</button>
           <button onClick={() => { setUploadType('bank'); setShowUploadModal(true); }} className="btn-secondary flex items-center gap-2"><FileText size={16} /> Bank Statement</button>
           <button onClick={() => { setUploadType('invoice'); setShowUploadModal(true); }} className="btn-primary flex items-center gap-2"><Receipt size={16} /> Invoice</button>
         </div>
@@ -1091,25 +1164,6 @@ export default function BookkeepingPage() {
         </div>
       </Modal>
 
-      {/* ── MANUAL ENTRY MODAL ── */}
-      <Modal open={showManualModal} onClose={() => setShowManualModal(false)} title="Manual Transaction Entry">
-        <form onSubmit={handleManualSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Date</label><input type="date" value={manualForm.date} onChange={e => setManualForm({...manualForm,date:e.target.value})} className="input-field" required /></div>
-            <div><label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Type</label><select value={manualForm.type} onChange={e => setManualForm({...manualForm,type:e.target.value})} className="input-field"><option value="debit">Debit (expense)</option><option value="credit">Credit (income)</option></select></div>
-          </div>
-          <div><label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Description</label><input type="text" value={manualForm.description} onChange={e => setManualForm({...manualForm,description:e.target.value})} className="input-field" placeholder="e.g. Payroll — May 2024" required /></div>
-          <div><label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Amount</label><input type="number" min="0" step="0.01" value={manualForm.amount} onChange={e => setManualForm({...manualForm,amount:e.target.value})} className="input-field" placeholder="0.00" required /></div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Category</label><select value={manualForm.category} onChange={e => setManualForm({...manualForm,category:e.target.value})} className="input-field"><option value="">— Uncategorized —</option>{allCategories.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-            <div><label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Reference <span className="text-surface-400 normal-case font-normal">(optional)</span></label><input type="text" value={manualForm.reference} onChange={e => setManualForm({...manualForm,reference:e.target.value})} className="input-field" placeholder="Invoice #, journal ref" /></div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setShowManualModal(false)} className="btn-ghost">Cancel</button>
-            <button type="submit" disabled={savingManual} className="btn-primary">{savingManual ? <Spinner size="sm" className="text-white" /> : 'Add Transaction'}</button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }
