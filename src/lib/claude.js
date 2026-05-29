@@ -14,6 +14,27 @@ async function callClaude(messages, systemPrompt) {
   return data.text;
 }
 
+// Robustly extract a JSON object from Claude's response.
+// Handles: residual markdown fences, preamble prose, trailing text.
+// Throws with the raw response excerpt on failure so the error is debuggable.
+function parseClaudeJson(raw) {
+  // Strip any remaining markdown code fences (api/claude.js also strips these,
+  // but be defensive in case the response passes through a different path)
+  const stripped = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
+  // Extract the outermost JSON object — handles "Here is the JSON: {...} Hope that helps!"
+  const match = stripped.match(/{[\s\S]*}/);
+  if (!match) {
+    throw new Error(`No JSON object found in Claude response. Got: ${stripped.slice(0, 300)}`);
+  }
+
+  try {
+    return JSON.parse(match[0]);
+  } catch (err) {
+    throw new Error(`JSON parse failed: ${err.message}. Response excerpt: ${stripped.slice(0, 400)}`);
+  }
+}
+
 export async function extractBankStatement(base64Pdf) {
   const systemPrompt = `You are a financial document parser. Extract electronic withdrawal/debit transactions from this bank statement.
 
@@ -69,8 +90,7 @@ Use negative numbers for amounts. If you are unsure whether an item is a check, 
   ];
 
   const raw = await callClaude(messages, systemPrompt);
-  const clean = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  return JSON.parse(clean);
+  return parseClaudeJson(raw);
 }
 
 // ── Text-based extraction (primary path for all bank statement PDFs) ─────────
@@ -119,8 +139,7 @@ Use negative numbers for amounts. If unsure whether an item is a check, exclude 
   }];
 
   const raw = await callClaude(messages, systemPrompt);
-  const clean = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  return JSON.parse(clean);
+  return parseClaudeJson(raw);
 }
 
 // ── Page-by-page extraction for large PDFs ────────────────────────────────
@@ -179,8 +198,7 @@ async function extractPageImage(base64Jpeg, isFirstPage) {
     ],
   }];
   const raw = await callClaude(messages, systemPrompt);
-  const clean = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  return JSON.parse(clean);
+  return parseClaudeJson(raw);
 }
 
 /**
@@ -257,8 +275,7 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
   ];
 
   const raw = await callClaude(messages, systemPrompt);
-  const clean = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  return JSON.parse(clean);
+  return parseClaudeJson(raw);
 }
 
 export async function suggestCategory(description, existingCategories) {

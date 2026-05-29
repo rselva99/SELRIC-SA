@@ -34,10 +34,14 @@ export default async function handler(req, res) {
   }
 
   const data = await upstream.json();
-  const text = data.content
+  const raw = data.content
     .filter((b) => b.type === 'text')
     .map((b) => b.text)
     .join('\n');
+
+  // Strip markdown code fences at the API layer so every client gets clean text
+  // regardless of whether Claude ignored the "no backticks" instruction.
+  const text = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
 
   return res.status(200).json({ text });
 }
