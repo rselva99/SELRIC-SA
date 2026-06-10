@@ -27,7 +27,10 @@ async function nextReference() {
 
 export default function PayrollJournalForm({ period, onPosted, allowPeriodChange = false }) {
   const { user } = useAuth();
-  const { accounts } = useData();
+  // The "Chart of Accounts" page actually reads/writes the `categories` table, not
+  // `accounts`. We use the same source so this dropdown stays in sync with what the
+  // user sees in /accounts.
+  const { categories, loading: dataLoading, refresh } = useData();
 
   const [activePeriod, setActivePeriod] = useState(period);
   useEffect(() => { setActivePeriod(period); }, [period]);
@@ -41,28 +44,33 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
   const [accountId, setAccountId]       = useState('');
   const [posting, setPosting]           = useState(false);
 
-  // Group every account by its type so the dropdown shows the full chart of accounts.
-  // (The schema stores `type` as 'Asset'|'Liability'|'Equity'|'Revenue'|'Expense' — case-sensitive.)
+  // Ensure the reference data is fresh whenever the form opens — covers the edge
+  // case where the user opens the modal before DataContext finished its initial load.
+  useEffect(() => { refresh?.(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // Group every chart-of-accounts entry by its type. Type values are stored lowercase
+  // in `categories` ('expense'|'liability'|'asset'|'equity'|'revenue').
   const accountGroups = useMemo(() => {
-    const order = ['Expense', 'Liability', 'Asset', 'Equity', 'Revenue'];
+    const order = ['expense', 'liability', 'asset', 'equity', 'revenue'];
+    const label = { expense: 'Expense', liability: 'Liability', asset: 'Asset', equity: 'Equity', revenue: 'Revenue' };
     const groups = {};
-    for (const a of accounts) {
-      const t = a.type || 'Other';
-      (groups[t] = groups[t] || []).push(a);
+    for (const c of categories) {
+      const t = (c.type || 'other').toLowerCase();
+      (groups[t] = groups[t] || []).push(c);
     }
     Object.values(groups).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)));
     return order
       .filter(t => groups[t])
-      .map(t => [t, groups[t]])
-      .concat(Object.entries(groups).filter(([t]) => !order.includes(t)));
-  }, [accounts]);
+      .map(t => [label[t] || t, groups[t]])
+      .concat(Object.entries(groups).filter(([t]) => !order.includes(t)).map(([t, list]) => [t, list]));
+  }, [categories]);
 
-  // Default to Salaries & Wages (or similar) on first load
+  // Default to Salaries & Wages / Payroll on first load
   useEffect(() => {
     if (accountId) return;
-    const sw = accounts.find(a => /salaries\s*&?\s*wages|payroll/i.test(a.name));
+    const sw = categories.find(c => /salaries\s*&?\s*wages|payroll/i.test(c.name));
     if (sw) setAccountId(sw.id);
-  }, [accounts, accountId]);
+  }, [categories, accountId]);
 
   // Scan period for Venmo/CashApp payroll txns + any existing payroll JE
   useEffect(() => {
@@ -105,6 +113,13 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
     if (shortfall) { toast.error('Total payroll is less than Venmo/CashApp already posted'); return; }
     if (existingJE && !confirm(`A payroll JE (${existingJE.reference}) already exists for this period. Post another?`)) return;
 
+    // `accountId` is a row id from the `categories` table (the user's chart of accounts).
+    // journal_entry_lines.account_id / transactions.account_id FK to the legacy `accounts`
+    // table, so we can't put a category id there — store the category name in the `category`
+    // text column and leave account_id null. Same approach as the rest of the bookkeeping flow.
+    const picked = categories.find(c => c.id === accountId);
+    const categoryName = picked?.name || 'Payroll';
+
     setPosting(true);
     try {
       const reference = await nextReference();
@@ -126,11 +141,11 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
 
       const { error: e2 } = await supabase.from('journal_entry_lines').insert({
         journal_entry_id: entry.id,
-        account_id: accountId,
+        account_id: null,
         description: `Check/Other payroll for ${monthLabel}`,
         debit_amount: remaining,
         credit_amount: 0,
-        category: 'Payroll',
+        category: categoryName,
       });
       if (e2) throw e2;
 
@@ -140,8 +155,8 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
         supplier: 'Payroll JE',
         amount: remaining,
         type: 'debit',
-        category: 'Payroll',
-        account_id: accountId,
+        category: categoryName,
+        account_id: null,
         reference,
         bank_statement_id: null,
         journal_entry_id: entry.id,
@@ -218,8 +233,13 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
               </optgroup>
             ))}
           </select>
-          {accounts.length === 0 && (
-            <p className="text-xs text-amber-700 mt-1">No accounts loaded yet — open Chart of Accounts to add one.</p>
+          {dataLoading && categories.length === 0 && (
+            <p className="text-xs text-surface-500 mt-1">Loading chart of accounts…</p>
+          )}
+          {!dataLoading && categories.length === 0 && (
+            <p className="text-xs text-amber-700 mt-1">
+              Chart of accounts is empty. Add accounts under Chart of Accounts first.
+            </p>
           )}
         </div>
       </div>
