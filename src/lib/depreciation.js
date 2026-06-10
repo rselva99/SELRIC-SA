@@ -33,7 +33,8 @@ function depReference(period) {
   return `${DEP_REFERENCE_PREFIX}${period}`;
 }
 
-// Monthly straight-line amount for one asset.
+// Monthly straight-line amount for one asset (the asset's base rate; period
+// gating happens in `monthlyForAssetInPeriod`).
 export function monthlyForAsset(asset) {
   const life = Number(asset.life_years) || 0;
   const cost = Number(asset.cost) || 0;
@@ -41,16 +42,60 @@ export function monthlyForAsset(asset) {
   return cost / (life * 12);
 }
 
-// Sum of monthly charges across every active asset that is in service by the
-// last day of the period. Assets retired before the period are excluded.
+// 1-indexed depreciation month for the asset in the given period. Returns 1 in
+// the in-service month, 2 the month after, ... < 1 before the in-service
+// month. Pure date arithmetic so a future-dated asset never depreciates in a
+// past month.
+function depreciationMonthIndex(serviceDate, period) {
+  const [sy, sm] = serviceDate.split('-').map(Number);
+  const [py, pm] = period.split('-').map(Number);
+  return (py - sy) * 12 + (pm - sm) + 1;
+}
+
+// Per-asset depreciation for a specific period. Returns 0 when:
+//   • the asset is not yet in service that month (idx < 1)
+//   • the asset's retirement month is BEFORE this period (retire month itself
+//     still depreciates — it was in service for at least part of it)
+//   • the asset has reached the end of its useful life
+//
+// The last month of life pays the rounding stub — caps cumulative
+// depreciation at cost so accumulated never overshoots.
+export function monthlyForAssetInPeriod(asset, period) {
+  if (!asset) return 0;
+  const life = Number(asset.life_years) || 0;
+  const cost = Number(asset.cost) || 0;
+  if (life <= 0 || cost <= 0) return 0;
+
+  const idx = depreciationMonthIndex(asset.in_service_date, period);
+  if (idx < 1) return 0;
+
+  if (asset.retired_date) {
+    const retiredPeriod = asset.retired_date.slice(0, 7);
+    if (period > retiredPeriod) return 0;
+  }
+
+  const totalMonths = life * 12;
+  if (idx > totalMonths) return 0;
+
+  const monthly    = cost / totalMonths;
+  const priorAccum = monthly * (idx - 1);
+  const remaining  = cost - priorAccum;
+  return Math.max(0, Math.min(monthly, remaining));
+}
+
+// Sum of monthly charges across every asset that is depreciating in `period`.
+// Status is intentionally NOT used as a hard gate so that re-running with
+// Replace for a past month correctly includes assets that have since been
+// retired — the retirement date controls instead.
 export function combinedMonthly(assets, period) {
-  const end = lastDayOfPeriod(period);
-  return (assets || []).reduce((s, a) => {
-    if (a.status !== 'active') return s;
-    if (a.in_service_date > end) return s;
-    if (a.retired_date && a.retired_date < end) return s;
-    return s + monthlyForAsset(a);
-  }, 0);
+  return (assets || []).reduce((s, a) => s + monthlyForAssetInPeriod(a, period), 0);
+}
+
+// Total D&A that would be posted across multiple periods (used by the
+// catch-up modal to show an accurate "Will post" total when monthly amounts
+// vary across months — e.g., a new asset comes online mid-range).
+export function projectedTotalAcrossPeriods(assets, periods) {
+  return (periods || []).reduce((s, p) => s + combinedMonthly(assets, p), 0);
 }
 
 // All months from Jan 2024 (DEPRECIATION_START_PERIOD) through `endPeriod`,

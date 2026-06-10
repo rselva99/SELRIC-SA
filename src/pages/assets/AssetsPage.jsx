@@ -8,6 +8,7 @@ import {
   monthsThrough,
   existingDepreciationPeriods,
   generateDepreciationThrough,
+  projectedTotalAcrossPeriods,
   DEPRECIATION_START_PERIOD,
 } from '../../lib/depreciation';
 import Modal from '../../components/ui/Modal';
@@ -476,10 +477,18 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted }) {
 
   const monthly = useMemo(() => combinedMonthly(assets, endPeriod), [assets, endPeriod]);
   const periods = useMemo(() => monthsThrough(endPeriod), [endPeriod]);
-  const willPost = useMemo(() => {
-    if (!existing) return periods.length;
-    return periods.filter(p => replace || !existing.has(p)).length;
+  const willPostPeriods = useMemo(() => {
+    if (!existing) return periods;
+    return periods.filter(p => replace || !existing.has(p));
   }, [periods, existing, replace]);
+  const willPost = willPostPeriods.length;
+  // Sum per-period monthly across the periods we'd actually post — handles
+  // assets that come online mid-range or hit end-of-life so the total isn't
+  // a flat months×rate estimate.
+  const projectedTotal = useMemo(
+    () => projectedTotalAcrossPeriods(assets, willPostPeriods),
+    [assets, willPostPeriods]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -525,7 +534,7 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted }) {
         <div className="rounded-lg border border-surface-100 bg-surface-50/60 p-3 text-xs space-y-1">
           <div className="flex justify-between"><span>Months in range</span><span className="font-mono">{periods.length}</span></div>
           <div className="flex justify-between"><span>Already posted</span><span className="font-mono">{existing ? existing.size : '…'}</span></div>
-          <div className="flex justify-between font-semibold"><span>Will post now</span><span className="font-mono">{willPost} × {formatCurrency(monthly)} ≈ {formatCurrency(willPost * monthly)}</span></div>
+          <div className="flex justify-between font-semibold"><span>Will post now</span><span className="font-mono">{willPost} {willPost === 1 ? 'month' : 'months'} · {formatCurrency(projectedTotal)}</span></div>
         </div>
 
         <label className="flex items-center gap-2 text-sm text-surface-700 cursor-pointer">
