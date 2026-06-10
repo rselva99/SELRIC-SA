@@ -207,7 +207,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         setStepData({ payrollJECount: count || 0 });
       } else if (key === 'reconcile') {
         const { data } = await supabase.from('transactions')
-          .select('id, date, description, amount')
+          .select('id, date, description, amount, category')
           .gte('date', periodStart).lte('date', periodEnd)
           .eq('type', 'debit').eq('reconciled', false)
           .order('date');
@@ -850,10 +850,60 @@ function StepManualJournals({ data, navigate }) {
 
 function StepReconcile({ data, navigate, reload }) {
   const list = data.unreconciled || [];
-  async function markReconciled(id) {
-    const { error } = await supabase.from('transactions').update({ reconciled: true }).eq('id', id);
-    if (error) toast.error(error.message); else await reload();
+  const [selected, setSelected]           = useState(() => new Set());
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [busy, setBusy]                   = useState(false);
+
+  const categories = useMemo(() => {
+    const s = new Set();
+    list.forEach(t => { if (t.category) s.add(t.category); });
+    return [...s].sort();
+  }, [list]);
+
+  const filtered = useMemo(() => {
+    if (!categoryFilter) return list;
+    if (categoryFilter === '__uncat__') return list.filter(t => !t.category);
+    return list.filter(t => t.category === categoryFilter);
+  }, [list, categoryFilter]);
+
+  const visibleIds       = useMemo(() => filtered.map(t => t.id), [filtered]);
+  const visibleSelected  = visibleIds.filter(id => selected.has(id)).length;
+  const allVisibleChecked = filtered.length > 0 && visibleSelected === filtered.length;
+  const someVisibleChecked = visibleSelected > 0 && visibleSelected < filtered.length;
+
+  function toggleOne(id) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   }
+  function toggleAllVisible() {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (allVisibleChecked) visibleIds.forEach(id => next.delete(id));
+      else visibleIds.forEach(id => next.add(id));
+      return next;
+    });
+  }
+
+  async function markSelectedReconciled() {
+    if (!selected.size) return;
+    setBusy(true);
+    try {
+      const ids = [...selected];
+      const { error } = await supabase.from('transactions').update({ reconciled: true }).in('id', ids);
+      if (error) throw error;
+      toast.success(`Marked ${ids.length} as reconciled`);
+      setSelected(new Set());
+      await reload();
+    } catch (err) {
+      toast.error(err.message || 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!list.length) {
     return (
       <div className="card p-8 text-center">
@@ -862,35 +912,72 @@ function StepReconcile({ data, navigate, reload }) {
       </div>
     );
   }
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-sm text-surface-500">
-          For full invoice matching use the Reconciliation page; here you can quickly mark as reconciled.
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <label className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Category</label>
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+            className="input-field text-sm py-1.5 w-auto">
+            <option value="">All ({list.length})</option>
+            <option value="__uncat__">— Uncategorized —</option>
+            {categories.map(c => {
+              const n = list.filter(t => t.category === c).length;
+              return <option key={c} value={c}>{c} ({n})</option>;
+            })}
+          </select>
         </div>
-        <button onClick={() => navigate('/bookkeeping/reconcile')} className="btn-secondary text-xs">Open Reconciliation</button>
+        <div className="flex items-center gap-2">
+          {selected.size > 0 && (
+            <button onClick={() => setSelected(new Set())} className="btn-ghost text-xs">
+              Clear ({selected.size})
+            </button>
+          )}
+          <button onClick={markSelectedReconciled} disabled={!selected.size || busy}
+            className="btn-primary text-xs flex items-center gap-1.5">
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+            Mark Selected as Reconciled{selected.size ? ` (${selected.size})` : ''}
+          </button>
+          <button onClick={() => navigate('/bookkeeping/reconcile')} className="btn-secondary text-xs">Open Reconciliation</button>
+        </div>
       </div>
       <div className="card overflow-hidden max-h-[400px] overflow-y-auto">
         <table className="w-full">
-          <thead className="sticky top-0 bg-surface-50">
+          <thead className="sticky top-0 bg-surface-50 z-10">
             <tr className="border-b border-surface-100">
+              <th className="table-header w-8">
+                <input type="checkbox"
+                  ref={el => { if (el) el.indeterminate = someVisibleChecked; }}
+                  checked={allVisibleChecked} onChange={toggleAllVisible}
+                  aria-label="Select all visible" />
+              </th>
               <th className="table-header">Date</th>
               <th className="table-header">Description</th>
+              <th className="table-header">Category</th>
               <th className="table-header text-right">Amount</th>
-              <th className="table-header text-right">Action</th>
             </tr>
           </thead>
           <tbody>
-            {list.map(t => (
-              <tr key={t.id} className="border-b border-surface-50">
+            {filtered.map(t => (
+              <tr key={t.id}
+                onClick={() => toggleOne(t.id)}
+                className={`border-b border-surface-50 cursor-pointer ${selected.has(t.id) ? 'bg-brand-50' : 'hover:bg-surface-50'}`}>
+                <td className="table-cell w-8">
+                  <input type="checkbox" checked={selected.has(t.id)}
+                    onChange={() => toggleOne(t.id)} onClick={e => e.stopPropagation()} />
+                </td>
                 <td className="table-cell font-mono text-xs">{formatDate(t.date)}</td>
                 <td className="table-cell text-sm truncate max-w-xs" title={t.description}>{t.description}</td>
-                <td className="table-cell text-right font-mono text-xs">{formatCurrency(Math.abs(t.amount))}</td>
-                <td className="table-cell text-right">
-                  <button onClick={() => markReconciled(t.id)} className="btn-ghost text-xs">Mark reconciled</button>
+                <td className="table-cell text-xs">
+                  {t.category ? <span className="badge-green text-xs">{t.category}</span> : <span className="text-surface-300">—</span>}
                 </td>
+                <td className="table-cell text-right font-mono text-xs">{formatCurrency(Math.abs(t.amount))}</td>
               </tr>
             ))}
+            {!filtered.length && (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-surface-400">No transactions match this category.</td></tr>
+            )}
           </tbody>
         </table>
       </div>

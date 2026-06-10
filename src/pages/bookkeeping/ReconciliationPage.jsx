@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Check, Link2, Search, Eye } from 'lucide-react';
+import { ArrowLeft, Check, Link2, Search, Eye, CheckCircle2, Loader2 } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 
 export default function ReconciliationPage() {
@@ -13,6 +13,9 @@ export default function ReconciliationPage() {
   const [selectedTxn,  setSelectedTxn]  = useState(null);
   const [selectedInv,  setSelectedInv]  = useState(null);
   const [search,       setSearch]       = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [bulkSelected, setBulkSelected]     = useState(() => new Set());
+  const [bulkBusy,     setBulkBusy]         = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,8 +38,53 @@ export default function ReconciliationPage() {
       const q = search.toLowerCase();
       list = list.filter(t => t.description?.toLowerCase().includes(q) || t.supplier?.toLowerCase().includes(q));
     }
+    if (categoryFilter === '__uncat__') list = list.filter(t => !t.category);
+    else if (categoryFilter) list = list.filter(t => t.category === categoryFilter);
     return list;
-  }, [transactions, search]);
+  }, [transactions, search, categoryFilter]);
+
+  const categories = useMemo(() => {
+    const s = new Set();
+    transactions.forEach(t => { if (t.category) s.add(t.category); });
+    return [...s].sort();
+  }, [transactions]);
+
+  const visibleIds        = useMemo(() => unreconciledTxns.map(t => t.id), [unreconciledTxns]);
+  const visibleSelected   = visibleIds.filter(id => bulkSelected.has(id)).length;
+  const allVisibleChecked = unreconciledTxns.length > 0 && visibleSelected === unreconciledTxns.length;
+  const someVisibleChecked = visibleSelected > 0 && visibleSelected < unreconciledTxns.length;
+
+  function toggleBulkOne(id) {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleBulkAllVisible() {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (allVisibleChecked) visibleIds.forEach(id => next.delete(id));
+      else visibleIds.forEach(id => next.add(id));
+      return next;
+    });
+  }
+  async function bulkReconcile() {
+    if (!bulkSelected.size) return;
+    setBulkBusy(true);
+    try {
+      const ids = [...bulkSelected];
+      const { error } = await supabase.from('transactions').update({ reconciled: true }).in('id', ids);
+      if (error) throw error;
+      toast.success(`Marked ${ids.length} as reconciled`);
+      setBulkSelected(new Set());
+      load();
+    } catch (err) {
+      toast.error(err.message || 'Bulk reconcile failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   const pendingInvoices = useMemo(() => invoices, [invoices]);
 
@@ -92,11 +140,25 @@ export default function ReconciliationPage() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <div className="relative flex-1">
+      <div className="flex flex-col sm:flex-row gap-3 mb-6 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
           <input type="text" placeholder="Search transactions…" value={search} onChange={e => setSearch(e.target.value)} className="input-field pl-9" />
         </div>
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+          className="input-field w-auto min-w-[170px]">
+          <option value="">All categories ({transactions.length})</option>
+          <option value="__uncat__">— Uncategorized —</option>
+          {categories.map(c => {
+            const n = transactions.filter(t => t.category === c).length;
+            return <option key={c} value={c}>{c} ({n})</option>;
+          })}
+        </select>
+        <button onClick={bulkReconcile} disabled={!bulkSelected.size || bulkBusy}
+          className="btn-secondary flex items-center gap-2 disabled:opacity-40">
+          {bulkBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+          Mark All Selected as Reconciled{bulkSelected.size ? ` (${bulkSelected.size})` : ''}
+        </button>
         <button onClick={handleMatch} disabled={!selectedTxn || !selectedInv} className="btn-primary flex items-center gap-2 disabled:opacity-40">
           <Link2 size={16} /> Match Selected
         </button>
@@ -105,29 +167,43 @@ export default function ReconciliationPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Bank Transactions */}
         <div className="card overflow-hidden">
-          <div className="px-5 py-3 border-b border-surface-100 bg-surface-50">
-            <h3 className="section-title">Bank Transactions ({unreconciledTxns.length})</h3>
-            <p className="text-xs text-surface-400 mt-0.5">Select one to match with an invoice</p>
+          <div className="px-5 py-3 border-b border-surface-100 bg-surface-50 flex items-center justify-between">
+            <div>
+              <h3 className="section-title">Bank Transactions ({unreconciledTxns.length})</h3>
+              <p className="text-xs text-surface-400 mt-0.5">Check boxes to reconcile in bulk · click a row to match an invoice</p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-surface-600 cursor-pointer">
+              <input type="checkbox"
+                ref={el => { if (el) el.indeterminate = someVisibleChecked; }}
+                checked={allVisibleChecked} onChange={toggleBulkAllVisible} />
+              Select all
+            </label>
           </div>
           <div className="max-h-[500px] overflow-y-auto">
             {unreconciledTxns.length === 0 ? (
               <div className="p-8 text-center text-sm text-surface-400">All transactions reconciled!</div>
             ) : (
-              unreconciledTxns.map(t => (
-                <button key={t.id} onClick={() => setSelectedTxn(selectedTxn === t.id ? null : t.id)}
-                  className={`w-full text-left px-5 py-3 border-b border-surface-50 transition hover:bg-brand-50/50 ${selectedTxn === t.id ? 'bg-brand-50 border-l-2 border-l-brand-500' : ''}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-surface-800 truncate max-w-[200px]">{t.description || t.supplier || '—'}</p>
+              unreconciledTxns.map(t => {
+                const checked = bulkSelected.has(t.id);
+                return (
+                  <div key={t.id}
+                    onClick={() => setSelectedTxn(selectedTxn === t.id ? null : t.id)}
+                    className={`flex items-center gap-3 px-5 py-3 border-b border-surface-50 cursor-pointer transition hover:bg-brand-50/50 ${selectedTxn === t.id ? 'bg-brand-50 border-l-2 border-l-brand-500' : ''} ${checked ? 'bg-brand-50/40' : ''}`}>
+                    <input type="checkbox" checked={checked}
+                      onChange={() => toggleBulkOne(t.id)}
+                      onClick={e => e.stopPropagation()}
+                      aria-label={`Select ${t.description || ''}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-surface-800 truncate">{t.description || t.supplier || '—'}</p>
                       <p className="text-xs text-surface-400 font-mono mt-0.5">{formatDate(t.date)}</p>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right flex-shrink-0">
                       <p className="text-sm font-mono font-semibold text-red-600">−{formatCurrency(Math.abs(t.amount))}</p>
                       {t.category && <p className="text-xs text-surface-400">{t.category}</p>}
                     </div>
                   </div>
-                </button>
-              ))
+                );
+              })
             )}
           </div>
           {selectedTxn && (
