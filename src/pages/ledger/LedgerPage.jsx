@@ -1,24 +1,16 @@
-import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from 'react';
 import { format, parseISO } from 'date-fns';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
-import { BookOpen, TrendingDown, TrendingUp, X } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { BookOpen, TrendingDown, TrendingUp, X, Search, Download, Loader2 } from 'lucide-react';
 
 const PAGE_SIZE   = 100;
-const CURRENT_YR  = new Date().getFullYear();
-const YEARS       = [CURRENT_YR - 2, CURRENT_YR - 1, CURRENT_YR, CURRENT_YR + 1];
+const FETCH_BATCH = 1000;            // Supabase per-request row limit
 const MONTHS_ABBR = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-
-function allPeriods() {
-  const out = [];
-  for (const y of YEARS)
-    for (let m = 0; m < 12; m++)
-      out.push({ key: `${y}-${String(m+1).padStart(2,'0')}`, label: `${MONTHS_ABBR[m]}-${String(y).slice(2)}` });
-  return out;
-}
 
 const monthLabel = (yyyymm) => format(parseISO(yyyymm + '-01'), 'MMM-yy').toUpperCase();
 
@@ -38,112 +30,193 @@ function PageBar({ page, total, onPage }) {
   );
 }
 
-export default function LedgerPage() {
-  const { accounts, categories } = useData();
+// CSV helper — escapes quotes/commas/newlines per RFC 4180.
+function downloadCsv(filename, headers, rows) {
+  const esc = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
 
-  const [selectedYear,      setSelectedYear]      = useState('');
+export default function LedgerPage() {
+  const { accounts } = useData();
+
+  // ── Year list derived from real posted data ────────────────────────────────
+  const [availableYears, setAvailableYears] = useState([]);
+  const [yearListState, setYearListState]   = useState('loading'); // loading | error | ready
+
+  // ── Filters ────────────────────────────────────────────────────────────────
   const [selectedPeriod,    setSelectedPeriod]    = useState('');
+  const [selectedYear,      setSelectedYear]      = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [selectedCategory,  setSelectedCategory]  = useState('');
+  const [searchInput,       setSearchInput]       = useState('');
+  const [search,            setSearch]            = useState(''); // debounced
+  const [dateFrom,          setDateFrom]          = useState('');
+  const [dateTo,            setDateTo]            = useState('');
+  const [minAmount,         setMinAmount]         = useState('');
+  const [maxAmount,         setMaxAmount]         = useState('');
+  const [txnType,           setTxnType]           = useState(''); // '' | 'debit' | 'credit'
   const [page,              setPage]              = useState(0);
 
-  const [transactions, setTransactions] = useState([]);
-  const [yearSummary,  setYearSummary]  = useState(null);
-  const [total,        setTotal]        = useState(0);
-  const [loading,      setLoading]      = useState(false);
+  // ── Data state machine ────────────────────────────────────────────────────
+  const [transactions,  setTransactions]  = useState([]);
+  const [filterSummary, setFilterSummary] = useState([]); // ALL matching rows (slim)
+  const [total,         setTotal]         = useState(0);
+  const [loading,       setLoading]       = useState(false);
+  const [exporting,     setExporting]     = useState(false);
 
-  // The year used for the running balance + summary. Falls back to the period's
-  // year when only a period is filtered.
-  const activeYear = selectedYear || (selectedPeriod ? selectedPeriod.slice(0, 4) : '');
+  // Category list comes from useData(); avoid trickling stale renders by picking
+  // a stable slice here.
+  const { categories } = useData();
+
+  // Min/max posted dates → year dropdown. One-shot fetch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [minRes, maxRes] = await Promise.all([
+          supabase.from('transactions').select('date').eq('posted', true).order('date', { ascending: true }).limit(1),
+          supabase.from('transactions').select('date').eq('posted', true).order('date', { ascending: false }).limit(1),
+        ]);
+        if (cancelled) return;
+        const min = minRes.data?.[0]?.date;
+        const max = maxRes.data?.[0]?.date;
+        const years = [];
+        if (min && max) {
+          const a = parseInt(min.slice(0, 4), 10);
+          const b = parseInt(max.slice(0, 4), 10);
+          for (let y = a; y <= b; y++) years.push(y);
+        }
+        setAvailableYears(years);
+        setYearListState('ready');
+      } catch {
+        if (!cancelled) setYearListState('error');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Debounce description search.
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), 350);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
+  // Effective dates: if either dateFrom or dateTo is set, they override
+  // period/year. Period takes precedence over year.
+  const dateBounds = useMemo(() => {
+    if (dateFrom || dateTo) return { from: dateFrom || null, to: dateTo || null, source: 'range' };
+    if (selectedPeriod) {
+      const [yr, mo] = selectedPeriod.split('-');
+      const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+      return { from: `${yr}-${mo}-01`, to: `${yr}-${mo}-${String(lastDay).padStart(2,'0')}`, source: 'period' };
+    }
+    if (selectedYear) return { from: `${selectedYear}-01-01`, to: `${selectedYear}-12-31`, source: 'year' };
+    return { from: null, to: null, source: 'none' };
+  }, [dateFrom, dateTo, selectedPeriod, selectedYear]);
+
+  // Build a fresh PostgREST query with the current filter set applied. Used by
+  // pageQ, the slim full-set summary fetch, and the CSV export.
+  const buildFilteredQuery = useCallback((columns, opts = undefined) => {
+    let q = opts ? supabase.from('transactions').select(columns, opts) : supabase.from('transactions').select(columns);
+    q = q.eq('posted', true);
+    if (dateBounds.from) q = q.gte('date', dateBounds.from);
+    if (dateBounds.to)   q = q.lte('date', dateBounds.to);
+    if (selectedAccountId) q = q.eq('account_id', selectedAccountId);
+    if (selectedCategory)  q = q.eq('category', selectedCategory);
+    if (txnType)           q = q.eq('type', txnType);
+    const min = parseFloat(minAmount);
+    const max = parseFloat(maxAmount);
+    if (!Number.isNaN(min)) q = q.gte('amount', min);
+    if (!Number.isNaN(max)) q = q.lte('amount', max);
+    if (search) q = q.ilike('description', `%${search}%`);
+    return q;
+  }, [dateBounds, selectedAccountId, selectedCategory, txnType, minAmount, maxAmount, search]);
+
+  // Pull every matching row in batches of 1000. Returns the merged set.
+  const fetchAllFiltered = useCallback(async (columns) => {
+    const out = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await buildFilteredQuery(columns).order('date', { ascending: true }).range(from, from + FETCH_BATCH - 1);
+      if (error) throw error;
+      const rows = data || [];
+      out.push(...rows);
+      if (rows.length < FETCH_BATCH) break;
+      from += FETCH_BATCH;
+    }
+    return out;
+  }, [buildFilteredQuery]);
+
+  // Generation token so a stale loadData call can't overwrite newer state.
+  const loadIdRef = useRef(0);
 
   const loadData = useCallback(async () => {
+    const myId = ++loadIdRef.current;
     setLoading(true);
     try {
-      let pageQ = supabase.from('transactions')
-        .select('*', { count: 'exact' })
-        .eq('posted', true)
+      const pageQ = buildFilteredQuery('*', { count: 'exact' })
         .order('date', { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-      if (selectedPeriod) {
-        const [yr, mo] = selectedPeriod.split('-');
-        const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
-        pageQ = pageQ.gte('date', `${yr}-${mo}-01`).lte('date', `${yr}-${mo}-${String(lastDay).padStart(2,'0')}`);
-      } else if (selectedYear) {
-        pageQ = pageQ.gte('date', `${selectedYear}-01-01`).lte('date', `${selectedYear}-12-31`);
-      }
-      if (selectedAccountId) pageQ = pageQ.eq('account_id', selectedAccountId);
-      if (selectedCategory)  pageQ = pageQ.eq('category', selectedCategory);
-
-      let summaryQ = null;
-      if (activeYear) {
-        summaryQ = supabase.from('transactions')
-          .select('id, date, type, amount')
-          .eq('posted', true)
-          .gte('date', `${activeYear}-01-01`)
-          .lte('date', `${activeYear}-12-31`)
-          .order('date', { ascending: true });
-        if (selectedAccountId) summaryQ = summaryQ.eq('account_id', selectedAccountId);
-        if (selectedCategory)  summaryQ = summaryQ.eq('category', selectedCategory);
-      }
-
-      const [pageRes, summaryRes] = await Promise.all([
+      const [pageRes, summary] = await Promise.all([
         pageQ,
-        summaryQ || Promise.resolve(null),
+        fetchAllFiltered('id, date, type, amount'),
       ]);
+
+      if (myId !== loadIdRef.current) return; // superseded
       if (pageRes.error) throw pageRes.error;
-      if (summaryRes && summaryRes.error) throw summaryRes.error;
 
       setTransactions(pageRes.data || []);
       setTotal(pageRes.count || 0);
-      setYearSummary(summaryRes ? (summaryRes.data || []) : null);
+      setFilterSummary(summary);
     } catch (err) {
       console.error('LedgerPage load error:', err);
+      if (myId === loadIdRef.current) toast.error('Failed to load transactions');
     } finally {
-      setLoading(false);
+      if (myId === loadIdRef.current) setLoading(false);
     }
-  }, [page, selectedPeriod, selectedYear, selectedAccountId, selectedCategory, activeYear]);
+  }, [page, buildFilteredQuery, fetchAllFiltered]);
 
   useEffect(() => { loadData(); }, [loadData]);
-  useEffect(() => { setPage(0); }, [selectedPeriod, selectedYear, selectedAccountId, selectedCategory]);
 
-  // id -> cumulative balance from Jan 1 of activeYear.
+  // Reset page on any filter change.
+  useEffect(() => {
+    setPage(0);
+  }, [selectedPeriod, selectedYear, selectedAccountId, selectedCategory, search, dateFrom, dateTo, minAmount, maxAmount, txnType]);
+
+  // ── Derived: totals + per-row running balance ─────────────────────────────
+  const summary = useMemo(() => {
+    let debit = 0, credit = 0;
+    for (const t of filterSummary) {
+      if (t.type === 'debit')  debit  += Math.abs(t.amount);
+      else if (t.type === 'credit') credit += Math.abs(t.amount);
+    }
+    return { count: filterSummary.length, debits: debit, credits: credit, net: credit - debit };
+  }, [filterSummary]);
+
   const runningBalanceById = useMemo(() => {
-    if (!yearSummary) return null;
     const map = {};
     let running = 0;
-    for (const t of yearSummary) {
+    for (const t of filterSummary) {
       running += t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
       map[t.id] = running;
     }
     return map;
-  }, [yearSummary]);
+  }, [filterSummary]);
 
-  const yearTotals = useMemo(() => {
-    if (!yearSummary) return null;
-    const debits  = yearSummary.filter(t => t.type === 'debit').reduce((s,t) => s + Math.abs(t.amount), 0);
-    const credits = yearSummary.filter(t => t.type === 'credit').reduce((s,t) => s + Math.abs(t.amount), 0);
-    return { debits, credits, net: credits - debits };
-  }, [yearSummary]);
-
-  const pageTotals = useMemo(() => {
-    const debits  = transactions.filter(t => t.type === 'debit').reduce((s,t)  => s + Math.abs(t.amount), 0);
-    const credits = transactions.filter(t => t.type === 'credit').reduce((s,t) => s + Math.abs(t.amount), 0);
-    return { debits, credits, net: credits - debits };
-  }, [transactions]);
-
-  const summary = yearTotals || pageTotals;
-
-  const enrichedTxns = useMemo(() => {
-    if (runningBalanceById) {
-      return transactions.map(t => ({ ...t, _runningBalance: runningBalanceById[t.id] ?? 0 }));
-    }
-    let running = 0;
-    return transactions.map(t => {
-      running += t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
-      return { ...t, _runningBalance: running };
-    });
-  }, [transactions, runningBalanceById]);
+  const enrichedTxns = useMemo(
+    () => transactions.map(t => ({ ...t, _runningBalance: runningBalanceById[t.id] ?? 0 })),
+    [transactions, runningBalanceById]
+  );
 
   const monthGroups = useMemo(() => {
     const groups = {};
@@ -156,26 +229,73 @@ export default function LedgerPage() {
       .map(([key, txns]) => {
         const debits  = txns.filter(t => t.type === 'debit').reduce((s,t) => s + Math.abs(t.amount), 0);
         const credits = txns.filter(t => t.type === 'credit').reduce((s,t) => s + Math.abs(t.amount), 0);
-        return {
-          key,
-          label: monthLabel(key),
-          transactions: txns,
-          debits, credits, net: credits - debits,
-        };
+        return { key, label: monthLabel(key), transactions: txns, debits, credits, net: credits - debits };
       });
   }, [enrichedTxns]);
 
-  // TODO(accounts-table): `accounts` is the legacy/empty table; new transactions
-  // have account_id null. This lookup shows '—' for them. The Category column
-  // already carries the meaningful chart-of-accounts label.
+  // Account name lookup. The legacy `accounts` table has few rows; new txns
+  // have account_id null, so most rows show '—' (the category column is the
+  // meaningful chart-of-accounts label).
   const accountMap = useMemo(() => {
     const m = {}; accounts.forEach(a => { m[a.id] = a.name; }); return m;
   }, [accounts]);
 
-  const hasFilters = selectedYear || selectedPeriod || selectedAccountId || selectedCategory;
+  // Periods dropdown: every month in every year that has data.
+  const periodOptions = useMemo(() => {
+    const out = [];
+    for (const y of availableYears) {
+      for (let m = 0; m < 12; m++) {
+        out.push({ key: `${y}-${String(m+1).padStart(2,'0')}`, label: `${MONTHS_ABBR[m]}-${String(y).slice(2)}` });
+      }
+    }
+    return out;
+  }, [availableYears]);
+
+  const hasFilters = !!(
+    selectedYear || selectedPeriod || selectedAccountId || selectedCategory ||
+    search || dateFrom || dateTo || minAmount || maxAmount || txnType
+  );
 
   function clearFilters() {
     setSelectedYear(''); setSelectedPeriod(''); setSelectedAccountId(''); setSelectedCategory('');
+    setSearchInput(''); setSearch('');
+    setDateFrom(''); setDateTo('');
+    setMinAmount(''); setMaxAmount('');
+    setTxnType('');
+  }
+
+  // ── CSV export — current filtered view, full set ──────────────────────────
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const rows = await fetchAllFiltered('id, date, description, category, account_id, amount, type');
+      // Recompute running balance over the EXACT same ordering as displayed.
+      let running = 0;
+      const data = rows.map(t => {
+        running += t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
+        const debit  = t.type === 'debit'  ? Math.abs(t.amount) : '';
+        const credit = t.type === 'credit' ? Math.abs(t.amount) : '';
+        return [
+          t.date,
+          monthLabel(t.date.slice(0, 7)),
+          t.description || '',
+          t.category || '',
+          accountMap[t.account_id] || '',
+          debit,
+          credit,
+          running.toFixed(2),
+        ];
+      });
+      const headers = ['Date', 'Period', 'Description', 'Category', 'Account', 'Debit', 'Credit', 'Balance'];
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      downloadCsv(`ledger_${stamp}.csv`, headers, data);
+      toast.success(`Exported ${data.length} transactions`);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Export failed');
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -184,30 +304,35 @@ export default function LedgerPage() {
         <div>
           <h1 className="page-title">General Ledger</h1>
           <p className="text-surface-500 text-sm mt-0.5">
-            {total.toLocaleString()} posted transactions
+            {total.toLocaleString()} posted transactions match
             {loading && <span className="ml-2 text-surface-400">· loading…</span>}
           </p>
         </div>
       </div>
 
-      {/* Year / view summary bar */}
-      <div className="card px-4 py-3 mb-6 flex flex-wrap items-center justify-between gap-4">
+      {/* ── Current View Summary — always reflects all active filters ──────── */}
+      <div className="card px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-4">
         <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold">
-          {activeYear ? `Year ${activeYear}` : 'Current View'} Summary
+          Current View Summary
+          {hasFilters && <span className="ml-2 normal-case tracking-normal text-surface-400">· filtered</span>}
         </div>
         <div className="flex flex-wrap gap-5 text-sm">
           <div className="flex items-center gap-2">
+            <span className="text-surface-500 text-xs">Matches</span>
+            <span className="font-mono font-semibold">{summary.count.toLocaleString()}</span>
+          </div>
+          <div className="flex items-center gap-2">
             <TrendingDown size={14} className="text-red-600" />
-            <span className="text-surface-500 text-xs">Total Debits</span>
+            <span className="text-surface-500 text-xs">Debits</span>
             <span className="font-mono font-semibold text-red-600">{formatCurrency(summary.debits)}</span>
           </div>
           <div className="flex items-center gap-2">
             <TrendingUp size={14} className="text-green-600" />
-            <span className="text-surface-500 text-xs">Total Credits</span>
+            <span className="text-surface-500 text-xs">Credits</span>
             <span className="font-mono font-semibold text-green-600">{formatCurrency(summary.credits)}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-surface-500 text-xs">{summary.net >= 0 ? 'Net Income' : 'Net Loss'}</span>
+            <span className="text-surface-500 text-xs">{summary.net >= 0 ? 'Net' : 'Net'}</span>
             <span className={`font-mono font-semibold ${summary.net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
               {summary.net >= 0 ? '+' : ''}{formatCurrency(summary.net)}
             </span>
@@ -215,39 +340,89 @@ export default function LedgerPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <select value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); if (e.target.value) setSelectedYear(''); }}
-          className="input-field w-auto min-w-[130px]">
-          <option value="">All Periods</option>
-          {allPeriods().map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-        </select>
+      {/* ── Filter toolbar ────────────────────────────────────────────────── */}
+      <div className="card px-4 py-3 mb-6 space-y-3">
+        {/* Row 1: search + date range + type */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
+            <input
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              placeholder="Search description…"
+              className="input-field pl-9"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-surface-500">
+            <span className="uppercase tracking-wider font-semibold">Range</span>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              className="input-field text-xs py-1.5 w-auto" title="From" />
+            <span className="text-surface-300">→</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              className="input-field text-xs py-1.5 w-auto" title="To" />
+            {(dateFrom || dateTo) && (selectedPeriod || selectedYear) && (
+              <span className="text-amber-700 text-[10px] uppercase tracking-wider">overrides period/year</span>
+            )}
+          </div>
+          <select value={txnType} onChange={e => setTxnType(e.target.value)}
+            className="input-field text-xs py-1.5 w-auto">
+            <option value="">All types</option>
+            <option value="debit">Debits only</option>
+            <option value="credit">Credits only</option>
+          </select>
+        </div>
 
-        <select value={selectedYear} onChange={e => { setSelectedYear(e.target.value); if (e.target.value) setSelectedPeriod(''); }}
-          className="input-field w-auto">
-          <option value="">All Years</option>
-          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
+        {/* Row 2: period / year / account / category / amount range */}
+        <div className="flex flex-wrap items-center gap-3">
+          <select value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); if (e.target.value) setSelectedYear(''); }}
+            className="input-field text-xs py-1.5 w-auto min-w-[130px]" disabled={!!(dateFrom || dateTo)}>
+            <option value="">All periods</option>
+            {periodOptions.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+          </select>
 
-        <select value={selectedAccountId} onChange={e => setSelectedAccountId(e.target.value)}
-          className="input-field w-auto min-w-[160px]">
-          <option value="">All Accounts</option>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+          <select value={selectedYear} onChange={e => { setSelectedYear(e.target.value); if (e.target.value) setSelectedPeriod(''); }}
+            className="input-field text-xs py-1.5 w-auto" disabled={!!(dateFrom || dateTo)}>
+            <option value="">{yearListState === 'loading' ? 'Loading years…' : 'All years'}</option>
+            {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
 
-        <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
-          className="input-field w-auto min-w-[180px]">
-          <option value="">All Categories</option>
-          {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-        </select>
+          <select value={selectedAccountId} onChange={e => setSelectedAccountId(e.target.value)}
+            className="input-field text-xs py-1.5 w-auto min-w-[140px]">
+            <option value="">All accounts</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
 
-        {hasFilters && (
-          <button onClick={clearFilters} className="btn-ghost text-xs flex items-center gap-1">
-            <X size={12} /> Clear
-          </button>
-        )}
+          <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
+            className="input-field text-xs py-1.5 w-auto min-w-[160px]">
+            <option value="">All categories</option>
+            {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+
+          <div className="flex items-center gap-1.5 text-xs text-surface-500">
+            <span className="uppercase tracking-wider font-semibold">Amount</span>
+            <input type="number" min="0" step="0.01" value={minAmount} onChange={e => setMinAmount(e.target.value)}
+              placeholder="Min" className="input-field text-xs py-1.5 w-24 font-mono text-right" />
+            <span className="text-surface-300">→</span>
+            <input type="number" min="0" step="0.01" value={maxAmount} onChange={e => setMaxAmount(e.target.value)}
+              placeholder="Max" className="input-field text-xs py-1.5 w-24 font-mono text-right" />
+          </div>
+
+          <div className="flex items-center gap-2 ml-auto">
+            {hasFilters && (
+              <button onClick={clearFilters} className="btn-ghost text-xs flex items-center gap-1">
+                <X size={12} /> Clear filters
+              </button>
+            )}
+            <button onClick={handleExport} disabled={exporting || summary.count === 0}
+              className="btn-secondary text-xs flex items-center gap-1.5">
+              {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+              Export CSV
+            </button>
+          </div>
+        </div>
       </div>
 
+      {/* ── Table ────────────────────────────────────────────────────────── */}
       {loading && !transactions.length ? (
         <div className="flex justify-center py-20"><Spinner size="lg" /></div>
       ) : total === 0 ? (
@@ -312,15 +487,15 @@ export default function LedgerPage() {
                     </tr>
                   </Fragment>
                 ))}
-                {activeYear && yearTotals && (
+                {summary.count > 0 && (
                   <tr className="bg-surface-100 border-t-2 border-surface-300">
                     <td colSpan={5} className="table-cell text-right text-xs uppercase tracking-wider font-bold text-surface-800">
-                      Year {activeYear} Total
+                      Filtered Total · {summary.count.toLocaleString()} txns
                     </td>
-                    <td className="table-cell text-right font-mono text-sm font-bold text-red-700">{formatCurrency(yearTotals.debits)}</td>
-                    <td className="table-cell text-right font-mono text-sm font-bold text-green-700">{formatCurrency(yearTotals.credits)}</td>
-                    <td className={`table-cell text-right font-mono text-sm font-bold ${yearTotals.net >= 0 ? 'text-green-800' : 'text-red-800'}`}>
-                      {formatCurrency(yearTotals.net)}
+                    <td className="table-cell text-right font-mono text-sm font-bold text-red-700">{formatCurrency(summary.debits)}</td>
+                    <td className="table-cell text-right font-mono text-sm font-bold text-green-700">{formatCurrency(summary.credits)}</td>
+                    <td className={`table-cell text-right font-mono text-sm font-bold ${summary.net >= 0 ? 'text-green-800' : 'text-red-800'}`}>
+                      {formatCurrency(summary.net)}
                     </td>
                   </tr>
                 )}
