@@ -27,7 +27,7 @@ export default function ReportsPage() {
     const m     = selectedMonth + 1;
     const start = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
     const end   = `${selectedYear}-${String(m).padStart(2, '0')}-${new Date(selectedYear, m, 0).getDate()}`;
-    supabase.from('transactions').select('*').gte('date', start).lte('date', end)
+    supabase.from('transactions').select('*').gte('date', start).lte('date', end).eq('voided', false)
       .then(({ data }) => setTransactions(data || []));
   }, [selectedMonth, selectedYear]);
   const [generating, setGenerating] = useState('');

@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import {
   BookText, PlusCircle, Trash2, ChevronDown, ChevronRight,
   Repeat, CalendarRange, Power, PowerOff, Undo2, FileSpreadsheet, Wallet,
+  Ban, Loader2,
 } from 'lucide-react';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 
@@ -103,6 +104,7 @@ export default function JournalPage() {
   const [entries, setEntries]               = useState([]);
   const [entryLines, setEntryLines]         = useState({});  // {entryId: [lines]}
   const [expandedEntries, setExpandedEntries] = useState(new Set());
+  const [reverseTarget, setReverseTarget]   = useState(null); // { entry, date }
   const [historyLoading, setHistoryLoading] = useState(true);
 
   const allCategories = useMemo(() => {
@@ -380,7 +382,7 @@ export default function JournalPage() {
         } else {
           // net_to_zero: find matching transactions in the month, sum them, offset
           let q = supabase.from('transactions').select('amount, type')
-            .gte('date', start).lte('date', end);
+            .gte('date', start).lte('date', end).eq('voided', false);
           if (rule.match_category) q = q.eq('category', rule.match_category);
           if (rule.match_keyword)  q = q.ilike('description', `%${rule.match_keyword}%`);
           const { data: matched } = await q;
@@ -485,9 +487,48 @@ export default function JournalPage() {
   }
 
   // ── Void / Reverse a posted entry ─────────────────────────────────────────
+  //
+  // Void  = mark the JE voided AND propagate voided=true to its mirrored
+  //         transactions so they drop out of every ledger/report query.
+  //         No new entry is created.
+  //
+  // Reverse = create an offsetting auto JE dated however the user chose
+  //         (defaults to the ORIGINAL entry's date so the correction lands
+  //         in the same period). Does not void the original.
 
   async function voidEntry(entry) {
-    if (!confirm(`Reverse ${entry.reference}? This creates an offsetting entry.`)) return;
+    if (!confirm(`Void ${entry.reference}? Its transactions will stop counting in the ledger and reports. The entry stays visible in Journal History for the audit trail.`)) return;
+    try {
+      // 1. Mark the JE voided.
+      const { error: jeErr } = await supabase
+        .from('journal_entries')
+        .update({ status: 'voided' })
+        .eq('id', entry.id);
+      if (jeErr) {
+        console.error('voidEntry: failed to mark JE voided', jeErr);
+        throw jeErr;
+      }
+
+      // 2. Propagate to mirrored transactions so every reader (Ledger, P&L,
+      //    Balance Sheet, Dashboard, Wizard) excludes them.
+      const { error: txnErr } = await supabase
+        .from('transactions')
+        .update({ voided: true })
+        .eq('journal_entry_id', entry.id);
+      if (txnErr) {
+        console.error('voidEntry: failed to propagate voided flag to transactions', txnErr);
+        throw txnErr;
+      }
+
+      toast.success(`Voided ${entry.reference}`);
+      loadEntries();
+    } catch (err) {
+      console.error('voidEntry failed:', err);
+      toast.error(err?.message || 'Failed to void entry');
+    }
+  }
+
+  async function reverseEntry(entry, reversalDate) {
     let createdReversalId = null; // tracked so we can roll back partial state
     try {
       // 1. Load original lines.
@@ -496,13 +537,13 @@ export default function JournalPage() {
         .select('*')
         .eq('journal_entry_id', entry.id);
       if (linesErr) {
-        console.error('voidEntry: failed to load original lines', linesErr);
+        console.error('reverseEntry: failed to load original lines', linesErr);
         throw linesErr;
       }
       if (!origLines?.length) throw new Error('No lines to reverse');
 
       const reference = await nextReference();
-      const today = new Date().toISOString().slice(0, 10);
+      const dateStr   = reversalDate || entry.date;
 
       // 2. Insert the reversal JE. Captures the Supabase error so a unique-
       //    constraint collision (or RLS failure, etc.) shows the real reason
@@ -511,7 +552,7 @@ export default function JournalPage() {
         .from('journal_entries')
         .insert({
           reference,
-          date: today,
+          date: dateStr,
           description: `Reversal of ${entry.reference}`,
           memo: entry.description || null,
           total_amount: entry.total_amount,
@@ -523,7 +564,7 @@ export default function JournalPage() {
         .select()
         .single();
       if (revErr) {
-        console.error('voidEntry: failed to insert reversal JE', revErr);
+        console.error('reverseEntry: failed to insert reversal JE', revErr);
         throw revErr;
       }
       if (!rev) throw new Error('Reversal insert returned no row');
@@ -542,7 +583,7 @@ export default function JournalPage() {
       }));
       const { error: revLinesErr } = await supabase.from('journal_entry_lines').insert(revLines);
       if (revLinesErr) {
-        console.error('voidEntry: failed to insert reversal lines', revLinesErr);
+        console.error('reverseEntry: failed to insert reversal lines', revLinesErr);
         throw revLinesErr;
       }
 
@@ -551,7 +592,7 @@ export default function JournalPage() {
         const isDebit = (l.debit_amount || 0) > 0;
         const amount  = isDebit ? l.debit_amount : l.credit_amount;
         return {
-          date: today,
+          date: dateStr,
           description: l.description,
           supplier: l.description,
           amount,
@@ -566,36 +607,24 @@ export default function JournalPage() {
       });
       const { error: txnsErr } = await supabase.from('transactions').insert(txnRows);
       if (txnsErr) {
-        console.error('voidEntry: failed to insert reversal transactions', txnsErr);
+        console.error('reverseEntry: failed to insert reversal transactions', txnsErr);
         throw txnsErr;
       }
 
-      // 5. Mark the original voided.
-      const { error: voidErr } = await supabase
-        .from('journal_entries')
-        .update({ status: 'voided' })
-        .eq('id', entry.id);
-      if (voidErr) {
-        console.error('voidEntry: failed to mark original voided', voidErr);
-        throw voidErr;
-      }
-
-      // All four writes succeeded — clear the rollback marker.
       createdReversalId = null;
       toast.success(`Reversed ${entry.reference} via ${reference}`);
+      setReverseTarget(null);
       loadEntries();
     } catch (err) {
-      // Roll back any partial state. journal_entry_lines cascade off the JE;
-      // transactions have a SET NULL FK so we delete those explicitly first.
       if (createdReversalId) {
         try {
           await supabase.from('transactions').delete().eq('journal_entry_id', createdReversalId);
           await supabase.from('journal_entries').delete().eq('id', createdReversalId);
         } catch (cleanupErr) {
-          console.error('voidEntry: rollback of partial reversal failed', cleanupErr);
+          console.error('reverseEntry: rollback of partial reversal failed', cleanupErr);
         }
       }
-      console.error('voidEntry failed:', err);
+      console.error('reverseEntry failed:', err);
       toast.error(err?.message || 'Failed to create reversal');
     }
   }
@@ -978,10 +1007,20 @@ export default function JournalPage() {
                         </td>
                         <td className="table-cell">
                           {e.status === 'posted' && (
-                            <button onClick={ev => { ev.stopPropagation(); voidEntry(e); }}
-                              title="Reverse / Void" className="p-1.5 text-surface-400 hover:text-amber-600">
-                              <Undo2 size={14} />
-                            </button>
+                            <div className="inline-flex items-center gap-0.5">
+                              <button
+                                onClick={ev => { ev.stopPropagation(); setReverseTarget({ entry: e, date: e.date }); }}
+                                title="Reverse (post offsetting entry, dated like the original)"
+                                className="p-1.5 text-surface-400 hover:text-brand-600">
+                                <Undo2 size={14} />
+                              </button>
+                              <button
+                                onClick={ev => { ev.stopPropagation(); voidEntry(e); }}
+                                title="Void (exclude from ledger and reports; audit trail preserved)"
+                                className="p-1.5 text-surface-400 hover:text-red-600">
+                                <Ban size={14} />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1201,6 +1240,74 @@ export default function JournalPage() {
           )}
         </div>
       </Modal>
+
+      <ReverseEntryModal
+        target={reverseTarget}
+        onChangeDate={d => setReverseTarget(prev => prev ? { ...prev, date: d } : prev)}
+        onCancel={() => setReverseTarget(null)}
+        onConfirm={() => reverseTarget && reverseEntry(reverseTarget.entry, reverseTarget.date)}
+      />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Confirm dialog for the Reverse action. Date defaults to the original entry's
+// date so the correction lands in the original period; the user can override.
+// ─────────────────────────────────────────────────────────────────────────────
+function ReverseEntryModal({ target, onChangeDate, onCancel, onConfirm }) {
+  const [busy, setBusy] = useState(false);
+  const entry = target?.entry || null;
+
+  async function submit(e) {
+    e?.preventDefault?.();
+    setBusy(true);
+    try { await onConfirm(); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal open={!!entry} onClose={busy ? () => {} : onCancel} title="Reverse journal entry">
+      {entry && (
+        <form onSubmit={submit} className="space-y-4 p-1">
+          <div className="rounded-lg border border-surface-100 bg-surface-50 p-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="font-mono font-semibold">{entry.reference}</span>
+              <span className="font-mono">${Number(entry.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="text-xs text-surface-500 mt-0.5">{entry.description || '—'}</div>
+            <div className="text-xs text-surface-400 mt-1">Original date: <span className="font-mono">{entry.date}</span></div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Reversal date</label>
+            <input
+              type="date"
+              value={target.date || ''}
+              onChange={e => onChangeDate(e.target.value)}
+              className="input-field"
+              required
+            />
+            <p className="text-xs text-surface-500 mt-1.5">
+              Defaults to the original entry's date so the correction lands in the same period.
+              Change it only if you want the reversal to land elsewhere.
+            </p>
+          </div>
+
+          <p className="text-xs text-surface-500">
+            This posts an offsetting auto entry that swaps every debit ↔ credit.
+            The original stays posted — use Void instead if you want to retract it entirely.
+          </p>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onCancel} disabled={busy} className="btn-ghost">Cancel</button>
+            <button type="submit" disabled={busy || !target.date} className="btn-primary flex items-center gap-2">
+              {busy && <Loader2 size={14} className="animate-spin" />}
+              Post reversal
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }

@@ -150,7 +150,7 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
         supabase.from('transactions')
           .select('id, date, description, amount, type')
           .gte('date', pStart).lte('date', pEnd)
-          .eq('posted', true).eq('category', 'Payroll')
+          .eq('posted', true).eq('voided', false).eq('category', 'Payroll')
           .or('description.ilike.%Venmo%,description.ilike.%Cash App%,description.ilike.%CashApp%')
           .order('date'),
         supabase.from('journal_entries')

@@ -186,11 +186,13 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         const { data } = await supabase.from('transactions')
           .select('id, date, description, supplier, amount, type, category, account_id, posted')
           .gte('date', periodStart).lte('date', periodEnd)
+          .eq('voided', false)
           .or('category.is.null,category.eq.')
           .order('date', { ascending: true });
         const total = await supabase.from('transactions')
           .select('*', { count: 'exact', head: true })
-          .gte('date', periodStart).lte('date', periodEnd);
+          .gte('date', periodStart).lte('date', periodEnd)
+          .eq('voided', false);
         next = { uncategorized: data || [], totalTxns: total.count || 0 };
       } else if (key === 'post') {
         const { data } = await supabase.from('transactions')
@@ -220,9 +222,9 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         next = { payrollJECount: count || 0 };
       } else if (key === 'reconcile') {
         const { data } = await supabase.from('transactions')
-          .select('id, date, description, amount, category')
+          .select('id, date, description, supplier, amount, category')
           .gte('date', periodStart).lte('date', periodEnd)
-          .eq('type', 'debit').eq('reconciled', false)
+          .eq('type', 'debit').eq('reconciled', false).eq('voided', false)
           .order('date');
         next = { unreconciled: data || [] };
       } else if (key === 'review_balances') {
@@ -232,7 +234,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         const { data: txns } = await supabase.from('transactions')
           .select('id, date, description, category, amount, type')
           .gte('date', periodStart).lte('date', periodEnd)
-          .eq('posted', true)
+          .eq('posted', true).eq('voided', false)
           .order('date', { ascending: true });
         const balByCat = {};
         const txnsByCategory = {};
@@ -253,7 +255,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         const reportType = key === 'generate_pl' ? 'pl' : 'balance_sheet';
         const queries = [
           supabase.from('report_deliverables').select('id, created_at, file_url').eq('period', period).eq('report_type', reportType).order('created_at', { ascending: false }).limit(1),
-          supabase.from('transactions').select('*').gte('date', periodStart).lte('date', periodEnd).eq('posted', true),
+          supabase.from('transactions').select('*').gte('date', periodStart).lte('date', periodEnd).eq('posted', true).eq('voided', false),
         ];
         if (key === 'generate_pl') {
           // Existing revenue JEs for this period — drives "Replace" instead of stacking.
@@ -299,7 +301,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         }
       } else if (key === 'close') {
         const [postedRes, jeRes, deliverRes] = await Promise.all([
-          supabase.from('transactions').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('posted', true),
+          supabase.from('transactions').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('posted', true).eq('voided', false),
           supabase.from('journal_entries').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('status', 'posted'),
           supabase.from('report_deliverables').select('report_type').eq('period', period),
         ]);

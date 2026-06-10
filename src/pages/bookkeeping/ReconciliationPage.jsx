@@ -21,7 +21,7 @@ export default function ReconciliationPage() {
     setLoading(true);
     const [txnRes, invRes] = await Promise.all([
       // Fetch unreconciled debit transactions — uses the correct 'reconciled' boolean column
-      supabase.from('transactions').select('*').eq('type', 'debit').eq('reconciled', false).order('date', { ascending: false }).limit(200),
+      supabase.from('transactions').select('*').eq('type', 'debit').eq('reconciled', false).eq('voided', false).order('date', { ascending: false }).limit(200),
       // Fetch non-matched invoices — uses the invoice status column (pending/paid/overdue/cancelled)
       supabase.from('invoices').select('*').in('status', ['pending', 'overdue']).order('date', { ascending: false }).limit(200),
     ]);

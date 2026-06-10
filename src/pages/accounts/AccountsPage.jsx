@@ -62,7 +62,7 @@ export default function AccountsPage() {
     setTxnError(null);
     supabase.from('transactions')
       .select('category, amount, type')
-      .gte('date', start).lte('date', end).eq('posted', true)
+      .gte('date', start).lte('date', end).eq('posted', true).eq('voided', false)
       .then(({ data, error }) => {
         if (error) { setTxnError(error); setTxnState('error'); return; }
         setTxns(data || []);
@@ -469,7 +469,7 @@ function MergeModal({ from, categories, onClose, onDone }) {
     setCounts(null);
     (async () => {
       const [txnRes, lineRes] = await Promise.all([
-        supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('category', from.name),
+        supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('category', from.name).eq('voided', false),
         supabase.from('journal_entry_lines').select('id', { count: 'exact', head: true }).eq('category', from.name),
       ]);
       setCounts({ txns: txnRes.count || 0, lines: lineRes.count || 0 });
@@ -646,7 +646,7 @@ function LedgerDrawer({ category, onClose }) {
     supabase.from('transactions')
       .select('id, date, description, supplier, amount, type, reference')
       .gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      .eq('category', category.name).eq('posted', true)
+      .eq('category', category.name).eq('posted', true).eq('voided', false)
       .order('date', { ascending: false })
       .then(({ data, error }) => {
         if (error) { setErr(error); setState('error'); return; }

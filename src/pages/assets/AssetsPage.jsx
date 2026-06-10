@@ -80,7 +80,7 @@ export default function AssetsPage() {
     setError(null);
     const [assetsRes, originsRes] = await Promise.all([
       supabase.from('assets').select('*').order('asset_class').order('name'),
-      supabase.from('transactions').select('id, date, description, supplier, amount, category, capitalized_asset_id').not('capitalized_asset_id', 'is', null),
+      supabase.from('transactions').select('id, date, description, supplier, amount, category, capitalized_asset_id').not('capitalized_asset_id', 'is', null).eq('voided', false),
     ]);
     if (assetsRes.error) { setError(assetsRes.error); setState('error'); return; }
     setAssets(assetsRes.data || []);

@@ -327,7 +327,7 @@ export default function BookkeepingPage() {
     setPostedLoading(true);
     const from = postedPage * POSTED_PAGE_SIZE;
     const { data, count } = await supabase.from('transactions').select('*', { count: 'exact' })
-      .eq('posted', true).order('date', { ascending: false }).range(from, from + POSTED_PAGE_SIZE - 1);
+      .eq('posted', true).eq('voided', false).order('date', { ascending: false }).range(from, from + POSTED_PAGE_SIZE - 1);
     setPostedTxns(data || []);
     setPostedTotal(count || 0);
     // Load note counts for this page of posted transactions

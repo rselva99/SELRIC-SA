@@ -41,7 +41,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!isAdmin) return;
     const sixMonthsAgo = format(startOfMonth(subMonths(new Date(), 5)), 'yyyy-MM-dd');
-    supabase.from('transactions').select('*').gte('date', sixMonthsAgo).order('date', { ascending: false })
+    supabase.from('transactions').select('*').gte('date', sixMonthsAgo).eq('voided', false).order('date', { ascending: false })
       .then(({ data }) => setTransactions(data || []));
   }, [isAdmin]);
 

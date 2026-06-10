@@ -110,7 +110,7 @@ export default function AccountantPage() {
     const yearEnd   = `${year}-12-31`;
 
     const [{ data: txns }, { data: closes }, { data: cl }] = await Promise.all([
-      supabase.from('transactions').select('date').gte('date', yearStart).lte('date', yearEnd),
+      supabase.from('transactions').select('date').gte('date', yearStart).lte('date', yearEnd).eq('voided', false),
       supabase.from('period_close').select('period, status').like('period', `${year}-%`),
       supabase.from('close_checklist').select('period, status').like('period', `${year}-%`).eq('status', 'done'),
     ]);
@@ -154,6 +154,7 @@ export default function AccountantPage() {
       supabase.from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('date', start).lte('date', end)
+        .eq('voided', false)
         .or('category.is.null,category.eq.'),
 
       supabase.from('transactions')
@@ -166,7 +167,7 @@ export default function AccountantPage() {
       supabase.from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('date', start).lte('date', end)
-        .eq('type', 'debit').eq('reconciled', false),
+        .eq('type', 'debit').eq('reconciled', false).eq('voided', false),
 
       supabase.from('report_deliverables')
         .select('*', { count: 'exact', head: true })
@@ -284,12 +285,13 @@ export default function AccountantPage() {
     const [uncatRes, unpostedRes, unrecRes, rulesRes, tasksRes] = await Promise.all([
       supabase.from('transactions').select('date')
         .gte('date', yearStart).lte('date', yearEnd)
+        .eq('voided', false)
         .or('category.is.null,category.eq.'),
       supabase.from('transactions').select('date')
         .gte('date', yearStart).lte('date', yearEnd)
         .eq('posted', false).not('category', 'is', null).neq('category', ''),
       supabase.from('transactions').select('*', { count: 'exact', head: true })
-        .eq('type', 'debit').eq('reconciled', false),
+        .eq('type', 'debit').eq('reconciled', false).eq('voided', false),
       supabase.from('journal_rules').select('*', { count: 'exact', head: true }).eq('active', true),
       supabase.from('tasks').select('*', { count: 'exact', head: true })
         .eq('status', 'open').lt('due_date', todayStr),
@@ -447,7 +449,7 @@ export default function AccountantPage() {
     try {
       const { start, end } = periodRange(selectedPeriod);
       const { data: txns, error } = await supabase.from('transactions')
-        .select('*').gte('date', start).lte('date', end).eq('posted', true);
+        .select('*').gte('date', start).lte('date', end).eq('posted', true).eq('voided', false);
       if (error) throw error;
 
       let pdf;

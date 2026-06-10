@@ -83,8 +83,8 @@ export default function LedgerPage() {
     (async () => {
       try {
         const [minRes, maxRes] = await Promise.all([
-          supabase.from('transactions').select('date').eq('posted', true).order('date', { ascending: true }).limit(1),
-          supabase.from('transactions').select('date').eq('posted', true).order('date', { ascending: false }).limit(1),
+          supabase.from('transactions').select('date').eq('posted', true).eq('voided', false).order('date', { ascending: true }).limit(1),
+          supabase.from('transactions').select('date').eq('posted', true).eq('voided', false).order('date', { ascending: false }).limit(1),
         ]);
         if (cancelled) return;
         const min = minRes.data?.[0]?.date;
@@ -127,7 +127,7 @@ export default function LedgerPage() {
   // pageQ, the slim full-set summary fetch, and the CSV export.
   const buildFilteredQuery = useCallback((columns, opts = undefined) => {
     let q = opts ? supabase.from('transactions').select(columns, opts) : supabase.from('transactions').select(columns);
-    q = q.eq('posted', true);
+    q = q.eq('posted', true).eq('voided', false);
     if (dateBounds.from) q = q.gte('date', dateBounds.from);
     if (dateBounds.to)   q = q.lte('date', dateBounds.to);
     if (selectedAccountId) q = q.eq('account_id', selectedAccountId);
