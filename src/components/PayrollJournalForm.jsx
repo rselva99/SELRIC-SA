@@ -41,7 +41,21 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
   const [accountId, setAccountId]       = useState('');
   const [posting, setPosting]           = useState(false);
 
-  const expenseAccounts = useMemo(() => accounts.filter(a => a.type === 'expense'), [accounts]);
+  // Group every account by its type so the dropdown shows the full chart of accounts.
+  // (The schema stores `type` as 'Asset'|'Liability'|'Equity'|'Revenue'|'Expense' — case-sensitive.)
+  const accountGroups = useMemo(() => {
+    const order = ['Expense', 'Liability', 'Asset', 'Equity', 'Revenue'];
+    const groups = {};
+    for (const a of accounts) {
+      const t = a.type || 'Other';
+      (groups[t] = groups[t] || []).push(a);
+    }
+    Object.values(groups).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)));
+    return order
+      .filter(t => groups[t])
+      .map(t => [t, groups[t]])
+      .concat(Object.entries(groups).filter(([t]) => !order.includes(t)));
+  }, [accounts]);
 
   // Default to Salaries & Wages (or similar) on first load
   useEffect(() => {
@@ -197,9 +211,16 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
         <div>
           <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Debit account</label>
           <select value={accountId} onChange={e => setAccountId(e.target.value)} className="input-field">
-            <option value="">— Choose expense account —</option>
-            {expenseAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            <option value="">— Choose account —</option>
+            {accountGroups.map(([type, list]) => (
+              <optgroup key={type} label={type}>
+                {list.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </optgroup>
+            ))}
           </select>
+          {accounts.length === 0 && (
+            <p className="text-xs text-amber-700 mt-1">No accounts loaded yet — open Chart of Accounts to add one.</p>
+          )}
         </div>
       </div>
 

@@ -863,7 +863,7 @@ function aggregateForBS(transactions, accounts) {
   for (const acc of accounts || []) {
     const bal = balanceByAcc[acc.id] || 0;
     if (bal === 0) continue;
-    const bucket = sections[acc.type];
+    const bucket = sections[(acc.type || '').toLowerCase()];
     if (bucket) bucket.push({ account: acc.name, amount: bal });
   }
   return {
