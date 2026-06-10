@@ -10,8 +10,9 @@ import toast from 'react-hot-toast';
 import {
   Calculator, CheckCircle2, Circle, AlertCircle, Lock, ChevronRight,
   Upload, Tag, BookCheck, Repeat, Scale, Brain, FileBarChart, FileText,
-  Download, Loader2, Inbox, ListChecks,
+  Download, Loader2, Inbox, ListChecks, Play, Maximize2,
 } from 'lucide-react';
+import CloseWizard, { CloseLauncher } from './CloseWizard';
 
 const MONTHS_ABBR = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 
@@ -93,6 +94,9 @@ export default function AccountantPage() {
   const [deliverables, setDeliverables]         = useState([]);
   const [actionBusy, setActionBusy]             = useState('');
   const [generating, setGenerating]             = useState('');
+  const [showLauncher, setShowLauncher]         = useState(false);
+  const [wizardPeriod, setWizardPeriod]         = useState(null);
+  const [wizardMinimized, setWizardMinimized]   = useState(false);
 
   const periodsOfYear = useMemo(
     () => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`),
@@ -520,15 +524,35 @@ export default function AccountantPage() {
             Month-end close, reports, and the state of the books at a glance
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Year</span>
-          <select value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-field w-auto">
-            {[year - 2, year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={() => setShowLauncher(true)}
+            className="bg-gradient-to-r from-brand-600 to-green-600 text-white font-semibold text-sm px-4 py-2.5 rounded-lg shadow-md hover:shadow-lg hover:from-brand-700 hover:to-green-700 transition flex items-center gap-2"
+          >
+            <Play size={16} fill="currentColor" />
+            Start Close Process
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Year</span>
+            <select value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-field w-auto">
+              {[year - 2, year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
+
+      {/* Minimized wizard pill */}
+      {wizardPeriod && wizardMinimized && (
+        <button
+          onClick={() => setWizardMinimized(false)}
+          className="fixed bottom-4 right-4 z-50 bg-brand-600 text-white rounded-full shadow-2xl px-4 py-3 flex items-center gap-2 hover:bg-brand-700 transition"
+        >
+          <Maximize2 size={14} />
+          <span className="text-sm font-semibold">Resume close: {periodLabel(wizardPeriod)}</span>
+        </button>
+      )}
 
       {/* Period status panel */}
       <div className="card p-4">
@@ -703,6 +727,29 @@ export default function AccountantPage() {
             )}
           </div>
         </div>
+
+        {/* Launcher modal */}
+        {showLauncher && (
+          <CloseLauncher
+            initialPeriod={selectedPeriod}
+            periodStatuses={periodStatuses}
+            onLaunch={(p) => { setShowLauncher(false); setWizardPeriod(p); setWizardMinimized(false); }}
+            onCancel={() => setShowLauncher(false)}
+          />
+        )}
+
+        {/* Wizard overlay */}
+        {wizardPeriod && !wizardMinimized && (
+          <CloseWizard
+            period={wizardPeriod}
+            onMinimize={() => setWizardMinimized(true)}
+            onExit={async () => {
+              setWizardPeriod(null);
+              setWizardMinimized(false);
+              await Promise.all([loadChecklist(), loadPeriodStatuses(), loadOpenItems(), loadDeliverables()]);
+            }}
+          />
+        )}
 
         {/* Open Items panel */}
         <div className="lg:col-span-1">
