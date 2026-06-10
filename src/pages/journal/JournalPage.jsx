@@ -9,8 +9,9 @@ import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
   BookText, PlusCircle, Trash2, ChevronDown, ChevronRight,
-  Repeat, CalendarRange, Power, PowerOff, Undo2, FileSpreadsheet,
+  Repeat, CalendarRange, Power, PowerOff, Undo2, FileSpreadsheet, Wallet,
 } from 'lucide-react';
+import PayrollJournalForm from '../../components/PayrollJournalForm';
 
 const RULE_TYPES = {
   net_to_zero:   'Net to Zero',
@@ -80,6 +81,7 @@ export default function JournalPage() {
   const [selectedGen, setSelectedGen]         = useState(() => new Set());
   const [generating, setGenerating]           = useState(false);
   const [approvingGen, setApprovingGen]       = useState(false);
+  const [showPayrollModal, setShowPayrollModal] = useState(false);
 
   const [entries, setEntries]               = useState([]);
   const [entryLines, setEntryLines]         = useState({});  // {entryId: [lines]}
@@ -531,6 +533,9 @@ export default function JournalPage() {
           <h1 className="page-title">Journal</h1>
           <p className="text-surface-500 text-sm mt-0.5">Quick entries, double-entry journal, and recurring rules</p>
         </div>
+        <button onClick={() => setShowPayrollModal(true)} className="btn-secondary flex items-center gap-2 text-sm">
+          <Wallet size={14} /> Payroll Entry
+        </button>
       </div>
 
       {/* Mode tabs */}
@@ -991,6 +996,15 @@ export default function JournalPage() {
             <button type="submit" className="btn-primary">Save Rule</button>
           </div>
         </form>
+      </Modal>
+
+      {/* ── PAYROLL MODAL ── */}
+      <Modal open={showPayrollModal} onClose={() => setShowPayrollModal(false)} title="Payroll Journal Entry" size="lg">
+        <PayrollJournalForm
+          period={new Date().toISOString().slice(0,7)}
+          allowPeriodChange
+          onPosted={() => { loadEntries(); }}
+        />
       </Modal>
 
       {/* ── GENERATE MONTHLY MODAL ── */}

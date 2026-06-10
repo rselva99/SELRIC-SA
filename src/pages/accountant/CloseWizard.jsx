@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
+import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
@@ -36,6 +37,7 @@ const STEPS = [
   { key: 'journal_rules',    title: 'Run Journal Rules',            subtitle: 'Execute recurring journal entries',            avgMinutes: 2 },
   { key: 'manual_journals',  title: 'Review Manual Journals',       subtitle: 'Resolve any draft journal entries',            avgMinutes: 2 },
   { key: 'reconcile',        title: 'Reconcile',                    subtitle: 'Match invoices to bank transactions',          avgMinutes: 4 },
+  { key: 'payroll',          title: 'Payroll Journal Entry',        subtitle: 'Capture check/other payroll on top of Venmo/CashApp', avgMinutes: 2 },
   { key: 'review_balances',  title: 'Account Balance Review',       subtitle: 'Check each account balance looks right',       avgMinutes: 3 },
   { key: 'generate_pl',      title: 'Generate P&L',                 subtitle: 'Profit & Loss for the period',                 avgMinutes: 1 },
   { key: 'generate_bs',      title: 'Generate Balance Sheet',       subtitle: 'Balance sheet snapshot',                       avgMinutes: 1 },
@@ -197,6 +199,12 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
           .is('rule_id', null)
           .order('date');
         setStepData({ drafts: data || [] });
+      } else if (key === 'payroll') {
+        const { count } = await supabase.from('journal_entries')
+          .select('*', { count: 'exact', head: true })
+          .gte('date', periodStart).lte('date', periodEnd)
+          .ilike('description', 'Payroll —%');
+        setStepData({ payrollJECount: count || 0 });
       } else if (key === 'reconcile') {
         const { data } = await supabase.from('transactions')
           .select('id, date, description, amount')
@@ -274,6 +282,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
     if (key === 'journal_rules')   return { met: (stepData.rules?.length || 0) === 0 || (stepData.rules || []).every(r => stepData.ranRuleIds?.has(r.id)), label: `${(stepData.rules?.length || 0) - (stepData.ranRuleIds?.size || 0)} rule(s) not yet run` };
     if (key === 'manual_journals') return { met: (stepData.drafts?.length || 0) === 0, label: `${stepData.drafts?.length || 0} draft journal entries` };
     if (key === 'reconcile')       return { met: (stepData.unreconciled?.length || 0) === 0, label: `${stepData.unreconciled?.length || 0} unreconciled` };
+    if (key === 'payroll')         return { met: (stepData.payrollJECount || 0) > 0, label: (stepData.payrollJECount || 0) > 0 ? 'Payroll JE posted' : 'No payroll JE for this period yet' };
     if (key === 'review_balances') return { met: (stepData.accountBalances?.length || 0) === 0 || (stepData.accountBalances || []).every(a => accountsReviewed.has(a.id)), label: `${(stepData.accountBalances?.length || 0) - accountsReviewed.size} account(s) not yet reviewed` };
     if (key === 'generate_pl')     return { met: !!stepData.existingReport, label: stepData.existingReport ? 'P&L generated' : 'P&L not generated' };
     if (key === 'generate_bs')     return { met: !!stepData.existingReport, label: stepData.existingReport ? 'Balance Sheet generated' : 'Balance Sheet not generated' };
@@ -392,6 +401,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
       case 'journal_rules':    return <StepJournalRules data={stepData} navigate={navigate} />;
       case 'manual_journals':  return <StepManualJournals data={stepData} navigate={navigate} />;
       case 'reconcile':        return <StepReconcile  data={stepData} navigate={navigate} reload={loadStepData} />;
+      case 'payroll':          return <StepPayroll    period={period} reload={loadStepData} />;
       case 'review_balances':  return <StepReviewBalances data={stepData} reviewed={accountsReviewed} setReviewed={setAccountsReviewed} />;
       case 'generate_pl':      return <StepGenerateReport data={stepData} period={period} reportType="pl" reload={loadStepData} />;
       case 'generate_bs':      return <StepGenerateReport data={stepData} period={period} reportType="balance_sheet" reload={loadStepData} />;
@@ -884,6 +894,19 @@ function StepReconcile({ data, navigate, reload }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function StepPayroll({ period, reload }) {
+  return (
+    <div>
+      <p className="text-sm text-surface-500 mb-4">
+        Enter the total payroll for the period. We'll subtract what was paid via Venmo / Cash App
+        (already posted from the bank statement) and post the check / other remainder as a journal entry
+        debiting your payroll expense account.
+      </p>
+      <PayrollJournalForm period={period} onPosted={reload} />
     </div>
   );
 }
