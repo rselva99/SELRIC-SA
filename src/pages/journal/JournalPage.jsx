@@ -77,6 +77,7 @@ export default function JournalPage() {
   const [showGenModal, setShowGenModal]       = useState(false);
   const [genMonth, setGenMonth]               = useState(() => new Date().toISOString().slice(0,7));
   const [genPreview, setGenPreview]           = useState([]);  // [{rule, entry, lines}]
+  const [selectedGen, setSelectedGen]         = useState(() => new Set());
   const [generating, setGenerating]           = useState(false);
   const [approvingGen, setApprovingGen]       = useState(false);
 
@@ -375,16 +376,18 @@ export default function JournalPage() {
         }
       }
       setGenPreview(previews);
+      setSelectedGen(new Set(previews.map((_, i) => i)));
       if (!previews.length) toast('No entries generated — check rule keywords/categories', { icon: 'ℹ️' });
     } catch (err) { toast.error(err.message || 'Generate failed'); }
     finally { setGenerating(false); }
   }
 
   async function approveAllGenerated() {
-    if (!genPreview.length) return;
+    const toPost = genPreview.filter((_, i) => selectedGen.has(i));
+    if (!toPost.length) return;
     setApprovingGen(true);
     try {
-      for (const p of genPreview) {
+      for (const p of toPost) {
         const reference = await nextReference();
         const { data: entry } = await supabase.from('journal_entries').insert({
           reference,
@@ -421,9 +424,10 @@ export default function JournalPage() {
         });
         await supabase.from('transactions').insert(txnRows);
       }
-      toast.success(`Posted ${genPreview.length} auto entries`);
+      toast.success(`Posted ${toPost.length} auto entr${toPost.length === 1 ? 'y' : 'ies'}`);
       setShowGenModal(false);
       setGenPreview([]);
+      setSelectedGen(new Set());
       loadEntries();
     } catch (err) { toast.error(err.message || 'Failed'); }
     finally { setApprovingGen(false); }
@@ -431,7 +435,20 @@ export default function JournalPage() {
 
   function discardGenerated() {
     setGenPreview([]);
+    setSelectedGen(new Set());
     setShowGenModal(false);
+  }
+
+  function toggleSelectGen(i) {
+    setSelectedGen(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  }
+  function toggleSelectAllGen() {
+    if (selectedGen.size === genPreview.length) setSelectedGen(new Set());
+    else setSelectedGen(new Set(genPreview.map((_, i) => i)));
   }
 
   // ── Void / Reverse a posted entry ─────────────────────────────────────────
@@ -998,6 +1015,15 @@ export default function JournalPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-surface-50">
                     <tr>
+                      <th className="px-3 py-2 text-center w-10">
+                        <input
+                          type="checkbox"
+                          ref={el => { if (el) el.indeterminate = selectedGen.size > 0 && selectedGen.size < genPreview.length; }}
+                          checked={genPreview.length > 0 && selectedGen.size === genPreview.length}
+                          onChange={toggleSelectAllGen}
+                          aria-label="Select all"
+                        />
+                      </th>
                       <th className="px-3 py-2 text-left text-xs font-semibold text-surface-600 uppercase tracking-wider">Rule</th>
                       <th className="px-3 py-2 text-left text-xs font-semibold text-surface-600 uppercase tracking-wider">Description</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-surface-600 uppercase tracking-wider">Debit</th>
@@ -1005,22 +1031,38 @@ export default function JournalPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {genPreview.map((p, i) => p.lines.map((l, j) => (
-                      <tr key={`${i}-${j}`} className="border-t border-surface-100">
-                        <td className="px-3 py-1.5 text-xs">{p.rule.name}</td>
-                        <td className="px-3 py-1.5 text-xs">{l.description}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-xs">{l.debit_amount ? formatCurrency(l.debit_amount) : '—'}</td>
-                        <td className="px-3 py-1.5 text-right font-mono text-xs">{l.credit_amount ? formatCurrency(l.credit_amount) : '—'}</td>
-                      </tr>
-                    )))}
+                    {genPreview.map((p, i) => (
+                      <Fragment key={i}>
+                        {p.lines.map((l, j) => (
+                          <tr key={`${i}-${j}`} className={`border-t border-surface-100 ${selectedGen.has(i) ? '' : 'opacity-40'}`}>
+                            {j === 0 && (
+                              <td rowSpan={p.lines.length} className="px-3 py-1.5 text-center align-middle">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedGen.has(i)}
+                                  onChange={() => toggleSelectGen(i)}
+                                  aria-label={`Select ${p.rule.name}`}
+                                />
+                              </td>
+                            )}
+                            {j === 0 && (
+                              <td rowSpan={p.lines.length} className="px-3 py-1.5 text-xs align-middle">{p.rule.name}</td>
+                            )}
+                            <td className="px-3 py-1.5 text-xs">{l.description}</td>
+                            <td className="px-3 py-1.5 text-right font-mono text-xs">{l.debit_amount ? formatCurrency(l.debit_amount) : '—'}</td>
+                            <td className="px-3 py-1.5 text-right font-mono text-xs">{l.credit_amount ? formatCurrency(l.credit_amount) : '—'}</td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    ))}
                   </tbody>
                 </table>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={discardGenerated} className="btn-ghost">Discard</button>
-                <button onClick={approveAllGenerated} disabled={approvingGen} className="btn-primary">
-                  {approvingGen ? <Spinner size="sm" className="text-white" /> : `Approve & Post (${genPreview.length})`}
+                <button onClick={approveAllGenerated} disabled={approvingGen || selectedGen.size === 0} className="btn-primary">
+                  {approvingGen ? <Spinner size="sm" className="text-white" /> : `Approve & Post (${selectedGen.size})`}
                 </button>
               </div>
             </>
