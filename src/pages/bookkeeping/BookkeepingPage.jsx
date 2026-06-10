@@ -15,7 +15,10 @@ import {
   FileText, Receipt, ArrowRightLeft, Search, Eye, Trash2,
   ChevronDown, ChevronRight, BookCheck, RotateCcw,
   FolderOpen, Folder, MessageSquare, Layers, X, Sparkles, Pencil,
+  Landmark, MoreVertical,
 } from 'lucide-react';
+import CapitalizeModal from '../../components/CapitalizeModal';
+import { CAPITALIZE_THRESHOLD } from '../../lib/capitalize';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
 const ALLOWED_INVOICE_TYPES = ['application/pdf','image/png','image/jpeg','image/webp'];
@@ -184,6 +187,8 @@ export default function BookkeepingPage() {
   const [activeNotesTxnId, setActiveNotesTxnId] = useState(null);
   const [noteCounts, setNoteCounts]             = useState({});
   const [profileMap, setProfileMap]             = useState({});
+  const [capitalizeTxn, setCapitalizeTxn]       = useState(null);
+  const [openRowMenu, setOpenRowMenu]           = useState(null);
 
   useEffect(() => {
     supabase.from('profiles').select('id, full_name')
@@ -309,6 +314,14 @@ export default function BookkeepingPage() {
 
     setStmtsLoading(false);
   }, [stmtsPage, search, filterCategory]);
+
+  // Close row-action overflow menu on any outside click.
+  useEffect(() => {
+    if (openRowMenu === null) return;
+    const close = () => setOpenRowMenu(null);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [openRowMenu]);
 
   const loadPosted = useCallback(async () => {
     setPostedLoading(true);
@@ -726,10 +739,17 @@ export default function BookkeepingPage() {
                 {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             ) : (
-              <button onClick={() => setEditingField({ id: t.id, field: 'category' })}
-                className={`text-xs rounded-full px-2.5 py-0.5 transition ${t.category ? 'badge-green cursor-pointer hover:opacity-80' : 'bg-surface-100 text-surface-500 hover:bg-surface-200 cursor-pointer'}`}>
-                {t.category||'+ Categorize'}
-              </button>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button onClick={() => setEditingField({ id: t.id, field: 'category' })}
+                  className={`text-xs rounded-full px-2.5 py-0.5 transition ${t.category ? 'badge-green cursor-pointer hover:opacity-80' : 'bg-surface-100 text-surface-500 hover:bg-surface-200 cursor-pointer'}`}>
+                  {t.category||'+ Categorize'}
+                </button>
+                {t.capitalized_asset_id && (
+                  <Link to="/assets" title="Capitalized to an asset" className="text-[10px] uppercase tracking-wider bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full inline-flex items-center gap-1 hover:bg-brand-200 transition">
+                    <Landmark size={9} /> Capitalized
+                  </Link>
+                )}
+              </div>
             )}
           </td>
           <td className={`table-cell text-right font-mono text-sm ${t.type==='credit'?'text-green-600':'text-red-600'}`}>
@@ -771,6 +791,26 @@ export default function BookkeepingPage() {
               </button>
               {showPost   && <button onClick={() => handlePost(t)}      title="Post to Ledger" className="p-1.5 text-surface-400 hover:text-brand-600 transition"><BookCheck size={14} /></button>}
               {showUnpost && <button onClick={() => handleUnpost(t.id)} title="Unpost"         className="p-1.5 text-surface-400 hover:text-amber-600 transition"><RotateCcw size={14} /></button>}
+              {showUnpost && t.type === 'debit' && !t.capitalized_asset_id && (
+                <div className="relative" onMouseDown={e => e.stopPropagation()}>
+                  <button onClick={() => setOpenRowMenu(openRowMenu === t.id ? null : t.id)}
+                    title="More actions"
+                    className="p-1.5 text-surface-400 hover:text-brand-600 transition">
+                    <MoreVertical size={14} />
+                  </button>
+                  {openRowMenu === t.id && (
+                    <div className="absolute right-0 top-full mt-1 z-20 bg-white shadow-lg rounded-lg border border-surface-100 py-1 min-w-[180px]">
+                      <button
+                        onClick={() => { setOpenRowMenu(null); setCapitalizeTxn(t); }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-surface-50 flex items-center gap-2"
+                      >
+                        <Landmark size={13} className="text-brand-600" />
+                        <span>Capitalize…</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <button onClick={() => handleDeleteTxn(t)} title="Delete" className="p-1.5 text-surface-400 hover:text-red-500 transition"><Trash2 size={14} /></button>
             </div>
           </td>
@@ -1173,6 +1213,16 @@ export default function BookkeepingPage() {
           )}
         </div>
       </Modal>
+
+      <CapitalizeModal
+        txn={capitalizeTxn}
+        onClose={() => setCapitalizeTxn(null)}
+        onCapitalized={({ asset }) => {
+          // Optimistically flag the originating row so the badge appears + the
+          // menu action disables without a full refetch.
+          setPostedTxns(prev => prev.map(t => t.id === capitalizeTxn?.id ? { ...t, capitalized_asset_id: asset.id } : t));
+        }}
+      />
 
     </div>
   );

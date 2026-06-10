@@ -1,7 +1,15 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import {
+  CAPITALIZE_REMINDER,
+  CAPITALIZE_REMINDER_SHORT,
+  undoBlockers,
+  undoCapitalization,
+  findReclassJEForAsset,
+} from '../../lib/capitalize';
 import {
   combinedMonthly,
   monthlyForAsset,
@@ -16,7 +24,7 @@ import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
   Plus, ChevronDown, ChevronRight, Edit3, Archive, RotateCcw,
-  Loader2, CheckCircle2, AlertCircle, Calculator, Sprout,
+  Loader2, CheckCircle2, AlertCircle, Calculator, Sprout, Undo2, Info,
 } from 'lucide-react';
 
 // ── Seed spec — exactly what the dry-run promised. Asserted before insert. ──
@@ -52,25 +60,50 @@ const EXPECTED_GRAND_TOTAL       = 998985.61;
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AssetsPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [assets, setAssets]   = useState([]);
+  // Map asset.id → originating transaction row, populated alongside assets so
+  // we can offer Undo capitalization without a per-row query.
+  const [originByAssetId, setOriginByAssetId] = useState({});
   const [state, setState]     = useState('loading'); // loading | error | ready
   const [error, setError]     = useState(null);
 
   const [editing, setEditing] = useState(null); // asset row or 'new'
   const [seedOpen, setSeedOpen]   = useState(false);
   const [depOpen, setDepOpen]     = useState(false);
+  const [depPreset, setDepPreset] = useState(null); // { through, replace } when opened from a deep link
+  const [undoTarget, setUndoTarget] = useState(null); // asset row
 
   const load = useCallback(async () => {
     setState('loading');
     setError(null);
-    const { data, error: err } = await supabase.from('assets').select('*').order('asset_class').order('name');
-    if (err) { setError(err); setState('error'); return; }
-    setAssets(data || []);
+    const [assetsRes, originsRes] = await Promise.all([
+      supabase.from('assets').select('*').order('asset_class').order('name'),
+      supabase.from('transactions').select('id, date, description, supplier, amount, category, capitalized_asset_id').not('capitalized_asset_id', 'is', null),
+    ]);
+    if (assetsRes.error) { setError(assetsRes.error); setState('error'); return; }
+    setAssets(assetsRes.data || []);
+    const map = {};
+    for (const t of originsRes.data || []) map[t.capitalized_asset_id] = t;
+    setOriginByAssetId(map);
     setState('ready');
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Deep-link from the Capitalize success toast: ?openDA=replace&through=YYYY-MM
+  // opens the depreciation modal preset to that month with Replace ticked.
+  useEffect(() => {
+    if (searchParams.get('openDA') !== 'replace') return;
+    const through = searchParams.get('through') || null;
+    setDepPreset({ through, replace: true });
+    setDepOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('openDA');
+    next.delete('through');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Compute per-asset NBV from theoretical straight-line schedule.
   const now = new Date();
@@ -109,7 +142,7 @@ export default function AssetsPage() {
 
   return (
     <div className="animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
         <div>
           <h1 className="page-title">Assets</h1>
           <p className="text-surface-500 text-sm mt-0.5">
@@ -130,6 +163,8 @@ export default function AssetsPage() {
           </button>
         </div>
       </div>
+
+      <CapitalizeReminderCard />
 
       {state === 'loading' && <div className="flex justify-center py-10"><Spinner size="lg" /></div>}
       {state === 'error' && (
@@ -196,12 +231,22 @@ export default function AssetsPage() {
                             <td className="px-3 py-2.5 text-right font-mono text-xs">{a.status === 'active' ? formatCurrency(a.monthly) : '—'}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-xs text-green-700">{formatCurrency(a.nbv)}</td>
                             <td className="px-3 py-2.5 text-right">
-                              <button onClick={() => setEditing(a)} className="btn-ghost p-1.5 text-surface-400 hover:text-brand-600" title="Edit"><Edit3 size={13} /></button>
-                              {a.status === 'active' ? (
-                                <button onClick={() => retireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-amber-600" title="Retire"><Archive size={13} /></button>
-                              ) : (
-                                <button onClick={() => unretireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-green-600" title="Unretire"><RotateCcw size={13} /></button>
-                              )}
+                              <div className="inline-flex items-center justify-end gap-0.5">
+                                {originByAssetId[a.id] && (
+                                  <button
+                                    onClick={() => setUndoTarget(a)}
+                                    className="btn-ghost p-1.5 text-surface-400 hover:text-red-600"
+                                    title="Undo capitalization">
+                                    <Undo2 size={13} />
+                                  </button>
+                                )}
+                                <button onClick={() => setEditing(a)} className="btn-ghost p-1.5 text-surface-400 hover:text-brand-600" title="Edit"><Edit3 size={13} /></button>
+                                {a.status === 'active' ? (
+                                  <button onClick={() => retireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-amber-600" title="Retire"><Archive size={13} /></button>
+                                ) : (
+                                  <button onClick={() => unretireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-green-600" title="Unretire"><RotateCcw size={13} /></button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -230,10 +275,18 @@ export default function AssetsPage() {
 
       <DepreciationModal
         open={depOpen}
-        onClose={() => setDepOpen(false)}
+        onClose={() => { setDepOpen(false); setDepPreset(null); }}
         assets={assets}
         userId={user?.id}
-        onPosted={() => setDepOpen(false)}
+        preset={depPreset}
+        onPosted={() => { setDepOpen(false); setDepPreset(null); }}
+      />
+
+      <UndoCapitalizeModal
+        asset={undoTarget}
+        originatingTxn={undoTarget ? originByAssetId[undoTarget.id] : null}
+        onClose={() => setUndoTarget(null)}
+        onUndone={async () => { setUndoTarget(null); await load(); }}
       />
     </div>
   );
@@ -368,7 +421,7 @@ function AssetForm({ asset, open, onClose, onSaved }) {
         {lowCostWarning && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 flex items-start gap-2">
             <AlertCircle size={14} className="text-amber-700 mt-0.5 flex-shrink-0" />
-            Purchases under $2,500 should normally stay as regular expenses (de minimis). Only capitalize larger buys.
+            {CAPITALIZE_REMINDER_SHORT}
           </div>
         )}
         <Field label="Serial / location (optional)">
@@ -467,13 +520,20 @@ function SeedModal({ open, onClose, onSeeded }) {
 }
 
 // ── Depreciation catch-up modal ─────────────────────────────────────────────
-function DepreciationModal({ open, onClose, assets, userId, onPosted }) {
+function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) {
   const now = new Date();
   const defaultPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const [endPeriod, setEndPeriod] = useState(defaultPeriod);
   const [replace, setReplace]     = useState(false);
   const [existing, setExisting]   = useState(null); // Set<string> of YYYY-MM already posted
   const [busy, setBusy]           = useState(false);
+
+  // Apply preset (deep-link from Capitalize) when the modal opens.
+  useEffect(() => {
+    if (!open || !preset) return;
+    if (preset.through) setEndPeriod(preset.through);
+    if (preset.replace) setReplace(true);
+  }, [open, preset]);
 
   const monthly = useMemo(() => combinedMonthly(assets, endPeriod), [assets, endPeriod]);
   const periods = useMemo(() => monthsThrough(endPeriod), [endPeriod]);
@@ -547,6 +607,94 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted }) {
           <button onClick={run} disabled={busy || monthly <= 0.005 || willPost === 0} className="btn-primary flex items-center gap-2">
             {busy && <Loader2 size={14} className="animate-spin" />}
             Post {willPost} {willPost === 1 ? 'month' : 'months'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Capitalization rule reminder — same wording everywhere ──────────────────
+function CapitalizeReminderCard() {
+  return (
+    <div className="rounded-lg border border-surface-200 bg-surface-50 p-3 mb-4 text-xs text-surface-600 flex items-start gap-2">
+      <Info size={14} className="mt-0.5 text-surface-500 flex-shrink-0" />
+      <span>{CAPITALIZE_REMINDER}</span>
+    </div>
+  );
+}
+
+// ── Undo capitalization modal ───────────────────────────────────────────────
+function UndoCapitalizeModal({ asset, originatingTxn, onClose, onUndone }) {
+  const [busy, setBusy]   = useState(false);
+  const [je, setJE]       = useState(null); // reclass JE if found
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!asset) { setJE(null); setLoaded(false); return; }
+    setLoaded(false);
+    findReclassJEForAsset(asset.id)
+      .then(setJE)
+      .catch(() => setJE(null))
+      .finally(() => setLoaded(true));
+  }, [asset?.id]);
+
+  if (!asset) return null;
+
+  const blockers = undoBlockers(originatingTxn, asset);
+  const canUndo = blockers.length === 0 && loaded && !!je;
+
+  async function run() {
+    setBusy(true);
+    try {
+      const { undoneJE } = await undoCapitalization({ originatingTxn, asset });
+      toast.success(`Undid capitalization · removed ${undoneJE} and asset "${asset.name}"`);
+      await onUndone();
+    } catch (err) {
+      toast.error(err.message || 'Undo failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={!!asset} onClose={busy ? () => {} : onClose} title="Undo capitalization">
+      <div className="space-y-3 p-1">
+        <p className="text-sm text-surface-600">
+          Reverses the capitalize for <span className="font-semibold">{asset.name}</span>. This is a 3-step undo:
+        </p>
+        <ul className="text-sm space-y-1.5">
+          <li className="flex items-start gap-2"><span className="text-surface-400">1.</span><span>Void / delete the reclass JE {je ? <span className="font-mono font-semibold">{je.reference}</span> : <span className="text-amber-700">(searching…)</span>} and its mirrored transactions.</span></li>
+          <li className="flex items-start gap-2"><span className="text-surface-400">2.</span><span>Delete the asset row <span className="font-mono">{asset.name}</span> (cost {formatCurrency(asset.cost)}).</span></li>
+          <li className="flex items-start gap-2"><span className="text-surface-400">3.</span><span>Clear the back-reference on transaction <span className="font-mono text-xs">{originatingTxn?.id?.slice(0, 8) || '—'}</span> so the row becomes capitalizable again.</span></li>
+        </ul>
+
+        {blockers.length > 0 && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={14} className="text-red-700 mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-semibold">Cannot undo</div>
+                <ul className="list-disc pl-4 mt-0.5 text-xs">
+                  {blockers.map(b => <li key={b}>{b}</li>)}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {loaded && !je && blockers.length === 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 flex items-start gap-2">
+            <AlertCircle size={14} className="text-amber-700 mt-0.5 flex-shrink-0" />
+            Reclass JE not found. Refusing to undo to avoid a silent half-rollback — investigate manually.
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} disabled={busy} className="btn-ghost">Cancel</button>
+          <button onClick={run} disabled={!canUndo || busy} className="btn-primary flex items-center gap-2">
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            Undo capitalization
           </button>
         </div>
       </div>
