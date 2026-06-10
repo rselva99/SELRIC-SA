@@ -5,13 +5,14 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
+import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
   X, Minimize2, ChevronLeft, ChevronRight, Play, Trophy, Zap,
   CheckCircle2, SkipForward, AlertCircle, FileBarChart, FileText,
-  Sparkles, Flame, Loader2,
+  Sparkles, Flame, Loader2, Plus, Trash2, RotateCw,
 } from 'lucide-react';
 
 // ─── Period helpers ────────────────────────────────────────────────────────
@@ -250,15 +251,52 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         next = { accountBalances: list, txnsByCategory };
       } else if (key === 'generate_pl' || key === 'generate_bs') {
         const reportType = key === 'generate_pl' ? 'pl' : 'balance_sheet';
-        const [{ data: existing }, { data: txns }] = await Promise.all([
+        const queries = [
           supabase.from('report_deliverables').select('id, created_at, file_url').eq('period', period).eq('report_type', reportType).order('created_at', { ascending: false }).limit(1),
           supabase.from('transactions').select('*').gte('date', periodStart).lte('date', periodEnd).eq('posted', true),
-        ]);
+        ];
+        if (key === 'generate_pl') {
+          // Existing revenue JEs for this period — drives "Replace" instead of stacking.
+          queries.push(
+            supabase.from('journal_entries')
+              .select('id, reference, date, description, total_amount, status')
+              .gte('date', periodStart).lte('date', periodEnd)
+              .ilike('description', 'Revenue Breakdown — %')
+              .neq('status', 'void')
+              .order('created_at', { ascending: false })
+          );
+          // Daily Sales rollup for the period — used to offer a one-click prefill.
+          queries.push(
+            supabase.from('daily_sales')
+              .select('total_sales, food_sales, liquor_sales, beer_sales, wine_sales, other_sales')
+              .gte('date', periodStart).lte('date', periodEnd)
+          );
+        }
+        const results = await Promise.all(queries);
+        const existing = results[0]?.data;
+        const txns = results[1]?.data || [];
         next = {
           existingReport: existing?.[0],
-          postedTxns: txns || [],
-          preview: key === 'generate_pl' ? aggregateForPnL(txns || []) : aggregateForBS(txns || [], categories),
+          postedTxns: txns,
+          preview: key === 'generate_pl'
+            ? aggregateForPnL(txns, categories)
+            : aggregateForBS(txns, categories),
         };
+        if (key === 'generate_pl') {
+          next.existingRevenueJEs = results[2]?.data || [];
+          const ds = results[3]?.data || [];
+          const sums = ds.reduce((acc, r) => {
+            acc.total  += Number(r.total_sales)  || 0;
+            acc.food   += Number(r.food_sales)   || 0;
+            acc.liquor += Number(r.liquor_sales) || 0;
+            acc.beer   += Number(r.beer_sales)   || 0;
+            acc.wine   += Number(r.wine_sales)   || 0;
+            acc.other  += Number(r.other_sales)  || 0;
+            return acc;
+          }, { total: 0, food: 0, liquor: 0, beer: 0, wine: 0, other: 0 });
+          next.dailySalesTotals  = sums;
+          next.dailySalesRowCount = ds.length;
+        }
       } else if (key === 'close') {
         const [postedRes, jeRes, deliverRes] = await Promise.all([
           supabase.from('transactions').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('posted', true),
@@ -1177,10 +1215,15 @@ function TxnDetail({ txns, parentBalance }) {
 }
 
 function StepGenerateReport({ data, period, reportType, reload }) {
+  if (reportType === 'pl') return <StepGeneratePnL data={data} period={period} reload={reload} />;
+  return <StepGenerateBalanceSheet data={data} period={period} reload={reload} />;
+}
+
+// ── Balance Sheet variant (unchanged behavior — single generate + download) ──
+function StepGenerateBalanceSheet({ data, period, reload }) {
   const { user } = useAuth();
   const { getSignedUrl, categories } = useData();
   const [busy, setBusy] = useState(false);
-  const isPL = reportType === 'pl';
   const preview = data.preview || {};
   const existing = data.existingReport;
 
@@ -1188,16 +1231,14 @@ function StepGenerateReport({ data, period, reportType, reload }) {
     setBusy(true);
     try {
       const label = periodFullLabel(period);
-      const pdf = isPL
-        ? generatePnLPdf(aggregateForPnL(data.postedTxns || []), label)
-        : generateBalanceSheetPdf(aggregateForBS(data.postedTxns || [], categories), label);
+      const pdf = generateBalanceSheetPdf(aggregateForBS(data.postedTxns || [], categories), label);
       const blob = pdf.output('blob');
-      const fileName = `${reportType}_${period}_${Date.now()}.pdf`;
+      const fileName = `balance_sheet_${period}_${Date.now()}.pdf`;
       const path = `${period}/${fileName}`;
       const { error: upErr } = await supabase.storage.from('reports').upload(path, blob, { contentType: 'application/pdf' });
       if (upErr) throw upErr;
       const { error: insErr } = await supabase.from('report_deliverables').insert({
-        period, report_type: reportType, file_url: path, file_name: fileName, generated_by: user?.id,
+        period, report_type: 'balance_sheet', file_url: path, file_name: fileName, generated_by: user?.id,
       });
       if (insErr) throw insErr;
       toast.success('Report generated');
@@ -1220,10 +1261,10 @@ function StepGenerateReport({ data, period, reportType, reload }) {
         <button onClick={generate} disabled={busy}
           className="card p-5 text-left hover:border-brand-400 hover:shadow-md transition flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-brand-100 text-brand-600 flex items-center justify-center">
-            {busy ? <Loader2 className="animate-spin" /> : (isPL ? <FileBarChart /> : <FileText />)}
+            {busy ? <Loader2 className="animate-spin" /> : <FileText />}
           </div>
           <div>
-            <div className="font-display text-lg">{existing ? 'Regenerate' : 'Generate'} {isPL ? 'P&L' : 'Balance Sheet'}</div>
+            <div className="font-display text-lg">{existing ? 'Regenerate' : 'Generate'} Balance Sheet</div>
             <div className="text-xs text-surface-500 mt-0.5">Uses posted transactions for this period</div>
           </div>
         </button>
@@ -1240,29 +1281,376 @@ function StepGenerateReport({ data, period, reportType, reload }) {
           </button>
         )}
       </div>
-
-      {/* Inline preview */}
-      {isPL ? (
-        <div className="card p-5">
-          <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold mb-3">Preview</div>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <StatPill label="Revenue"  value={formatCurrency(preview.totalRevenue || 0)} tone="green" />
-            <StatPill label="Expenses" value={formatCurrency(preview.totalExpenses || 0)} tone="red" />
-            <StatPill label="Net" value={formatCurrency((preview.totalRevenue || 0) - (preview.totalExpenses || 0))} tone={(preview.totalRevenue || 0) - (preview.totalExpenses || 0) >= 0 ? 'green' : 'red'} />
-          </div>
+      <div className="card p-5">
+        <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold mb-3">Preview</div>
+        <div className="grid grid-cols-3 gap-3">
+          <StatPill label="Assets"      value={formatCurrency(preview.totalAssets || 0)} />
+          <StatPill label="Liabilities" value={formatCurrency(preview.totalLiabilities || 0)} />
+          <StatPill label="Equity"      value={formatCurrency(preview.totalEquity || 0)} />
         </div>
-      ) : (
-        <div className="card p-5">
-          <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold mb-3">Preview</div>
-          <div className="grid grid-cols-3 gap-3">
-            <StatPill label="Assets"      value={formatCurrency(preview.totalAssets || 0)} />
-            <StatPill label="Liabilities" value={formatCurrency(preview.totalLiabilities || 0)} />
-            <StatPill label="Equity"      value={formatCurrency(preview.totalEquity || 0)} />
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
+}
+
+// ── P&L variant: revenue breakdown input, live preview, generate PDF ──
+//
+// State machine: posting / generating / idle. No mount-time refresh — the
+// wizard's loadStepData already supplied the existing report, posted txns,
+// existing revenue JEs, and Daily Sales totals.
+function StepGeneratePnL({ data, period, reload }) {
+  const { user } = useAuth();
+  const { getSignedUrl, categories, addCategory, refresh } = useData();
+
+  const preview          = data.preview || { totalRevenue: 0, totalExpenses: 0 };
+  const existing         = data.existingReport;
+  const existingRevJEs   = data.existingRevenueJEs || [];
+  const dailySales       = data.dailySalesTotals;
+  const dailyRowCount    = data.dailySalesRowCount || 0;
+  const monthLabel       = periodFullLabel(period);
+
+  // Form state for the breakdown lines. Strings while typing — parsed on
+  // posting and inside the live-preview memo.
+  const [lines, setLines]       = useState(() => [{ label: '', amount: '' }]);
+  const [posting, setPosting]   = useState(false);
+  const [generating, setGenerating] = useState(false);
+
+  // Live preview: corrected aggregation + entered breakdown.
+  const breakdownTotal = useMemo(
+    () => lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0),
+    [lines]
+  );
+  const liveRevenue   = (preview.totalRevenue || 0) + breakdownTotal;
+  const liveExpenses  = preview.totalExpenses || 0;
+  const liveNet       = liveRevenue - liveExpenses;
+
+  const revenueCatNames = useMemo(
+    () => categories.filter(c => (c.type || '').toLowerCase() === 'revenue').map(c => c.name),
+    [categories]
+  );
+
+  function updateLine(i, field, value) {
+    setLines(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l));
+  }
+  function addLine() { setLines(prev => [...prev, { label: '', amount: '' }]); }
+  function removeLine(i) { setLines(prev => prev.length === 1 ? [{ label: '', amount: '' }] : prev.filter((_, idx) => idx !== i)); }
+
+  function prefillFromDailySales() {
+    if (!dailySales) return;
+    const candidates = [
+      ['Liquor Sales', dailySales.liquor],
+      ['Food Sales',   dailySales.food],
+      ['Beer Sales',   dailySales.beer],
+      ['Wine Sales',   dailySales.wine],
+      ['Other Sales',  dailySales.other],
+    ];
+    const filled = candidates.filter(([, amt]) => amt > 0).map(([label, amt]) => ({ label, amount: amt.toFixed(2) }));
+    // Allocate any rounding gap between sum-of-parts and total to "Other Sales".
+    const partsSum = filled.reduce((s, l) => s + parseFloat(l.amount), 0);
+    const gap = (dailySales.total || 0) - partsSum;
+    if (Math.abs(gap) > 0.005) {
+      const other = filled.find(l => l.label === 'Other Sales');
+      if (other) other.amount = (parseFloat(other.amount) + gap).toFixed(2);
+      else filled.push({ label: 'Other Sales', amount: gap.toFixed(2) });
+    }
+    setLines(filled.length ? filled : [{ label: 'Sales Revenue', amount: (dailySales.total || 0).toFixed(2) }]);
+  }
+
+  // Make sure every breakdown line maps to a revenue-type category. Reuses
+  // existing categories by name; auto-creates anything missing as type 'revenue'.
+  // If the chart of accounts has no revenue category at all, ensures a default
+  // "Sales Revenue" exists so the books always have somewhere to credit.
+  async function ensureRevenueCategories(labels) {
+    const byName = new Map(categories.map(c => [c.name, c]));
+    const created = [];
+    for (const label of labels) {
+      const existingCat = byName.get(label);
+      if (existingCat) continue;
+      const newCat = await addCategory(label, 'revenue');
+      created.push(newCat);
+      byName.set(label, newCat);
+    }
+    if (!revenueCatNames.length && !labels.some(l => byName.get(l)?.type === 'revenue')) {
+      if (!byName.get('Sales Revenue')) {
+        const fallback = await addCategory('Sales Revenue', 'revenue');
+        created.push(fallback);
+      }
+    }
+    return created;
+  }
+
+  // Delete prior revenue-breakdown JEs (and their txns) for this period so we
+  // don't stack duplicates when the user replaces. journal_entry_lines cascade
+  // off the JE; transactions only get the FK set null, so we must delete those
+  // txns explicitly before deleting the JE.
+  async function deleteExistingRevenueJEs() {
+    if (!existingRevJEs.length) return;
+    const ids = existingRevJEs.map(j => j.id);
+    const { error: txnErr } = await supabase.from('transactions').delete().in('journal_entry_id', ids);
+    if (txnErr) throw txnErr;
+    const { error: jeErr } = await supabase.from('journal_entries').delete().in('id', ids);
+    if (jeErr) throw jeErr;
+  }
+
+  async function postBreakdown() {
+    const clean = lines
+      .map(l => ({ label: l.label.trim(), amount: parseFloat(l.amount) || 0 }))
+      .filter(l => l.label && l.amount > 0);
+    if (!clean.length) { toast.error('Add at least one revenue line with a label and amount'); return; }
+
+    const verb = existingRevJEs.length ? 'Replace' : 'Post';
+    if (existingRevJEs.length) {
+      const refs = existingRevJEs.map(j => j.reference).join(', ');
+      if (!confirm(`Replace existing revenue entries (${refs}) with this breakdown?`)) return;
+    }
+
+    setPosting(true);
+    try {
+      await ensureRevenueCategories(clean.map(l => l.label));
+      await deleteExistingRevenueJEs();
+
+      const reference = await nextRevenueReference();
+      const total     = clean.reduce((s, l) => s + l.amount, 0);
+      const jeDate    = periodRange(period).end;
+
+      const { data: entry, error: e1 } = await supabase.from('journal_entries').insert({
+        reference,
+        date: jeDate,
+        description: `Revenue Breakdown — ${monthLabel}`,
+        memo: `Manual revenue breakdown for ${monthLabel}: ${clean.map(l => `${l.label} ${l.amount.toFixed(2)}`).join(', ')}`,
+        total_amount: total,
+        status: 'posted',
+        entry_type: 'simple',
+        created_by: user?.id || null,
+        posted_at: new Date().toISOString(),
+      }).select().single();
+      if (e1) throw e1;
+
+      const lineRows = clean.map(l => ({
+        journal_entry_id: entry.id,
+        account_id:       null,
+        description:      l.label,
+        debit_amount:     0,
+        credit_amount:    l.amount,
+        category:         l.label,
+      }));
+      const { error: e2 } = await supabase.from('journal_entry_lines').insert(lineRows);
+      if (e2) throw e2;
+
+      const txnRows = clean.map(l => ({
+        date:              jeDate,
+        description:       `${l.label} — ${monthLabel}`,
+        supplier:          'Revenue JE',
+        amount:            l.amount,
+        type:              'credit',
+        category:          l.label,
+        account_id:        null,
+        reference,
+        bank_statement_id: null,
+        journal_entry_id:  entry.id,
+        posted:            true,
+      }));
+      const { error: e3 } = await supabase.from('transactions').insert(txnRows);
+      if (e3) throw e3;
+
+      toast.success(`${verb}d ${reference} — ${formatCurrency(total)}`);
+      // Reload the step so preview reflects the new posted revenue, and refresh
+      // DataContext so any auto-created revenue categories propagate.
+      await refresh?.();
+      await reload();
+      setLines([{ label: '', amount: '' }]);
+    } catch (err) {
+      toast.error(err.message || 'Failed to post revenue');
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  async function generatePdf() {
+    setGenerating(true);
+    try {
+      const label = periodFullLabel(period);
+      const pdf = generatePnLPdf(aggregateForPnL(data.postedTxns || [], categories), label);
+      const blob = pdf.output('blob');
+      const fileName = `pl_${period}_${Date.now()}.pdf`;
+      const path = `${period}/${fileName}`;
+      const { error: upErr } = await supabase.storage.from('reports').upload(path, blob, { contentType: 'application/pdf' });
+      if (upErr) throw upErr;
+      const { error: insErr } = await supabase.from('report_deliverables').insert({
+        period, report_type: 'pl', file_url: path, file_name: fileName, generated_by: user?.id,
+      });
+      if (insErr) throw insErr;
+      toast.success('Report generated');
+      await reload();
+    } catch (err) {
+      toast.error(err.message || 'Failed to generate');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function downloadPdf() {
+    try {
+      const url = await getSignedUrl('reports', existing.file_url);
+      window.open(url, '_blank');
+    } catch (err) { toast.error(err.message || 'Could not download'); }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* ── Revenue Breakdown ── */}
+      <div className="card p-5">
+        <div className="flex items-start justify-between mb-3 gap-3">
+          <div>
+            <div className="font-display text-lg">Revenue Breakdown</div>
+            <div className="text-xs text-surface-500 mt-0.5">
+              POS-driven revenue that isn't in the bank feed. Posted as credits to revenue categories on {periodRange(period).end}.
+            </div>
+          </div>
+          {dailySales && dailyRowCount > 0 && (
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Daily Sales total for {monthLabel}</div>
+              <div className="font-mono text-sm font-semibold">{formatCurrency(dailySales.total)}</div>
+              <button onClick={prefillFromDailySales} className="btn-ghost text-xs mt-1">Use this</button>
+            </div>
+          )}
+        </div>
+
+        {existingRevJEs.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 mb-3">
+            <div className="flex items-center gap-2 text-sm text-amber-900">
+              <AlertCircle size={14} />
+              <span>
+                {existingRevJEs.length} revenue {existingRevJEs.length === 1 ? 'entry' : 'entries'} already posted for {monthLabel}:
+                {' '}
+                {existingRevJEs.map(j => (
+                  <span key={j.id} className="font-mono font-semibold ml-1">{j.reference} ({formatCurrency(j.total_amount)})</span>
+                ))}
+              </span>
+            </div>
+            <div className="text-xs text-amber-800 mt-1">Posting again will replace these, not stack on top.</div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {lines.map((l, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                value={l.label}
+                onChange={e => updateLine(i, 'label', e.target.value)}
+                placeholder="Label (e.g. Liquor Sales)"
+                className="input-field flex-1"
+                list="revenue-category-suggestions"
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={l.amount}
+                onChange={e => updateLine(i, 'amount', e.target.value)}
+                placeholder="0.00"
+                className="input-field w-32 text-right font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => removeLine(i)}
+                className="btn-ghost p-2 text-surface-400 hover:text-red-600"
+                aria-label="Remove line"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          <datalist id="revenue-category-suggestions">
+            {revenueCatNames.map(n => <option key={n} value={n} />)}
+          </datalist>
+        </div>
+
+        <div className="flex items-center justify-between mt-3">
+          <button onClick={addLine} className="btn-ghost text-xs flex items-center gap-1.5">
+            <Plus size={12} /> Add line
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-surface-500">Breakdown total</div>
+            <div className="font-mono text-sm font-semibold">{formatCurrency(breakdownTotal)}</div>
+            <button
+              onClick={postBreakdown}
+              disabled={posting || breakdownTotal <= 0}
+              className="btn-primary text-sm flex items-center gap-2"
+            >
+              {posting && <Loader2 size={14} className="animate-spin" />}
+              {existingRevJEs.length ? <RotateCw size={14} /> : <CheckCircle2 size={14} />}
+              {existingRevJEs.length ? 'Replace & Post' : 'Post Revenue'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Live preview ── */}
+      <div className="card p-5">
+        <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold mb-3">
+          Preview · live
+          {breakdownTotal > 0 && <span className="ml-2 text-surface-400 normal-case tracking-normal text-[10px]">(includes unposted breakdown)</span>}
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <StatPill label="Revenue"  value={formatCurrency(liveRevenue)}  tone="green" />
+          <StatPill label="Expenses" value={formatCurrency(liveExpenses)} tone="red" />
+          <StatPill label="Net"      value={formatCurrency(liveNet)}      tone={liveNet >= 0 ? 'green' : 'red'} />
+        </div>
+        {preview.revenue?.length > 0 && (
+          <details className="mt-3">
+            <summary className="text-xs text-surface-500 cursor-pointer hover:text-surface-700">Posted revenue by category</summary>
+            <table className="w-full mt-2 text-xs">
+              <tbody>
+                {preview.revenue.map(r => (
+                  <tr key={r.account} className="border-b border-surface-50 last:border-0">
+                    <td className="py-1 pr-2">{r.account}</td>
+                    <td className="py-1 text-right font-mono">{formatCurrency(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
+      </div>
+
+      {/* ── Generate PDF ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <button onClick={generatePdf} disabled={generating}
+          className="card p-5 text-left hover:border-brand-400 hover:shadow-md transition flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-brand-100 text-brand-600 flex items-center justify-center">
+            {generating ? <Loader2 className="animate-spin" /> : <FileBarChart />}
+          </div>
+          <div>
+            <div className="font-display text-lg">{existing ? 'Regenerate' : 'Generate'} P&L</div>
+            <div className="text-xs text-surface-500 mt-0.5">Uses posted transactions for this period</div>
+          </div>
+        </button>
+        {existing && (
+          <button onClick={downloadPdf}
+            className="card p-5 text-left hover:border-green-400 hover:shadow-md transition flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-green-100 text-green-600 flex items-center justify-center">
+              <CheckCircle2 />
+            </div>
+            <div>
+              <div className="font-display text-lg">Download PDF</div>
+              <div className="text-xs text-surface-500 mt-0.5">Generated {new Date(existing.created_at).toLocaleString()}</div>
+            </div>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Revenue JE reference numbers share the JE-### sequence with payroll.
+async function nextRevenueReference() {
+  const { data } = await supabase.from('journal_entries')
+    .select('reference').order('created_at', { ascending: false }).limit(1);
+  const last = data?.[0]?.reference || '';
+  const m = last.match(/JE-(\d+)/);
+  const n = m ? parseInt(m[1], 10) + 1 : 1;
+  return `JE-${String(n).padStart(3, '0')}`;
 }
 
 function StepClose({ data, period, streak, finalStats }) {
@@ -1336,45 +1724,4 @@ function StatPill({ label, value, tone = 'neutral' }) {
   );
 }
 
-// ===========================================================================
-// PDF aggregation helpers (duplicated from AccountantPage to keep wizard self-contained)
-// ===========================================================================
-function aggregateForPnL(transactions) {
-  const revByCat = {}, expByCat = {};
-  for (const t of transactions) {
-    const cat = t.category || 'Uncategorized';
-    if (t.type === 'credit' || cat.startsWith('Revenue')) revByCat[cat] = (revByCat[cat] || 0) + Math.abs(t.amount);
-    else if (t.type === 'debit') expByCat[cat] = (expByCat[cat] || 0) + Math.abs(t.amount);
-  }
-  const revenue       = Object.entries(revByCat).sort((a,b) => b[1] - a[1]).map(([account, amount]) => ({ account, amount }));
-  const expenses      = Object.entries(expByCat).sort((a,b) => b[1] - a[1]).map(([account, amount]) => ({ account, amount }));
-  const totalRevenue  = revenue.reduce((s, r) => s + r.amount, 0);
-  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
-  return { revenue, expenses, totalRevenue, totalExpenses };
-}
-
-// Aggregates by category name (the chart of accounts the user actually maintains).
-// Transactions written under the categories workaround have account_id=null and
-// the chart-of-accounts label in the `category` text column.
-function aggregateForBS(transactions, categories) {
-  const balanceByCat = {};
-  for (const t of transactions) {
-    const cat = t.category;
-    if (!cat) continue;
-    const delta = t.type === 'credit' ? -Math.abs(t.amount) : Math.abs(t.amount);
-    balanceByCat[cat] = (balanceByCat[cat] || 0) + delta;
-  }
-  const sections = { asset: [], liability: [], equity: [] };
-  for (const c of categories || []) {
-    const bal = balanceByCat[c.name] || 0;
-    if (bal === 0) continue;
-    const bucket = sections[(c.type || '').toLowerCase()];
-    if (bucket) bucket.push({ account: c.name, amount: bal });
-  }
-  return {
-    assets: sections.asset, liabilities: sections.liability, equity: sections.equity,
-    totalAssets:      sections.asset.reduce((s, x) => s + x.amount, 0),
-    totalLiabilities: sections.liability.reduce((s, x) => s + x.amount, 0),
-    totalEquity:      sections.equity.reduce((s, x) => s + x.amount, 0),
-  };
-}
+// P&L / BS aggregators live in src/lib/finance.js — shared by every report site.

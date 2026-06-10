@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf } from '../../lib/reports';
+import { aggregateForPnL } from '../../lib/finance';
 import { formatCurrency } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -35,30 +36,15 @@ export default function ReportsPage() {
   const periodTxns = transactions;
 
   const summary = useMemo(() => {
-    const revenue = periodTxns
-      .filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue'))
-      .reduce((s, t) => s + Math.abs(t.amount), 0);
-    const expenses = periodTxns
-      .filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue'))
-      .reduce((s, t) => s + Math.abs(t.amount), 0);
-
-    // Group expenses by category
-    const expensesByCategory = {};
-    periodTxns
-      .filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue'))
-      .forEach((t) => {
-        const cat = t.category || 'Uncategorized';
-        expensesByCategory[cat] = (expensesByCategory[cat] || 0) + Math.abs(t.amount);
-      });
-
+    const agg = aggregateForPnL(periodTxns, categories);
     return {
-      revenue,
-      expenses,
-      netProfit: revenue - expenses,
-      expensesByCategory: Object.entries(expensesByCategory).sort((a, b) => b[1] - a[1]),
+      revenue:  agg.totalRevenue,
+      expenses: agg.totalExpenses,
+      netProfit: agg.totalRevenue - agg.totalExpenses,
+      expensesByCategory: agg.expenses.map(e => [e.account, e.amount]),
       txnCount: periodTxns.length,
     };
-  }, [periodTxns]);
+  }, [periodTxns, categories]);
 
   const periodLabel = `${MONTHS[selectedMonth]} ${selectedYear}`;
 

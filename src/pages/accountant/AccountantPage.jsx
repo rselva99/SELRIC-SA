@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
+import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
@@ -452,7 +453,7 @@ export default function AccountantPage() {
       let pdf;
       const label = periodFullLabel(selectedPeriod);
       if (reportType === 'pl' || reportType === 'income_statement') {
-        const agg = aggregateForPnL(txns || []);
+        const agg = aggregateForPnL(txns || [], categories);
         pdf = generatePnLPdf(agg, label);
       } else if (reportType === 'balance_sheet') {
         const agg = aggregateForBS(txns || [], categories);
@@ -833,49 +834,4 @@ function OpenItemGroup({ title, items, emptyText, onItemClick }) {
   );
 }
 
-// ── PDF aggregation helpers ──────────────────────────────────────────────────
-function aggregateForPnL(transactions) {
-  const revByCat = {};
-  const expByCat = {};
-  for (const t of transactions) {
-    const cat = t.category || 'Uncategorized';
-    if (t.type === 'credit' || cat.startsWith('Revenue')) {
-      revByCat[cat] = (revByCat[cat] || 0) + Math.abs(t.amount);
-    } else if (t.type === 'debit') {
-      expByCat[cat] = (expByCat[cat] || 0) + Math.abs(t.amount);
-    }
-  }
-  const revenue       = Object.entries(revByCat).sort((a,b) => b[1] - a[1]).map(([account, amount]) => ({ account, amount }));
-  const expenses      = Object.entries(expByCat).sort((a,b) => b[1] - a[1]).map(([account, amount]) => ({ account, amount }));
-  const totalRevenue  = revenue.reduce((s, r) => s + r.amount, 0);
-  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
-  return { revenue, expenses, totalRevenue, totalExpenses };
-}
-
-// Aggregates by category name (the chart of accounts the user actually maintains).
-// Transactions written under the categories workaround have account_id=null and
-// the chart-of-accounts label in the `category` text column, so we group by that.
-function aggregateForBS(transactions, categories) {
-  const balanceByCat = {};
-  for (const t of transactions) {
-    const cat = t.category;
-    if (!cat) continue;
-    const delta = t.type === 'credit' ? -Math.abs(t.amount) : Math.abs(t.amount);
-    balanceByCat[cat] = (balanceByCat[cat] || 0) + delta;
-  }
-  const sections = { asset: [], liability: [], equity: [] };
-  for (const c of categories || []) {
-    const bal = balanceByCat[c.name] || 0;
-    if (bal === 0) continue;
-    const bucket = sections[(c.type || '').toLowerCase()];
-    if (bucket) bucket.push({ account: c.name, amount: bal });
-  }
-  return {
-    assets:           sections.asset,
-    liabilities:      sections.liability,
-    equity:           sections.equity,
-    totalAssets:      sections.asset.reduce((s, x) => s + x.amount, 0),
-    totalLiabilities: sections.liability.reduce((s, x) => s + x.amount, 0),
-    totalEquity:      sections.equity.reduce((s, x) => s + x.amount, 0),
-  };
-}
+// Aggregators live in src/lib/finance.js — shared with the Close Wizard.

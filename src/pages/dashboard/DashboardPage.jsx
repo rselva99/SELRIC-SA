@@ -3,6 +3,7 @@ import { subMonths, startOfMonth, format } from 'date-fns';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
+import { aggregateForPnL } from '../../lib/finance';
 import StatCard from '../../components/ui/StatCard';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import {
@@ -32,7 +33,7 @@ const COLORS = ['#368a67', '#276e52', '#55a683', '#84c3a7', '#f59f00', '#1971c2'
 
 export default function DashboardPage() {
   const { profile, isAdmin } = useAuth();
-  const { products } = useData();
+  const { products, categories } = useData();
 
   const [transactions, setTransactions] = useState([]);
 
@@ -50,11 +51,16 @@ export default function DashboardPage() {
       const d = new Date(t.date);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
-    const revenue  = thisMonth.filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0);
-    const expenses = thisMonth.filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0);
+    const agg = aggregateForPnL(thisMonth, categories);
     const lowStock = products.filter((p) => p.current_stock <= (p.reorder_level || 5));
-    return { revenue, expenses, netProfit: revenue - expenses, lowStock, totalProducts: products.length };
-  }, [transactions, products]);
+    return {
+      revenue: agg.totalRevenue,
+      expenses: agg.totalExpenses,
+      netProfit: agg.totalRevenue - agg.totalExpenses,
+      lowStock,
+      totalProducts: products.length,
+    };
+  }, [transactions, products, categories]);
 
   const chartData = useMemo(() => {
     const now = new Date();
@@ -62,13 +68,10 @@ export default function DashboardPage() {
       const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
       const label = d.toLocaleDateString('en-US', { month: 'short' });
       const mt = transactions.filter((t) => { const td = new Date(t.date); return td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear(); });
-      return {
-        month: label,
-        Revenue:  mt.filter((t) => t.type === 'credit' || t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0),
-        Expenses: mt.filter((t) => t.type === 'debit' && !t.category?.startsWith('Revenue')).reduce((s, t) => s + Math.abs(t.amount), 0),
-      };
+      const agg = aggregateForPnL(mt, categories);
+      return { month: label, Revenue: agg.totalRevenue, Expenses: agg.totalExpenses };
     });
-  }, [transactions]);
+  }, [transactions, categories]);
 
   const categoryData = useMemo(() => {
     const map = {};
