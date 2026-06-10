@@ -30,7 +30,7 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
   // The "Chart of Accounts" page actually reads/writes the `categories` table, not
   // `accounts`. We use the same source so this dropdown stays in sync with what the
   // user sees in /accounts.
-  const { categories, loading: dataLoading, refresh } = useData();
+  const { categories, loading: dataLoading } = useData();
 
   const [activePeriod, setActivePeriod] = useState(period);
   useEffect(() => { setActivePeriod(period); }, [period]);
@@ -43,10 +43,6 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
   const [totalPayroll, setTotalPayroll] = useState('');
   const [accountId, setAccountId]       = useState('');
   const [posting, setPosting]           = useState(false);
-
-  // Ensure the reference data is fresh whenever the form opens — covers the edge
-  // case where the user opens the modal before DataContext finished its initial load.
-  useEffect(() => { refresh?.(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   // Group every chart-of-accounts entry by its type. Type values are stored lowercase
   // in `categories` ('expense'|'liability'|'asset'|'equity'|'revenue').

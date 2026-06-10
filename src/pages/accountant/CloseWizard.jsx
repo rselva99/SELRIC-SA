@@ -94,6 +94,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
   const [direction, setDirection]           = useState('next');
   const [stepData, setStepData]             = useState({});
   const [stepLoading, setStepLoading]       = useState(false);
+  const [loadedStepKey, setLoadedStepKey]   = useState('');
   const [completing, setCompleting]         = useState(false);
   const [accountsReviewed, setAccountsReviewed] = useState(new Set());
   const [achievementsEarned, setAchievements]   = useState(new Set());
@@ -254,6 +255,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
           reportTypes: [...new Set((deliverRes.data || []).map(r => r.report_type))],
         });
       }
+      setLoadedStepKey(currentStep.key);
     } finally {
       setStepLoading(false);
     }
@@ -394,7 +396,10 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
 
   // ── Step body renderer ──
   function renderStepBody() {
-    if (stepLoading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
+    // Only show the full-step spinner while we don't have data for THIS step yet.
+    // Reloading the same step (e.g. after an action) keeps the body mounted so the
+    // form/state isn't blown away on every refresh.
+    if (loadedStepKey !== currentStep.key) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
     switch (currentStep.key) {
       case 'categorize':       return <StepCategorize data={stepData} setData={setStepData} period={period} categories={categories} reload={loadStepData} />;
       case 'post':             return <StepPost       data={stepData} setData={setStepData} reload={loadStepData} />;
