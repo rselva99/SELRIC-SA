@@ -151,13 +151,20 @@ export default function JournalPage() {
         }).select().single();
       if (e1) throw e1;
 
+      // simpleForm.account_id holds a `categories.id`; the schema's account_id
+      // column FKs to the legacy (empty) `accounts` table. Pass null and fall
+      // back to the chosen account's name for the category text if the user
+      // didn't pick a separate Category.
+      const accountName = categoryNameById[simpleForm.account_id] || '';
+      const categoryText = simpleForm.category || accountName || '';
+
       await supabase.from('journal_entry_lines').insert({
         journal_entry_id: entry.id,
-        account_id: simpleForm.account_id || null,
+        account_id: null,
         description: simpleForm.description,
         debit_amount:  simpleForm.type === 'debit'  ? amount : 0,
         credit_amount: simpleForm.type === 'credit' ? amount : 0,
-        category: simpleForm.category || null,
+        category: categoryText || null,
       });
 
       await supabase.from('transactions').insert({
@@ -165,8 +172,8 @@ export default function JournalPage() {
         description: simpleForm.description,
         supplier: simpleForm.description,
         amount, type: simpleForm.type,
-        category: simpleForm.category || '',
-        account_id: simpleForm.account_id || null,
+        category: categoryText,
+        account_id: null,
         reference: simpleForm.reference || '',
         bank_statement_id: null,
         journal_entry_id: entry.id,
@@ -236,27 +243,34 @@ export default function JournalPage() {
         (parseFloat(l.debit) || 0) > 0 || (parseFloat(l.credit) || 0) > 0
       );
 
-      const lineRows = validLines.map(l => ({
-        journal_entry_id: entry.id,
-        account_id: l.account_id || null,
-        description: l.description || advancedForm.description,
-        debit_amount:  parseFloat(l.debit)  || 0,
-        credit_amount: parseFloat(l.credit) || 0,
-        category: l.category || null,
-      }));
+      // Same workaround as Simple mode: account_id is sourced from `categories`,
+      // FK is to the empty `accounts` table — write null, fall back to the
+      // account-as-category name for the category text column.
+      const lineRows = validLines.map(l => {
+        const accountName = categoryNameById[l.account_id] || '';
+        return {
+          journal_entry_id: entry.id,
+          account_id: null,
+          description: l.description || advancedForm.description,
+          debit_amount:  parseFloat(l.debit)  || 0,
+          credit_amount: parseFloat(l.credit) || 0,
+          category: (l.category || accountName) || null,
+        };
+      });
       const { error: e2 } = await supabase.from('journal_entry_lines').insert(lineRows);
       if (e2) throw e2;
 
       const txnRows = validLines.map(l => {
         const isDebit = (parseFloat(l.debit) || 0) > 0;
+        const accountName = categoryNameById[l.account_id] || '';
         return {
           date: advancedForm.date,
           description: l.description || advancedForm.description,
           supplier: l.description || advancedForm.description,
           amount: isDebit ? parseFloat(l.debit) : parseFloat(l.credit),
           type: isDebit ? 'debit' : 'credit',
-          category: l.category || '',
-          account_id: l.account_id || null,
+          category: l.category || accountName || '',
+          account_id: null,
           reference,
           bank_statement_id: null,
           journal_entry_id: entry.id,
@@ -516,12 +530,40 @@ export default function JournalPage() {
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
-  const accountOptions = (
-    <>
-      <option value="">— Select account —</option>
-      {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-    </>
-  );
+  // The Account dropdown sources from `categories` (the table the Chart of
+  // Accounts page actually maintains). The legacy `accounts` table is empty,
+  // so we keep `accounts` destructured only for the journal-history Account
+  // column lookup on older entries.
+  const categoryNameById = useMemo(() => {
+    const m = {};
+    for (const c of categories) m[c.id] = c.name;
+    return m;
+  }, [categories]);
+
+  const accountOptions = useMemo(() => {
+    const order = ['expense', 'liability', 'asset', 'equity', 'revenue'];
+    const label = { expense: 'Expense', liability: 'Liability', asset: 'Asset', equity: 'Equity', revenue: 'Revenue' };
+    const groups = {};
+    for (const c of categories) {
+      const t = (c.type || 'other').toLowerCase();
+      (groups[t] = groups[t] || []).push(c);
+    }
+    Object.values(groups).forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)));
+    const pairs = order
+      .filter(t => groups[t])
+      .map(t => [label[t] || t, groups[t]])
+      .concat(Object.entries(groups).filter(([t]) => !order.includes(t)).map(([t, list]) => [t, list]));
+    return (
+      <>
+        <option value="">— Select account —</option>
+        {pairs.map(([type, list]) => (
+          <optgroup key={type} label={type}>
+            {list.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </optgroup>
+        ))}
+      </>
+    );
+  }, [categories]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 

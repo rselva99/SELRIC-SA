@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { formatCurrency, formatDate } from '../lib/utils';
 import Spinner from './ui/Spinner';
 import toast from 'react-hot-toast';
-import { AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Loader2, CheckCircle2, RotateCw, BookOpen } from 'lucide-react';
 
 const MONTHS_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -25,27 +25,99 @@ async function nextReference() {
   return `JE-${String(n).padStart(3, '0')}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Top-level state machine — never hangs.
+//   loading → spinner with "Loading…"
+//   error   → message + Retry button
+//   empty   → "Chart of accounts is empty…"
+//   ready   → full form
+// ─────────────────────────────────────────────────────────────────────────────
 export default function PayrollJournalForm({ period, onPosted, allowPeriodChange = false }) {
+  const { categories, loading: dataLoading, loadError, refresh } = useData();
+
+  const dataState = (() => {
+    if (loadError) return 'error';
+    if (dataLoading && categories.length === 0) return 'loading';
+    if (!dataLoading && categories.length === 0) return 'empty';
+    return 'ready';
+  })();
+
+  if (dataState === 'loading') {
+    return (
+      <div className="flex flex-col items-center gap-3 py-10">
+        <Spinner size="lg" />
+        <span className="text-sm text-surface-500">Loading…</span>
+      </div>
+    );
+  }
+
+  if (dataState === 'error') {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 p-5">
+        <div className="flex items-start gap-3">
+          <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold text-red-800">Could not load chart of accounts</div>
+            <div className="text-sm text-red-700 mt-1">
+              {loadError?.message || 'Unknown error fetching reference data.'}
+            </div>
+            <button
+              onClick={() => refresh?.()}
+              className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+            >
+              <RotateCw size={14} /> Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (dataState === 'empty') {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-5">
+        <div className="flex items-start gap-3">
+          <BookOpen size={20} className="text-amber-700 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold text-amber-900">Chart of accounts is empty</div>
+            <div className="text-sm text-amber-800 mt-1">
+              Add accounts under Chart of Accounts first.
+            </div>
+            <a href="/accounts" className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-amber-600 text-white text-sm font-medium hover:bg-amber-700">
+              Open Chart of Accounts
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <ReadyForm period={period} onPosted={onPosted} allowPeriodChange={allowPeriodChange} categories={categories} />;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The "ready" branch — runs only when categories are guaranteed loaded.
+// All transient form state lives here, so navigating away resets cleanly.
+// ─────────────────────────────────────────────────────────────────────────────
+function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
   const { user } = useAuth();
-  // The "Chart of Accounts" page actually reads/writes the `categories` table, not
-  // `accounts`. We use the same source so this dropdown stays in sync with what the
-  // user sees in /accounts.
-  const { categories, loading: dataLoading } = useData();
 
   const [activePeriod, setActivePeriod] = useState(period);
   useEffect(() => { setActivePeriod(period); }, [period]);
 
   const { start: pStart, end: pEnd } = useMemo(() => periodRange(activePeriod), [activePeriod]);
 
-  const [scanning, setScanning]         = useState(false);
-  const [venmoTxns, setVenmoTxns]       = useState([]);
-  const [existingJE, setExistingJE]     = useState(null);
   const [totalPayroll, setTotalPayroll] = useState('');
   const [accountId, setAccountId]       = useState('');
   const [posting, setPosting]           = useState(false);
 
-  // Group every chart-of-accounts entry by its type. Type values are stored lowercase
-  // in `categories` ('expense'|'liability'|'asset'|'equity'|'revenue').
+  // Period scan state machine: 'loading' | 'error' | 'ready'
+  const [scanState, setScanState]       = useState('loading');
+  const [scanError, setScanError]       = useState(null);
+  const [venmoTxns, setVenmoTxns]       = useState([]);
+  const [existingJE, setExistingJE]     = useState(null);
+
+  // Group chart-of-accounts entries by lowercase type.
   const accountGroups = useMemo(() => {
     const order = ['expense', 'liability', 'asset', 'equity', 'revenue'];
     const label = { expense: 'Expense', liability: 'Liability', asset: 'Asset', equity: 'Equity', revenue: 'Revenue' };
@@ -61,42 +133,52 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
       .concat(Object.entries(groups).filter(([t]) => !order.includes(t)).map(([t, list]) => [t, list]));
   }, [categories]);
 
-  // Default to Salaries & Wages / Payroll on first load
+  // Default to Salaries & Wages / Payroll once categories are visible.
   useEffect(() => {
     if (accountId) return;
     const sw = categories.find(c => /salaries\s*&?\s*wages|payroll/i.test(c.name));
     if (sw) setAccountId(sw.id);
   }, [categories, accountId]);
 
-  // Scan period for Venmo/CashApp payroll txns + any existing payroll JE
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setScanning(true);
-      try {
-        const [txnRes, jeRes] = await Promise.all([
-          supabase.from('transactions')
-            .select('id, date, description, amount, type')
-            .gte('date', pStart).lte('date', pEnd)
-            .eq('posted', true).eq('category', 'Payroll')
-            .or('description.ilike.%Venmo%,description.ilike.%Cash App%,description.ilike.%CashApp%')
-            .order('date'),
-          supabase.from('journal_entries')
-            .select('id, reference, total_amount, date')
-            .gte('date', pStart).lte('date', pEnd)
-            .ilike('description', 'Payroll —%')
-            .order('created_at', { ascending: false })
-            .limit(1),
-        ]);
-        if (cancelled) return;
-        setVenmoTxns(txnRes.data || []);
-        setExistingJE(jeRes.data?.[0] || null);
-      } finally {
-        if (!cancelled) setScanning(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  // Scan period for Venmo/CashApp payroll txns + any existing payroll JE.
+  // Single-effect with cancellation. Cleanup guarantees no setState after unmount.
+  const scan = useCallback(async (signal) => {
+    setScanState('loading');
+    setScanError(null);
+    try {
+      const [txnRes, jeRes] = await Promise.all([
+        supabase.from('transactions')
+          .select('id, date, description, amount, type')
+          .gte('date', pStart).lte('date', pEnd)
+          .eq('posted', true).eq('category', 'Payroll')
+          .or('description.ilike.%Venmo%,description.ilike.%Cash App%,description.ilike.%CashApp%')
+          .order('date'),
+        supabase.from('journal_entries')
+          .select('id, reference, total_amount, date')
+          .gte('date', pStart).lte('date', pEnd)
+          .ilike('description', 'Payroll —%')
+          .order('created_at', { ascending: false })
+          .limit(1),
+      ]);
+      if (signal?.cancelled) return;
+      if (txnRes.error) throw txnRes.error;
+      if (jeRes.error)  throw jeRes.error;
+      setVenmoTxns(txnRes.data || []);
+      setExistingJE(jeRes.data?.[0] || null);
+      setScanState('ready');
+    } catch (err) {
+      if (signal?.cancelled) return;
+      console.error('Payroll scan error:', err);
+      setScanError(err);
+      setScanState('error');
+    }
   }, [pStart, pEnd]);
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    scan(signal);
+    return () => { signal.cancelled = true; };
+  }, [scan]);
 
   const venmoTotal = useMemo(() => venmoTxns.reduce((s, t) => s + Math.abs(t.amount), 0), [venmoTxns]);
   const total      = parseFloat(totalPayroll) || 0;
@@ -109,18 +191,18 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
     if (shortfall) { toast.error('Total payroll is less than Venmo/CashApp already posted'); return; }
     if (existingJE && !confirm(`A payroll JE (${existingJE.reference}) already exists for this period. Post another?`)) return;
 
-    // `accountId` is a row id from the `categories` table (the user's chart of accounts).
-    // journal_entry_lines.account_id / transactions.account_id FK to the legacy `accounts`
-    // table, so we can't put a category id there — store the category name in the `category`
-    // text column and leave account_id null. Same approach as the rest of the bookkeeping flow.
+    // `accountId` is a row id from the `categories` table (the chart of accounts).
+    // journal_entry_lines.account_id / transactions.account_id FK to the legacy
+    // `accounts` table, so we store the category name in the `category` text column
+    // and leave account_id null (same workaround as the rest of the bookkeeping flow).
     const picked = categories.find(c => c.id === accountId);
     const categoryName = picked?.name || 'Payroll';
 
     setPosting(true);
     try {
-      const reference = await nextReference();
+      const reference  = await nextReference();
       const monthLabel = periodFullLabel(activePeriod);
-      const jeDate = pEnd;
+      const jeDate     = pEnd;
 
       const { data: entry, error: e1 } = await supabase.from('journal_entries').insert({
         reference,
@@ -182,16 +264,26 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
         </div>
       )}
 
+      {/* Venmo / Cash App scan section — drives its own state machine */}
       <div className="card p-4 bg-surface-50">
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold">
             Venmo / Cash App payroll already posted · {periodFullLabel(activePeriod)}
           </div>
-          {scanning && <Spinner size="sm" />}
+          {scanState === 'loading' && <Spinner size="sm" />}
         </div>
-        {!scanning && venmoTxns.length === 0 ? (
+        {scanState === 'error' && (
+          <div className="flex items-center justify-between gap-3 text-sm text-red-700">
+            <span>Could not scan transactions: {scanError?.message || 'Unknown error'}.</span>
+            <button onClick={() => scan({})} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-600 text-white text-xs font-medium hover:bg-red-700">
+              <RotateCw size={12} /> Retry
+            </button>
+          </div>
+        )}
+        {scanState === 'ready' && venmoTxns.length === 0 && (
           <div className="text-sm text-surface-500 italic">No Venmo / Cash App payroll transactions found.</div>
-        ) : (
+        )}
+        {scanState === 'ready' && venmoTxns.length > 0 && (
           <table className="w-full text-sm">
             <tbody>
               {venmoTxns.map(t => (
@@ -201,12 +293,10 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
                   <td className="py-1 pl-2 text-right font-mono text-xs">{formatCurrency(Math.abs(t.amount))}</td>
                 </tr>
               ))}
-              {venmoTxns.length > 0 && (
-                <tr className="font-semibold">
-                  <td colSpan={2} className="pt-2 text-right">Subtotal</td>
-                  <td className="pt-2 pl-2 text-right font-mono">{formatCurrency(venmoTotal)}</td>
-                </tr>
-              )}
+              <tr className="font-semibold">
+                <td colSpan={2} className="pt-2 text-right">Subtotal</td>
+                <td className="pt-2 pl-2 text-right font-mono">{formatCurrency(venmoTotal)}</td>
+              </tr>
             </tbody>
           </table>
         )}
@@ -229,14 +319,6 @@ export default function PayrollJournalForm({ period, onPosted, allowPeriodChange
               </optgroup>
             ))}
           </select>
-          {dataLoading && categories.length === 0 && (
-            <p className="text-xs text-surface-500 mt-1">Loading chart of accounts…</p>
-          )}
-          {!dataLoading && categories.length === 0 && (
-            <p className="text-xs text-amber-700 mt-1">
-              Chart of accounts is empty. Add accounts under Chart of Accounts first.
-            </p>
-          )}
         </div>
       </div>
 

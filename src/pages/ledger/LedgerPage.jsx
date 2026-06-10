@@ -165,6 +165,9 @@ export default function LedgerPage() {
       });
   }, [enrichedTxns]);
 
+  // TODO(accounts-table): `accounts` is the legacy/empty table; new transactions
+  // have account_id null. This lookup shows '—' for them. The Category column
+  // already carries the meaningful chart-of-accounts label.
   const accountMap = useMemo(() => {
     const m = {}; accounts.forEach(a => { m[a.id] = a.name; }); return m;
   }, [accounts]);

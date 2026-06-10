@@ -105,6 +105,11 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
 
   const startedAtRef     = useRef(Date.now());
   const stepStartedAtRef = useRef(Date.now());
+  // Each loadStepData call gets an incrementing id. Only the latest call is
+  // allowed to commit results — protects against a stale categorize-step fetch
+  // overwriting the payroll step's loadedStepKey and stranding the UI on the
+  // wizard's full-step spinner.
+  const loadRequestIdRef = useRef(0);
 
   const { start: periodStart, end: periodEnd } = useMemo(() => periodRange(period), [period]);
   const currentStep = STEPS[stepIdx];
@@ -166,10 +171,16 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
   }, [period]);
 
   // ── Load step data when step changes ──
+  // Race-protected: each call gets a request id. A late-arriving fetch from a
+  // previous step cannot overwrite the latest step's data or loadedStepKey.
   const loadStepData = useCallback(async () => {
+    const myId = ++loadRequestIdRef.current;
+    const key  = currentStep.key;
+    const isLatest = () => myId === loadRequestIdRef.current;
+
     setStepLoading(true);
     try {
-      const key = currentStep.key;
+      let next = null;
       if (key === 'categorize') {
         const { data } = await supabase.from('transactions')
           .select('id, date, description, supplier, amount, type, category, account_id, posted')
@@ -179,19 +190,19 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         const total = await supabase.from('transactions')
           .select('*', { count: 'exact', head: true })
           .gte('date', periodStart).lte('date', periodEnd);
-        setStepData({ uncategorized: data || [], totalTxns: total.count || 0 });
+        next = { uncategorized: data || [], totalTxns: total.count || 0 };
       } else if (key === 'post') {
         const { data } = await supabase.from('transactions')
           .select('id, date, description, amount, type, category')
           .gte('date', periodStart).lte('date', periodEnd)
           .eq('posted', false).not('category', 'is', null).neq('category', '')
           .order('date', { ascending: true });
-        setStepData({ unposted: data || [], selected: new Set((data || []).map(r => r.id)) });
+        next = { unposted: data || [], selected: new Set((data || []).map(r => r.id)) };
       } else if (key === 'journal_rules') {
         const { data: rules } = await supabase.from('journal_rules').select('*').eq('active', true);
         const { data: entries } = await supabase.from('journal_entries').select('rule_id').gte('date', periodStart).lte('date', periodEnd).not('rule_id', 'is', null);
         const ranRuleIds = new Set((entries || []).map(e => e.rule_id));
-        setStepData({ rules: rules || [], ranRuleIds });
+        next = { rules: rules || [], ranRuleIds };
       } else if (key === 'manual_journals') {
         const { data } = await supabase.from('journal_entries')
           .select('id, reference, date, description, status, total_amount')
@@ -199,67 +210,77 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
           .eq('status', 'draft')
           .is('rule_id', null)
           .order('date');
-        setStepData({ drafts: data || [] });
+        next = { drafts: data || [] };
       } else if (key === 'payroll') {
         const { count } = await supabase.from('journal_entries')
           .select('*', { count: 'exact', head: true })
           .gte('date', periodStart).lte('date', periodEnd)
           .ilike('description', 'Payroll —%');
-        setStepData({ payrollJECount: count || 0 });
+        next = { payrollJECount: count || 0 };
       } else if (key === 'reconcile') {
         const { data } = await supabase.from('transactions')
           .select('id, date, description, amount, category')
           .gte('date', periodStart).lte('date', periodEnd)
           .eq('type', 'debit').eq('reconciled', false)
           .order('date');
-        setStepData({ unreconciled: data || [] });
+        next = { unreconciled: data || [] };
       } else if (key === 'review_balances') {
+        // Group balances by category (the chart of accounts the user maintains).
         const { data: txns } = await supabase.from('transactions')
-          .select('account_id, amount, type')
+          .select('category, amount, type')
           .gte('date', periodStart).lte('date', periodEnd)
           .eq('posted', true);
-        const balByAcc = {};
+        const balByCat = {};
         (txns || []).forEach(t => {
-          if (!t.account_id) return;
+          if (!t.category) return;
           const delta = t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
-          balByAcc[t.account_id] = (balByAcc[t.account_id] || 0) + delta;
+          balByCat[t.category] = (balByCat[t.category] || 0) + delta;
         });
-        const list = accounts
-          .map(a => ({ id: a.id, name: a.name, type: a.type, balance: balByAcc[a.id] || 0 }))
-          .filter(a => a.balance !== 0)
+        const list = categories
+          .map(c => ({ id: c.id, name: c.name, type: c.type, balance: balByCat[c.name] || 0 }))
+          .filter(c => c.balance !== 0)
           .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
-        const max = Math.max(...list.map(a => Math.abs(a.balance)), 1);
-        list.forEach(a => { a.unusual = Math.abs(a.balance) > max * 0.4 && Math.abs(a.balance) > 1000; });
-        setStepData({ accountBalances: list });
+        const max = Math.max(...list.map(c => Math.abs(c.balance)), 1);
+        list.forEach(c => { c.unusual = Math.abs(c.balance) > max * 0.4 && Math.abs(c.balance) > 1000; });
+        next = { accountBalances: list };
       } else if (key === 'generate_pl' || key === 'generate_bs') {
         const reportType = key === 'generate_pl' ? 'pl' : 'balance_sheet';
         const [{ data: existing }, { data: txns }] = await Promise.all([
           supabase.from('report_deliverables').select('id, created_at, file_url').eq('period', period).eq('report_type', reportType).order('created_at', { ascending: false }).limit(1),
           supabase.from('transactions').select('*').gte('date', periodStart).lte('date', periodEnd).eq('posted', true),
         ]);
-        setStepData({
+        next = {
           existingReport: existing?.[0],
           postedTxns: txns || [],
-          preview: key === 'generate_pl' ? aggregateForPnL(txns || []) : aggregateForBS(txns || [], accounts),
-        });
+          preview: key === 'generate_pl' ? aggregateForPnL(txns || []) : aggregateForBS(txns || [], categories),
+        };
       } else if (key === 'close') {
         const [postedRes, jeRes, deliverRes] = await Promise.all([
           supabase.from('transactions').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('posted', true),
           supabase.from('journal_entries').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('status', 'posted'),
           supabase.from('report_deliverables').select('report_type').eq('period', period),
         ]);
-        setStepData({
+        next = {
           postedCount: postedRes.count || 0,
           journalCount: jeRes.count || 0,
           reportsCount: deliverRes.data?.length || 0,
           reportTypes: [...new Set((deliverRes.data || []).map(r => r.report_type))],
-        });
+        };
       }
-      setLoadedStepKey(currentStep.key);
+
+      // Only commit if a newer call hasn't superseded us.
+      if (!isLatest()) return;
+      if (next) setStepData(next);
+      setLoadedStepKey(key);
+    } catch (err) {
+      console.error('loadStepData error:', err);
+      // If we're still the latest call, surface the failure so the UI can recover
+      // (the wizard's step body falls back gracefully on missing data).
+      if (isLatest()) setLoadedStepKey(key);
     } finally {
-      setStepLoading(false);
+      if (isLatest()) setStepLoading(false);
     }
-  }, [currentStep.key, periodStart, periodEnd, period, accounts]);
+  }, [currentStep.key, periodStart, periodEnd, period, accounts, categories]);
 
   useEffect(() => { loadStepData(); }, [loadStepData]);
   useEffect(() => { stepStartedAtRef.current = Date.now(); }, [stepIdx]);
@@ -1062,7 +1083,7 @@ function StepReviewBalances({ data, reviewed, setReviewed }) {
 
 function StepGenerateReport({ data, period, reportType, reload }) {
   const { user } = useAuth();
-  const { getSignedUrl, accounts } = useData();
+  const { getSignedUrl, categories } = useData();
   const [busy, setBusy] = useState(false);
   const isPL = reportType === 'pl';
   const preview = data.preview || {};
@@ -1074,7 +1095,7 @@ function StepGenerateReport({ data, period, reportType, reload }) {
       const label = periodFullLabel(period);
       const pdf = isPL
         ? generatePnLPdf(aggregateForPnL(data.postedTxns || []), label)
-        : generateBalanceSheetPdf(aggregateForBS(data.postedTxns || [], accounts), label);
+        : generateBalanceSheetPdf(aggregateForBS(data.postedTxns || [], categories), label);
       const blob = pdf.output('blob');
       const fileName = `${reportType}_${period}_${Date.now()}.pdf`;
       const path = `${period}/${fileName}`;
@@ -1237,19 +1258,23 @@ function aggregateForPnL(transactions) {
   return { revenue, expenses, totalRevenue, totalExpenses };
 }
 
-function aggregateForBS(transactions, accounts) {
-  const balanceByAcc = {};
+// Aggregates by category name (the chart of accounts the user actually maintains).
+// Transactions written under the categories workaround have account_id=null and
+// the chart-of-accounts label in the `category` text column.
+function aggregateForBS(transactions, categories) {
+  const balanceByCat = {};
   for (const t of transactions) {
-    if (!t.account_id) continue;
+    const cat = t.category;
+    if (!cat) continue;
     const delta = t.type === 'credit' ? -Math.abs(t.amount) : Math.abs(t.amount);
-    balanceByAcc[t.account_id] = (balanceByAcc[t.account_id] || 0) + delta;
+    balanceByCat[cat] = (balanceByCat[cat] || 0) + delta;
   }
   const sections = { asset: [], liability: [], equity: [] };
-  for (const acc of accounts || []) {
-    const bal = balanceByAcc[acc.id] || 0;
+  for (const c of categories || []) {
+    const bal = balanceByCat[c.name] || 0;
     if (bal === 0) continue;
-    const bucket = sections[(acc.type || '').toLowerCase()];
-    if (bucket) bucket.push({ account: acc.name, amount: bal });
+    const bucket = sections[(c.type || '').toLowerCase()];
+    if (bucket) bucket.push({ account: c.name, amount: bal });
   }
   return {
     assets: sections.asset, liabilities: sections.liability, equity: sections.equity,

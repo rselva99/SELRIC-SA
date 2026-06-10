@@ -80,7 +80,7 @@ const STATUS_STYLES = {
 
 export default function AccountantPage() {
   const { user } = useAuth();
-  const { accounts, aiCategorizeUncategorized, getSignedUrl } = useData();
+  const { accounts, categories, aiCategorizeUncategorized, getSignedUrl } = useData();
   const navigate = useNavigate();
 
   const today = new Date();
@@ -455,7 +455,7 @@ export default function AccountantPage() {
         const agg = aggregateForPnL(txns || []);
         pdf = generatePnLPdf(agg, label);
       } else if (reportType === 'balance_sheet') {
-        const agg = aggregateForBS(txns || [], accounts);
+        const agg = aggregateForBS(txns || [], categories);
         pdf = generateBalanceSheetPdf(agg, label);
       } else {
         toast('That report type is coming soon', { icon: 'ℹ️' });
@@ -852,19 +852,23 @@ function aggregateForPnL(transactions) {
   return { revenue, expenses, totalRevenue, totalExpenses };
 }
 
-function aggregateForBS(transactions, accounts) {
-  const balanceByAcc = {};
+// Aggregates by category name (the chart of accounts the user actually maintains).
+// Transactions written under the categories workaround have account_id=null and
+// the chart-of-accounts label in the `category` text column, so we group by that.
+function aggregateForBS(transactions, categories) {
+  const balanceByCat = {};
   for (const t of transactions) {
-    if (!t.account_id) continue;
+    const cat = t.category;
+    if (!cat) continue;
     const delta = t.type === 'credit' ? -Math.abs(t.amount) : Math.abs(t.amount);
-    balanceByAcc[t.account_id] = (balanceByAcc[t.account_id] || 0) + delta;
+    balanceByCat[cat] = (balanceByCat[cat] || 0) + delta;
   }
   const sections = { asset: [], liability: [], equity: [] };
-  for (const acc of accounts || []) {
-    const bal = balanceByAcc[acc.id] || 0;
+  for (const c of categories || []) {
+    const bal = balanceByCat[c.name] || 0;
     if (bal === 0) continue;
-    const bucket = sections[(acc.type || '').toLowerCase()];
-    if (bucket) bucket.push({ account: acc.name, amount: bal });
+    const bucket = sections[(c.type || '').toLowerCase()];
+    if (bucket) bucket.push({ account: c.name, amount: bal });
   }
   return {
     assets:           sections.asset,

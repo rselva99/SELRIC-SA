@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { fuzzyMatchCategory } from '../lib/utils';
@@ -6,9 +6,20 @@ import { batchCategorize } from '../lib/claude';
 
 const DataContext = createContext({});
 
-// DataContext holds only small reference tables that are needed across many pages.
-// Large/growing tables (transactions, invoices, bankStatements, inventoryLogs)
-// are fetched per-page with pagination to avoid loading 20k+ rows into memory.
+// DataContext holds small reference tables that many pages share. Large/growing
+// tables (transactions, invoices, bankStatements, inventoryLogs) are fetched
+// per-page with pagination to avoid loading 20k+ rows into memory.
+//
+// Hardening guarantees:
+// 1. Every exported function has a stable identity (useCallback). Consumers can
+//    safely list them in dependency arrays without churning render loops.
+// 2. `loading` always resolves — set in a `finally` block on success AND error.
+// 3. Fetch errors are stored in `loadError` state, not silently swallowed.
+// 4. `refresh()` is guarded by an in-flight flag, so concurrent calls collapse
+//    into one and cannot stack or loop.
+// 5. State updates from `loadAll` REPLACE the data atomically at the end.
+//    Existing data stays visible until the new data is committed — there is no
+//    intermediate "blanked" render.
 
 export function DataProvider({ children }) {
   const { user } = useAuth();
@@ -18,12 +29,23 @@ export function DataProvider({ children }) {
   const [products, setProducts]                   = useState([]);
   const [supplierCategories, setSupplierCategories] = useState({});
   const [loading, setLoading]                     = useState(false);
+  const [loadError, setLoadError]                 = useState(null);
 
+  // Refs kept in sync with state so memoized callbacks don't need state in deps.
   const supplierCategoriesRef = useRef({});
-  useEffect(() => { supplierCategoriesRef.current = supplierCategories; }, [supplierCategories]);
+  const productsRef           = useRef([]);
+  const inFlightRef           = useRef(false);
 
+  useEffect(() => { supplierCategoriesRef.current = supplierCategories; }, [supplierCategories]);
+  useEffect(() => { productsRef.current = products; }, [products]);
+
+  // ── Load all reference data ──────────────────────────────────────────────────
+  // Guarded against concurrent invocations. Sets loadError on failure. Loading
+  // flag is always cleared in finally, even on throw.
   const loadAll = useCallback(async () => {
     if (!user) return;
+    if (inFlightRef.current) return;        // collapse concurrent calls
+    inFlightRef.current = true;
     setLoading(true);
     try {
       const [catRes, accRes, prodRes, scRes] = await Promise.all([
@@ -32,6 +54,11 @@ export function DataProvider({ children }) {
         supabase.from('products').select('*').order('name'),
         supabase.from('supplier_categories').select('*'),
       ]);
+      const firstErr = [catRes, accRes, prodRes, scRes].find((r) => r.error)?.error;
+      if (firstErr) throw firstErr;
+
+      // Atomic-ish commit: only update state once all fetches succeeded. Avoids
+      // a half-loaded render where one table is empty while another has data.
       setCategories(catRes.data || []);
       setAccounts(accRes.data || []);
       setProducts(prodRes.data || []);
@@ -40,62 +67,60 @@ export function DataProvider({ children }) {
         if (sc.supplier) map[sc.supplier.toLowerCase()] = sc.category;
       });
       setSupplierCategories(map);
+      setLoadError(null);
     } catch (err) {
       console.error('DataContext load error:', err);
+      setLoadError(err);
     } finally {
       setLoading(false);
+      inFlightRef.current = false;
     }
   }, [user]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
   // ── Category CRUD ─────────────────────────────────────────────────────────
-  async function addCategory(name, type = 'expense') {
+  const addCategory = useCallback(async (name, type = 'expense') => {
     const { data, error } = await supabase.from('categories').insert({ name, type }).select().single();
     if (error) throw error;
     setCategories((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
     return data;
-  }
-  async function deleteCategory(id) {
+  }, []);
+
+  const deleteCategory = useCallback(async (id) => {
     const { error } = await supabase.from('categories').delete().eq('id', id);
     if (error) throw error;
     setCategories((prev) => prev.filter((c) => c.id !== id));
-  }
+  }, []);
 
-  // ── Account CRUD ──────────────────────────────────────────────────────────
-  async function addAccount(name, type, parentId = null) {
+  // ── Account CRUD (legacy `accounts` table — kept for compatibility) ───────
+  const addAccount = useCallback(async (name, type, parentId = null) => {
     const { data, error } = await supabase.from('accounts').insert({ name, type, parent_id: parentId }).select().single();
     if (error) throw error;
     setAccounts((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
     return data;
-  }
-  async function deleteAccount(id) {
+  }, []);
+
+  const deleteAccount = useCallback(async (id) => {
     const { error } = await supabase.from('accounts').delete().eq('id', id);
     if (error) throw error;
     setAccounts((prev) => prev.filter((a) => a.id !== id));
-  }
+  }, []);
 
-  // ── Transaction CRUD (pure DB ops — pages manage their own state) ─────────
-  async function addTransaction(txn) {
-    const { data, error } = await supabase.from('transactions').insert(txn).select().single();
-    if (error) throw error;
-    const supplier = txn.supplier || txn.description;
-    if (supplier && txn.category) await learnSupplierCategory(supplier, txn.category);
-    return data;
-  }
-  async function updateTransaction(id, updates) {
+  // ── Transaction CRUD (pure DB — pages manage their own state) ─────────────
+  const updateTransaction = useCallback(async (id, updates) => {
     const { data, error } = await supabase.from('transactions').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return data;
-  }
-  async function deleteTransaction(id) {
+  }, []);
+
+  const deleteTransaction = useCallback(async (id) => {
     const { error } = await supabase.from('transactions').delete().eq('id', id);
     if (error) throw error;
-  }
+  }, []);
 
-  // Scan all uncategorized unposted transactions in DB and apply fuzzy matching.
-  // Returns the count of auto-assigned transactions.
-  async function propagateCategories(supplierMap) {
+  // propagateCategories reads supplierCategoriesRef, so no deps churn.
+  const propagateCategories = useCallback(async (supplierMap) => {
     const map = supplierMap || supplierCategoriesRef.current;
     if (!Object.keys(map).length) return 0;
     const { data: targets } = await supabase
@@ -113,21 +138,9 @@ export function DataProvider({ children }) {
       matches.map(({ id, cat }) => supabase.from('transactions').update({ category: cat }).eq('id', id))
     );
     return matches.length;
-  }
+  }, []);
 
-  // Post/unpost — returns propagation count for toast feedback in the caller.
-  async function postTransaction(txnId, txnData) {
-    await updateTransaction(txnId, { posted: true });
-    const supplier = txnData?.description || txnData?.supplier;
-    if (supplier && txnData?.category) return learnSupplierCategory(supplier, txnData.category);
-    return propagateCategories();
-  }
-  async function unpostTransaction(id) {
-    return updateTransaction(id, { posted: false });
-  }
-
-  // ── Supplier category learning ─────────────────────────────────────────────
-  async function learnSupplierCategory(supplier, category) {
+  const learnSupplierCategory = useCallback(async (supplier, category) => {
     if (!supplier || !category || !user) return 0;
     try {
       await supabase.from('supplier_categories')
@@ -139,13 +152,29 @@ export function DataProvider({ children }) {
       console.error('learnSupplierCategory error:', err);
       return 0;
     }
-  }
+  }, [user, propagateCategories]);
 
-  // ── AI batch categorization (second pass after fuzzy match) ───────────────
-  // Fetches all uncategorized unposted transactions, sends them to Claude in
-  // batches of 50 with known supplier→category mappings as context, and writes
-  // back any high-confidence suggestions. Returns the count of newly categorized.
-  async function aiCategorizeUncategorized(period = null) {
+  const addTransaction = useCallback(async (txn) => {
+    const { data, error } = await supabase.from('transactions').insert(txn).select().single();
+    if (error) throw error;
+    const supplier = txn.supplier || txn.description;
+    if (supplier && txn.category) await learnSupplierCategory(supplier, txn.category);
+    return data;
+  }, [learnSupplierCategory]);
+
+  const postTransaction = useCallback(async (txnId, txnData) => {
+    await updateTransaction(txnId, { posted: true });
+    const supplier = txnData?.description || txnData?.supplier;
+    if (supplier && txnData?.category) return learnSupplierCategory(supplier, txnData.category);
+    return propagateCategories();
+  }, [updateTransaction, learnSupplierCategory, propagateCategories]);
+
+  const unpostTransaction = useCallback(async (id) => {
+    return updateTransaction(id, { posted: false });
+  }, [updateTransaction]);
+
+  // ── AI batch categorization ───────────────────────────────────────────────
+  const aiCategorizeUncategorized = useCallback(async (period = null) => {
     if (!user) return 0;
     let q = supabase
       .from('transactions')
@@ -179,9 +208,8 @@ export function DataProvider({ children }) {
       }
       if (!suggestions?.length) continue;
 
-      // Group ids by suggested category to make bulk UPDATEs (one per category)
       const byCategory = {};
-      const txnMap = new Map(batch.map(t => [t.id, t]));
+      const txnMap = new Map(batch.map((t) => [t.id, t]));
       for (const s of suggestions) {
         if (!txnMap.has(s.id)) continue;
         (byCategory[s.category] = byCategory[s.category] || []).push(s.id);
@@ -191,8 +219,7 @@ export function DataProvider({ children }) {
           const { error } = await supabase.from('transactions').update({ category: cat }).in('id', ids);
           if (!error) {
             totalCategorized += ids.length;
-            // Record supplier→category mapping for the next fuzzy pass
-            ids.forEach(id => {
+            ids.forEach((id) => {
               const t = txnMap.get(id);
               const sup = t?.description || t?.supplier;
               if (sup) newSuppliers[sup] = cat;
@@ -202,7 +229,6 @@ export function DataProvider({ children }) {
       );
     }
 
-    // Persist learned mappings so future uploads benefit from the AI's work
     const supplierEntries = Object.entries(newSuppliers);
     if (supplierEntries.length) {
       try {
@@ -219,53 +245,56 @@ export function DataProvider({ children }) {
     }
 
     return totalCategorized;
-  }
+  }, [user]);
 
-  // ── Invoice CRUD (pure DB ops) ────────────────────────────────────────────
-  async function addInvoice(invoice) {
+  // ── Invoice CRUD ──────────────────────────────────────────────────────────
+  const addInvoice = useCallback(async (invoice) => {
     const { data, error } = await supabase.from('invoices').insert(invoice).select().single();
     if (error) throw error;
     return data;
-  }
-  async function updateInvoice(id, updates) {
+  }, []);
+
+  const updateInvoice = useCallback(async (id, updates) => {
     const { data, error } = await supabase.from('invoices').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return data;
-  }
+  }, []);
 
-  // ── Bank Statement CRUD (pure DB ops) ─────────────────────────────────────
-  async function addBankStatement(statement) {
+  // ── Bank Statement CRUD ───────────────────────────────────────────────────
+  const addBankStatement = useCallback(async (statement) => {
     const { data, error } = await supabase.from('bank_statements').insert(statement).select().single();
     if (error) throw error;
     return data;
-  }
+  }, []);
 
-  // ── Product CRUD (keeps products in global state — small table) ───────────
-  async function addProduct(product) {
+  // ── Product CRUD ──────────────────────────────────────────────────────────
+  const addProduct = useCallback(async (product) => {
     const { data, error } = await supabase.from('products').insert(product).select().single();
     if (error) throw error;
     setProducts((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
     return data;
-  }
-  async function updateProduct(id, updates) {
+  }, []);
+
+  const updateProduct = useCallback(async (id, updates) => {
     const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
     if (error) throw error;
     setProducts((prev) => prev.map((p) => (p.id === id ? data : p)));
     return data;
-  }
-  async function deleteProduct(id) {
+  }, []);
+
+  const deleteProduct = useCallback(async (id) => {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) throw error;
     setProducts((prev) => prev.filter((p) => p.id !== id));
-  }
+  }, []);
 
-  // ── Inventory Log (pure DB op — InventoryPage fetches its own logs) ───────
-  async function addInventoryLog(log) {
+  // ── Inventory Log ─────────────────────────────────────────────────────────
+  // Uses productsRef so products doesn't need to be a dependency.
+  const addInventoryLog = useCallback(async (log) => {
     const { data, error } = await supabase.from('inventory_logs').insert(log).select().single();
     if (error) throw error;
-    // Update product stock in global products state
     if (log.product_id) {
-      const product = products.find((p) => p.id === log.product_id);
+      const product = productsRef.current.find((p) => p.id === log.product_id);
       if (product) {
         let newQty = product.current_stock;
         if (log.type === 'received') newQty += log.quantity;
@@ -275,31 +304,36 @@ export function DataProvider({ children }) {
       }
     }
     return data;
-  }
+  }, [updateProduct]);
 
   // ── File storage ──────────────────────────────────────────────────────────
-  async function uploadFile(bucket, path, file) {
+  const uploadFile = useCallback(async (bucket, path, file) => {
     const { data, error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: '3600', upsert: false });
     if (error) throw error;
     return data;
-  }
-  async function getSignedUrl(bucket, path) {
+  }, []);
+
+  const getSignedUrl = useCallback(async (bucket, path) => {
     const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 3600);
     if (error) throw error;
     return data.signedUrl;
-  }
+  }, []);
 
-  function getSuggestedCategory(description) {
-    return fuzzyMatchCategory(description || '', supplierCategories);
-  }
+  // Reads from ref so its identity is stable.
+  const getSuggestedCategory = useCallback((description) => {
+    return fuzzyMatchCategory(description || '', supplierCategoriesRef.current);
+  }, []);
 
-  const value = {
+  // Stable value object — only changes when its members do, so consumers that
+  // grab specific fields with destructuring don't see false-positive churn.
+  const value = useMemo(() => ({
     // Reference data (small tables — fine to keep global)
-    categories, accounts, products, supplierCategories, loading,
+    categories, accounts, products, supplierCategories,
+    loading, loadError,
     // Reference CRUD
     addCategory, deleteCategory, addAccount, deleteAccount,
     addProduct, updateProduct, deleteProduct,
-    // Transaction ops (pure DB — pages manage their own state)
+    // Transaction ops
     addTransaction, updateTransaction, deleteTransaction,
     postTransaction, unpostTransaction, learnSupplierCategory,
     propagateCategories,
@@ -311,7 +345,19 @@ export function DataProvider({ children }) {
     getSuggestedCategory, uploadFile, getSignedUrl,
     aiCategorizeUncategorized,
     refresh: loadAll,
-  };
+  }), [
+    categories, accounts, products, supplierCategories, loading, loadError,
+    addCategory, deleteCategory, addAccount, deleteAccount,
+    addProduct, updateProduct, deleteProduct,
+    addTransaction, updateTransaction, deleteTransaction,
+    postTransaction, unpostTransaction, learnSupplierCategory,
+    propagateCategories,
+    addInvoice, updateInvoice, addBankStatement,
+    addInventoryLog,
+    getSuggestedCategory, uploadFile, getSignedUrl,
+    aiCategorizeUncategorized,
+    loadAll,
+  ]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
