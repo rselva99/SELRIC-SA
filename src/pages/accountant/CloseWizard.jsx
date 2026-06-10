@@ -12,7 +12,7 @@ import toast from 'react-hot-toast';
 import {
   X, Minimize2, ChevronLeft, ChevronRight, Play, Trophy, Zap,
   CheckCircle2, SkipForward, AlertCircle, FileBarChart, FileText,
-  Sparkles, Flame, Loader2, Plus, Trash2, RotateCw,
+  Sparkles, Flame, Loader2, Plus, Trash2, RotateCw, Pencil,
 } from 'lucide-react';
 
 // ─── Period helpers ────────────────────────────────────────────────────────
@@ -469,7 +469,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
       case 'post':             return <StepPost       data={stepData} setData={setStepData} reload={loadStepData} />;
       case 'journal_rules':    return <StepJournalRules data={stepData} navigate={navigate} />;
       case 'manual_journals':  return <StepManualJournals data={stepData} navigate={navigate} />;
-      case 'reconcile':        return <StepReconcile  data={stepData} navigate={navigate} reload={loadStepData} />;
+      case 'reconcile':        return <StepReconcile  data={stepData} setData={setStepData} navigate={navigate} reload={loadStepData} />;
       case 'payroll':          return <StepPayroll    period={period} reload={loadStepData} />;
       case 'review_balances':  return <StepReviewBalances data={stepData} reviewed={accountsReviewed} setReviewed={setAccountsReviewed} />;
       case 'generate_pl':      return <StepGenerateReport data={stepData} period={period} reportType="pl" reload={loadStepData} />;
@@ -917,13 +917,22 @@ function StepManualJournals({ data, navigate }) {
   );
 }
 
-function StepReconcile({ data, navigate, reload }) {
+function StepReconcile({ data, setData, navigate, reload }) {
+  // Pull the same update path Bookkeeping uses for inline category edits — so a
+  // correction here trains the supplier-memory loop identically. No parallel
+  // write path; same DataContext.updateTransaction + learnSupplierCategory.
+  const { categories: chartCategories, updateTransaction, learnSupplierCategory } = useData();
+  const pickable = useMemo(() => pickableCategories(chartCategories), [chartCategories]);
+
   const list = data.unreconciled || [];
   const [selected, setSelected]           = useState(() => new Set());
   const [categoryFilter, setCategoryFilter] = useState('');
   const [busy, setBusy]                   = useState(false);
+  const [editingTxnId, setEditingTxnId]   = useState(null);
 
-  const categories = useMemo(() => {
+  // The category-filter dropdown shows distinct category names actually present
+  // on this step's transactions.
+  const usedCategoryNames = useMemo(() => {
     const s = new Set();
     list.forEach(t => { if (t.category) s.add(t.category); });
     return [...s].sort();
@@ -934,6 +943,50 @@ function StepReconcile({ data, navigate, reload }) {
     if (categoryFilter === '__uncat__') return list.filter(t => !t.category);
     return list.filter(t => t.category === categoryFilter);
   }, [list, categoryFilter]);
+
+  // Optimistic category change. Mirrors Bookkeeping.handleCategorize:
+  //   1. Patch the row in this step's local `data.unreconciled` immediately
+  //   2. Persist via DataContext.updateTransaction
+  //   3. Train supplier→category memory; if it propagates to other txns the
+  //      wizard reload picks them up the next time the user navigates back to
+  //      this step, and other steps refetch their own data when re-entered.
+  //   4. On failure: revert the optimistic patch + toast.
+  async function handleCategorize(txn, nextCategory) {
+    setEditingTxnId(null);
+    const prevCategory = txn.category || null;
+    const newCategory  = nextCategory || null;
+    if (prevCategory === newCategory) return;
+
+    setData(d => ({
+      ...d,
+      unreconciled: (d.unreconciled || []).map(t => t.id === txn.id ? { ...t, category: newCategory } : t),
+    }));
+
+    try {
+      await updateTransaction(txn.id, { category: newCategory });
+    } catch (err) {
+      // Roll back the optimistic patch so the badge matches the truth.
+      setData(d => ({
+        ...d,
+        unreconciled: (d.unreconciled || []).map(t => t.id === txn.id ? { ...t, category: prevCategory } : t),
+      }));
+      toast.error(err?.message || 'Could not update category');
+      return;
+    }
+
+    const supplier = txn.supplier || txn.description;
+    if (supplier && newCategory) {
+      try {
+        const propagated = await learnSupplierCategory(supplier, newCategory);
+        if (propagated > 0) {
+          toast.success(`Auto-categorized ${propagated} more transaction${propagated !== 1 ? 's' : ''}`);
+          await reload();
+        }
+      } catch {
+        // Supplier learning is best-effort — the primary update already succeeded.
+      }
+    }
+  }
 
   const visibleIds       = useMemo(() => filtered.map(t => t.id), [filtered]);
   const visibleSelected  = visibleIds.filter(id => selected.has(id)).length;
@@ -991,7 +1044,7 @@ function StepReconcile({ data, navigate, reload }) {
             className="input-field text-sm py-1.5 w-auto">
             <option value="">All ({list.length})</option>
             <option value="__uncat__">— Uncategorized —</option>
-            {categories.map(c => {
+            {usedCategoryNames.map(c => {
               const n = list.filter(t => t.category === c).length;
               return <option key={c} value={c}>{c} ({n})</option>;
             })}
@@ -1028,27 +1081,125 @@ function StepReconcile({ data, navigate, reload }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(t => (
-              <tr key={t.id}
-                onClick={() => toggleOne(t.id)}
-                className={`border-b border-surface-50 cursor-pointer ${selected.has(t.id) ? 'bg-brand-50' : 'hover:bg-surface-50'}`}>
-                <td className="table-cell w-8">
-                  <input type="checkbox" checked={selected.has(t.id)}
-                    onChange={() => toggleOne(t.id)} onClick={e => e.stopPropagation()} />
-                </td>
-                <td className="table-cell font-mono text-xs">{formatDate(t.date)}</td>
-                <td className="table-cell text-sm truncate max-w-xs" title={t.description}>{t.description}</td>
-                <td className="table-cell text-xs">
-                  {t.category ? <span className="badge-green text-xs">{t.category}</span> : <span className="text-surface-300">—</span>}
-                </td>
-                <td className="table-cell text-right font-mono text-xs">{formatCurrency(Math.abs(t.amount))}</td>
-              </tr>
-            ))}
+            {filtered.map(t => {
+              const isEditing = editingTxnId === t.id;
+              return (
+                <tr key={t.id}
+                  onClick={() => { if (!isEditing) toggleOne(t.id); }}
+                  className={`border-b border-surface-50 ${isEditing ? '' : 'cursor-pointer'} ${selected.has(t.id) ? 'bg-brand-50' : 'hover:bg-surface-50'}`}>
+                  <td className="table-cell w-8">
+                    <input type="checkbox" checked={selected.has(t.id)}
+                      onChange={() => toggleOne(t.id)} onClick={e => e.stopPropagation()}
+                      disabled={isEditing} />
+                  </td>
+                  <td className="table-cell font-mono text-xs">{formatDate(t.date)}</td>
+                  <td className="table-cell text-sm truncate max-w-xs" title={t.description}>{t.description}</td>
+                  <td
+                    className="table-cell text-xs"
+                    onClick={e => { if (isEditing) e.stopPropagation(); }}
+                    onMouseDown={e => { if (isEditing) e.stopPropagation(); }}
+                  >
+                    {isEditing ? (
+                      <CategoryCombobox
+                        initial={t.category || ''}
+                        options={pickable.map(c => c.name)}
+                        onCommit={value => handleCategorize(t, value)}
+                        onCancel={() => setEditingTxnId(null)}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); setEditingTxnId(t.id); }}
+                        className="group/cat inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition hover:bg-surface-100"
+                        title="Click to recategorize"
+                      >
+                        {t.category
+                          ? <span className="badge-green text-xs rounded-full px-2 py-0.5">{t.category}</span>
+                          : <span className="text-xs text-surface-400">+ Categorize</span>}
+                        <Pencil size={10} className="opacity-0 group-hover/cat:opacity-50 text-surface-400" />
+                      </button>
+                    )}
+                  </td>
+                  <td className="table-cell text-right font-mono text-xs">{formatCurrency(Math.abs(t.amount))}</td>
+                </tr>
+              );
+            })}
             {!filtered.length && (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-surface-400">No transactions match this category.</td></tr>
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// Small combobox used by the Reconcile-step inline category editor. Type to
+// filter; Enter commits the highlighted match; Esc or any click outside
+// cancels. Renders inline so it inherits the row's styling.
+function CategoryCombobox({ initial, options, onCommit, onCancel }) {
+  const [query, setQuery]       = useState(initial || '');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const containerRef            = useRef(null);
+
+  const filtered = useMemo(() => {
+    const q = (query || '').toLowerCase();
+    if (!q) return options;
+    return options.filter(o => o.toLowerCase().includes(q));
+  }, [options, query]);
+
+  // Outside-click closes — same affordance as Esc.
+  useEffect(() => {
+    function onDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) onCancel();
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [onCancel]);
+
+  // Keep the highlighted option in range as the filter narrows.
+  useEffect(() => { setActiveIdx(0); }, [query]);
+
+  function handleKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); onCancel(); return; }
+    if (e.key === 'Enter')  {
+      e.preventDefault();
+      const pick = filtered[activeIdx];
+      if (pick) onCommit(pick);
+      else onCancel();
+      return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+  }
+
+  return (
+    <div ref={containerRef} className="relative inline-block">
+      <input
+        autoFocus
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        onKeyDown={handleKey}
+        placeholder="Type to filter…"
+        className="input-field text-xs py-1 px-2 w-44"
+      />
+      <div className="absolute z-30 left-0 top-full mt-1 bg-white border border-surface-100 rounded-lg shadow-lg max-h-56 overflow-y-auto min-w-[200px]">
+        {filtered.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-surface-400">No matches</div>
+        ) : (
+          filtered.slice(0, 50).map((opt, i) => (
+            <button
+              key={opt}
+              type="button"
+              // Use onMouseDown so the click registers before the input's blur.
+              onMouseDown={e => { e.preventDefault(); onCommit(opt); }}
+              onMouseEnter={() => setActiveIdx(i)}
+              className={`w-full text-left px-3 py-1.5 text-xs ${i === activeIdx ? 'bg-brand-50 text-brand-800' : 'hover:bg-surface-50'}`}
+            >
+              {opt}
+            </button>
+          ))
+        )}
       </div>
     </div>
   );
