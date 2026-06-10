@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
-import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
+import { aggregateForPnL, aggregateForBS, pickableCategories } from '../../lib/finance';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -734,7 +734,7 @@ function StepCategorize({ data, setData, period, categories, reload }) {
                     <select onChange={e => e.target.value && setCat(t.id, e.target.value)} defaultValue=""
                       className="input-field text-xs py-1 px-2 w-auto">
                       <option value="" disabled>Choose…</option>
-                      {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      {pickableCategories(categories).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                     </select>
                   </td>
                 </tr>

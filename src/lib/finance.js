@@ -1,3 +1,25 @@
+// Balance-sheet category types — hidden from transaction-categorization
+// dropdowns so day-to-day categorization can't accidentally credit an asset
+// or liability and pollute AI suggestions.
+const BALANCE_SHEET_TYPES = new Set(['asset', 'liability', 'equity']);
+
+export function isBalanceSheetType(type) {
+  return BALANCE_SHEET_TYPES.has((type || '').toLowerCase());
+}
+
+// A category is "pickable" from a transaction dropdown if it is a revenue or
+// expense category AND not archived. Used everywhere the user assigns a
+// category to a transaction (Bookkeeping AI list, Ledger inline edit, the
+// Close Wizard's categorize step).
+export function isPickableCategory(c) {
+  if (!c || c.archived) return false;
+  return !isBalanceSheetType(c.type);
+}
+
+export function pickableCategories(categories) {
+  return (categories || []).filter(isPickableCategory);
+}
+
 // Single source of truth for P&L / Balance Sheet aggregation.
 //
 // The old rule "revenue = any credit, expense = any debit" double-counted

@@ -4,6 +4,7 @@ import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { extractBankStatementFromText, extractBankStatementFromImages, extractInvoice } from '../../lib/claude';
 import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES } from '../../lib/utils';
+import { isBalanceSheetType } from '../../lib/finance';
 import FileDropZone from '../../components/ui/FileDropZone';
 import Modal from '../../components/ui/Modal';
 import EmptyState from '../../components/ui/EmptyState';
@@ -365,8 +366,17 @@ export default function BookkeepingPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
+  // Drop balance-sheet (asset/liability/equity) and archived categories — they
+  // belong in journal entries, not day-to-day transaction categorization.
   const allCategories = useMemo(() => {
-    const set = new Set([...DEFAULT_CATEGORIES, ...categories.map(c => c.name)]);
+    const archivedNames = new Set(categories.filter(c => c.archived).map(c => c.name));
+    const bsNames       = new Set(categories.filter(c => isBalanceSheetType(c.type)).map(c => c.name));
+    const set = new Set([
+      ...DEFAULT_CATEGORIES,
+      ...categories.filter(c => !c.archived && !isBalanceSheetType(c.type)).map(c => c.name),
+    ]);
+    for (const n of archivedNames) set.delete(n);
+    for (const n of bsNames)       set.delete(n);
     return [...set].sort();
   }, [categories]);
 
