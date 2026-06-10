@@ -50,12 +50,29 @@ function blankRuleForm() {
 }
 
 async function nextReference() {
-  const { data } = await supabase.from('journal_entries')
-    .select('reference').order('created_at', { ascending: false }).limit(1);
-  const last = data?.[0]?.reference || '';
-  const m = last.match(/JE-(\d+)/);
-  const n = m ? parseInt(m[1], 10) + 1 : 1;
-  return `JE-${String(n).padStart(3, '0')}`;
+  // Find the highest existing JE-NNN reference. We must ignore the
+  // non-numeric variants (JE-OPENING, JE-CAP-NNN, JE-DA-YYYY-MM) — otherwise
+  // peeking at just the most-recently-created entry yields a stray "JE-1"
+  // (or some inner digit run) and the insert collides with an existing
+  // reference, failing on the unique constraint.
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .select('reference')
+    .ilike('reference', 'JE-%')
+    .order('reference', { ascending: false })
+    .limit(500);
+  if (error) {
+    console.error('nextReference: failed to load references', error);
+    throw error;
+  }
+  let maxN = 0;
+  for (const r of data || []) {
+    const m = (r.reference || '').match(/^JE-(\d+)$/);
+    if (!m) continue;
+    const n = parseInt(m[1], 10);
+    if (n > maxN) maxN = n;
+  }
+  return `JE-${String(maxN + 1).padStart(3, '0')}`;
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -471,45 +488,73 @@ export default function JournalPage() {
 
   async function voidEntry(entry) {
     if (!confirm(`Reverse ${entry.reference}? This creates an offsetting entry.`)) return;
+    let createdReversalId = null; // tracked so we can roll back partial state
     try {
-      // Load original lines
-      const { data: origLines } = await supabase.from('journal_entry_lines')
-        .select('*').eq('journal_entry_id', entry.id);
+      // 1. Load original lines.
+      const { data: origLines, error: linesErr } = await supabase
+        .from('journal_entry_lines')
+        .select('*')
+        .eq('journal_entry_id', entry.id);
+      if (linesErr) {
+        console.error('voidEntry: failed to load original lines', linesErr);
+        throw linesErr;
+      }
       if (!origLines?.length) throw new Error('No lines to reverse');
 
       const reference = await nextReference();
-      const today = new Date().toISOString().slice(0,10);
-      const { data: rev } = await supabase.from('journal_entries').insert({
-        reference,
-        date: today,
-        description: `Reversal of ${entry.reference}`,
-        memo: entry.description || null,
-        total_amount: entry.total_amount,
-        status: 'posted',
-        entry_type: 'auto',
-        created_by: user?.id || null,
-        posted_at: new Date().toISOString(),
-      }).select().single();
-      if (!rev) throw new Error('Failed to create reversal');
+      const today = new Date().toISOString().slice(0, 10);
 
-      // Swap debit ↔ credit
+      // 2. Insert the reversal JE. Captures the Supabase error so a unique-
+      //    constraint collision (or RLS failure, etc.) shows the real reason
+      //    instead of a silent "Failed to create reversal".
+      const { data: rev, error: revErr } = await supabase
+        .from('journal_entries')
+        .insert({
+          reference,
+          date: today,
+          description: `Reversal of ${entry.reference}`,
+          memo: entry.description || null,
+          total_amount: entry.total_amount,
+          status: 'posted',
+          entry_type: 'auto',
+          created_by: user?.id || null,
+          posted_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (revErr) {
+        console.error('voidEntry: failed to insert reversal JE', revErr);
+        throw revErr;
+      }
+      if (!rev) throw new Error('Reversal insert returned no row');
+      createdReversalId = rev.id;
+
+      // 3. Swap debit ↔ credit on each line. For a Simple entry (single line,
+      //    only debit OR only credit populated) this produces a single line
+      //    on the opposite side — the same shape as a Simple JE.
       const revLines = origLines.map(l => ({
         journal_entry_id: rev.id,
         account_id: l.account_id,
         description: `Reversal: ${l.description || ''}`.trim(),
-        debit_amount:  l.credit_amount,
-        credit_amount: l.debit_amount,
+        debit_amount:  l.credit_amount || 0,
+        credit_amount: l.debit_amount  || 0,
         category: l.category,
       }));
-      await supabase.from('journal_entry_lines').insert(revLines);
+      const { error: revLinesErr } = await supabase.from('journal_entry_lines').insert(revLines);
+      if (revLinesErr) {
+        console.error('voidEntry: failed to insert reversal lines', revLinesErr);
+        throw revLinesErr;
+      }
 
+      // 4. Mirror to the transactions table so P&L / Balance Sheet pick it up.
       const txnRows = revLines.map(l => {
         const isDebit = (l.debit_amount || 0) > 0;
+        const amount  = isDebit ? l.debit_amount : l.credit_amount;
         return {
           date: today,
           description: l.description,
           supplier: l.description,
-          amount: isDebit ? l.debit_amount : l.credit_amount,
+          amount,
           type: isDebit ? 'debit' : 'credit',
           category: l.category || '',
           account_id: l.account_id || null,
@@ -519,13 +564,40 @@ export default function JournalPage() {
           posted: true,
         };
       });
-      await supabase.from('transactions').insert(txnRows);
+      const { error: txnsErr } = await supabase.from('transactions').insert(txnRows);
+      if (txnsErr) {
+        console.error('voidEntry: failed to insert reversal transactions', txnsErr);
+        throw txnsErr;
+      }
 
-      await supabase.from('journal_entries').update({ status: 'voided' }).eq('id', entry.id);
+      // 5. Mark the original voided.
+      const { error: voidErr } = await supabase
+        .from('journal_entries')
+        .update({ status: 'voided' })
+        .eq('id', entry.id);
+      if (voidErr) {
+        console.error('voidEntry: failed to mark original voided', voidErr);
+        throw voidErr;
+      }
 
+      // All four writes succeeded — clear the rollback marker.
+      createdReversalId = null;
       toast.success(`Reversed ${entry.reference} via ${reference}`);
       loadEntries();
-    } catch (err) { toast.error(err.message || 'Failed'); }
+    } catch (err) {
+      // Roll back any partial state. journal_entry_lines cascade off the JE;
+      // transactions have a SET NULL FK so we delete those explicitly first.
+      if (createdReversalId) {
+        try {
+          await supabase.from('transactions').delete().eq('journal_entry_id', createdReversalId);
+          await supabase.from('journal_entries').delete().eq('id', createdReversalId);
+        } catch (cleanupErr) {
+          console.error('voidEntry: rollback of partial reversal failed', cleanupErr);
+        }
+      }
+      console.error('voidEntry failed:', err);
+      toast.error(err?.message || 'Failed to create reversal');
+    }
   }
 
   // ── Render helpers ────────────────────────────────────────────────────────
