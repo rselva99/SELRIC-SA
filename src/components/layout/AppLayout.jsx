@@ -18,10 +18,12 @@ import {
   ListChecks,
   Megaphone,
   BookText,
+  Calculator,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const adminNav = [
+  { label: 'Accountant',        icon: Calculator,      path: '/accountant' },
   { label: 'Dashboard',         icon: LayoutDashboard, path: '/' },
   { label: 'Bookkeeping',       icon: BookOpen,        path: '/bookkeeping' },
   { label: 'General Ledger',    icon: Landmark,        path: '/ledger' },

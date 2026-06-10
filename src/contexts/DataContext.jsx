@@ -145,14 +145,19 @@ export function DataProvider({ children }) {
   // Fetches all uncategorized unposted transactions, sends them to Claude in
   // batches of 50 with known supplier→category mappings as context, and writes
   // back any high-confidence suggestions. Returns the count of newly categorized.
-  async function aiCategorizeUncategorized() {
+  async function aiCategorizeUncategorized(period = null) {
     if (!user) return 0;
-    const { data: targets, error: fetchErr } = await supabase
+    let q = supabase
       .from('transactions')
       .select('id, description, supplier')
       .eq('posted', false)
-      .or('category.is.null,category.eq.')
-      .limit(500);
+      .or('category.is.null,category.eq.');
+    if (period) {
+      const [yr, mo] = period.split('-');
+      const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+      q = q.gte('date', `${yr}-${mo}-01`).lte('date', `${yr}-${mo}-${String(lastDay).padStart(2,'0')}`);
+    }
+    const { data: targets, error: fetchErr } = await q.limit(500);
     if (fetchErr || !targets?.length) return 0;
 
     const { data: scRows } = await supabase
