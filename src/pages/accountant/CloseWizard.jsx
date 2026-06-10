@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -226,15 +226,20 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         next = { unreconciled: data || [] };
       } else if (key === 'review_balances') {
         // Group balances by category (the chart of accounts the user maintains).
+        // Pull id/date/description too so the step can drill into each balance
+        // without a second fetch.
         const { data: txns } = await supabase.from('transactions')
-          .select('category, amount, type')
+          .select('id, date, description, category, amount, type')
           .gte('date', periodStart).lte('date', periodEnd)
-          .eq('posted', true);
+          .eq('posted', true)
+          .order('date', { ascending: true });
         const balByCat = {};
+        const txnsByCategory = {};
         (txns || []).forEach(t => {
           if (!t.category) return;
           const delta = t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
           balByCat[t.category] = (balByCat[t.category] || 0) + delta;
+          (txnsByCategory[t.category] = txnsByCategory[t.category] || []).push(t);
         });
         const list = categories
           .map(c => ({ id: c.id, name: c.name, type: c.type, balance: balByCat[c.name] || 0 }))
@@ -242,7 +247,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
           .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
         const max = Math.max(...list.map(c => Math.abs(c.balance)), 1);
         list.forEach(c => { c.unusual = Math.abs(c.balance) > max * 0.4 && Math.abs(c.balance) > 1000; });
-        next = { accountBalances: list };
+        next = { accountBalances: list, txnsByCategory };
       } else if (key === 'generate_pl' || key === 'generate_bs') {
         const reportType = key === 'generate_pl' ? 'pl' : 'balance_sheet';
         const [{ data: existing }, { data: txns }] = await Promise.all([
@@ -1026,11 +1031,22 @@ function StepPayroll({ period, reload }) {
 
 function StepReviewBalances({ data, reviewed, setReviewed }) {
   const list = data.accountBalances || [];
+  const txnsByCategory = data.txnsByCategory || {};
+  const [expanded, setExpanded] = useState(() => new Set());
+
   function toggle(id) {
     const next = new Set(reviewed);
     if (next.has(id)) next.delete(id); else next.add(id);
     setReviewed(next);
   }
+  function toggleExpanded(id) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   if (!list.length) {
     return (
       <div className="card p-8 text-center">
@@ -1042,11 +1058,12 @@ function StepReviewBalances({ data, reviewed, setReviewed }) {
   return (
     <div>
       <div className="text-sm text-surface-500 mb-3">
-        Click an account once you've eyeballed its balance. Amber rows look unusually large.
+        Click an account once you've eyeballed its balance. Use the chevron to drill into the transactions behind a balance. Amber rows look unusually large.
       </div>
       <div className="card overflow-hidden">
         <table className="w-full">
           <thead><tr className="border-b border-surface-100 bg-surface-50">
+            <th className="table-header w-8"></th>
             <th className="table-header w-8"></th>
             <th className="table-header">Account</th>
             <th className="table-header">Type</th>
@@ -1055,28 +1072,106 @@ function StepReviewBalances({ data, reviewed, setReviewed }) {
           <tbody>
             {list.map(a => {
               const done = reviewed.has(a.id);
+              const isOpen = expanded.has(a.id);
+              const rowBg = done ? 'bg-green-50' : a.unusual ? 'bg-amber-50' : '';
               return (
-                <tr key={a.id} onClick={() => toggle(a.id)}
-                  className={`border-b border-surface-50 cursor-pointer ${
-                    done ? 'bg-green-50' : a.unusual ? 'bg-amber-50' : ''
-                  }`}>
-                  <td className="table-cell">
-                    <input type="checkbox" checked={done} readOnly />
-                  </td>
-                  <td className="table-cell text-sm font-medium flex items-center gap-2">
-                    {a.name}
-                    {a.unusual && !done && <span className="badge-warning text-[10px]">Review</span>}
-                  </td>
-                  <td className="table-cell text-xs text-surface-500 capitalize">{a.type}</td>
-                  <td className={`table-cell text-right font-mono text-sm ${a.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                    {formatCurrency(a.balance)}
-                  </td>
-                </tr>
+                <Fragment key={a.id}>
+                  <tr onClick={() => toggle(a.id)} className={`border-b border-surface-50 cursor-pointer ${rowBg}`}>
+                    <td
+                      className="table-cell"
+                      onClick={e => { e.stopPropagation(); toggleExpanded(a.id); }}
+                    >
+                      <button
+                        type="button"
+                        className="p-1 rounded hover:bg-surface-100 transition"
+                        aria-label={isOpen ? 'Collapse detail' : 'Expand detail'}
+                        aria-expanded={isOpen}
+                      >
+                        <ChevronRight size={14} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                      </button>
+                    </td>
+                    <td className="table-cell">
+                      <input type="checkbox" checked={done} readOnly />
+                    </td>
+                    <td className="table-cell text-sm font-medium flex items-center gap-2">
+                      {a.name}
+                      {a.unusual && !done && <span className="badge-warning text-[10px]">Review</span>}
+                    </td>
+                    <td className="table-cell text-xs text-surface-500 capitalize">{a.type}</td>
+                    <td className={`table-cell text-right font-mono text-sm ${a.balance >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {formatCurrency(a.balance)}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr className={rowBg}>
+                      <td colSpan={5} className="px-4 pb-4 pt-1">
+                        <TxnDetail txns={txnsByCategory[a.name] || []} parentBalance={a.balance} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function TxnDetail({ txns, parentBalance }) {
+  const { debitTotal, creditTotal, subtotal } = useMemo(() => {
+    let d = 0, c = 0;
+    for (const t of txns) {
+      const amt = Math.abs(t.amount);
+      if (t.type === 'debit') d += amt;
+      else if (t.type === 'credit') c += amt;
+    }
+    return { debitTotal: d, creditTotal: c, subtotal: c - d };
+  }, [txns]);
+  const mismatched = Math.abs(subtotal - parentBalance) > 0.005;
+
+  return (
+    <div className="ml-6 rounded-lg border border-surface-100 bg-white overflow-hidden">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-surface-100 bg-surface-50/60">
+            <th className="table-header">Date</th>
+            <th className="table-header">Description</th>
+            <th className="table-header text-right">Debit</th>
+            <th className="table-header text-right">Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {txns.map(t => (
+            <tr key={t.id} className="border-b border-surface-50 last:border-b-0">
+              <td className="table-cell font-mono text-xs">{formatDate(t.date)}</td>
+              <td className="table-cell text-xs truncate max-w-md" title={t.description}>{t.description}</td>
+              <td className="table-cell text-right font-mono text-xs">
+                {t.type === 'debit' ? formatCurrency(Math.abs(t.amount)) : ''}
+              </td>
+              <td className="table-cell text-right font-mono text-xs">
+                {t.type === 'credit' ? formatCurrency(Math.abs(t.amount)) : ''}
+              </td>
+            </tr>
+          ))}
+          <tr className="bg-surface-50">
+            <td className="table-cell text-xs font-semibold" colSpan={2}>
+              Subtotal ·{' '}
+              <span className={`font-mono ${subtotal >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                {formatCurrency(subtotal)}
+              </span>
+              {mismatched && (
+                <span className="ml-2 inline-flex items-center gap-1 text-[10px] text-amber-700 font-normal">
+                  <AlertCircle size={10} /> Detail doesn't sum to balance
+                </span>
+              )}
+            </td>
+            <td className="table-cell text-right font-mono text-xs font-semibold">{formatCurrency(debitTotal)}</td>
+            <td className="table-cell text-right font-mono text-xs font-semibold">{formatCurrency(creditTotal)}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
