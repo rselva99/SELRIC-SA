@@ -29,8 +29,23 @@ export default async function handler(req, res) {
   });
 
   if (!upstream.ok) {
-    const err = await upstream.text();
-    return res.status(upstream.status).json({ error: `Upstream error: ${upstream.status}` });
+    // Surface the real Anthropic 400 message instead of swallowing it.
+    // The API returns JSON of the form
+    //   {"type":"error","error":{"type":"invalid_request_error","message":"..."}}
+    // so we forward error.message when we can parse it, fall back to raw
+    // body text otherwise, and always log the full body server-side so
+    // Vercel logs capture the exact reason for next time.
+    const rawBody = await upstream.text();
+    console.error('[api/claude] upstream error', upstream.status, rawBody);
+    let message = `Upstream error: ${upstream.status}`;
+    try {
+      const parsed = JSON.parse(rawBody);
+      if (parsed?.error?.message) message = parsed.error.message;
+      else if (typeof parsed?.error === 'string') message = parsed.error;
+    } catch {
+      if (rawBody) message = `Upstream error: ${upstream.status} — ${rawBody.slice(0, 500)}`;
+    }
+    return res.status(upstream.status).json({ error: message, upstreamStatus: upstream.status });
   }
 
   const data = await upstream.json();

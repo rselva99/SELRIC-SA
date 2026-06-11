@@ -659,20 +659,36 @@ export default function BookkeepingPage() {
           // returns no text. We then fall back to page-by-page JPEG rendering,
           // which keeps each request under ~400 KB.
 
-          setUploadProgress('Reading PDF text…');
-          const { extractPdfText, pdfToPageImages } = await import('../../lib/pdfPages');
-          const pdfText = await extractPdfText(file);
+          setUploadProgress('Reading PDF…');
+          const { extractPdfText, pdfToPageImages, getPdfPageCount } = await import('../../lib/pdfPages');
+          // Pre-flight refuses anything we know the Anthropic API will reject
+          // BEFORE the request leaves the browser. Cheaper for the user, and
+          // the toast points at the actual cause (oversized file / too many
+          // pages) instead of the generic upstream 400.
+          const pageCount = await getPdfPageCount(file);
+          if (pageCount > 100) {
+            setUploadProgress('');
+            throw new Error(`${file.name}: ${pageCount} pages exceeds the 100-page Anthropic limit. Split the PDF and re-upload.`);
+          }
 
+          const pdfText = await extractPdfText(file);
           let extracted;
           const hasText = pdfText.replace(/[-\s|]/g, '').length > 200;
 
           if (hasText) {
-            // Digital PDF — send text only (tiny payload, no size issues)
-            setUploadProgress('Analyzing transactions…');
+            // Digital PDF — send text only (tiny payload, no size issues).
+            // Still check the text isn't pathologically large; Anthropic's
+            // hard input cap rarely matters here but we surface a clear
+            // message just in case.
+            if (pdfText.length > 1_500_000) {
+              setUploadProgress('');
+              throw new Error(`${file.name}: extracted text is ${(pdfText.length / 1024).toFixed(0)} KB, too large for one request. Split the PDF and re-upload.`);
+            }
+            setUploadProgress(`Analyzing ${pageCount}-page statement…`);
             extracted = await extractBankStatementFromText(pdfText);
           } else {
-            // Scanned/image PDF — fall back to page-by-page JPEG
-            setUploadProgress('Scanned PDF — rendering pages…');
+            // Scanned/image PDF — fall back to page-by-page JPEG.
+            setUploadProgress(`Scanned PDF — rendering ${pageCount} page${pageCount === 1 ? '' : 's'}…`);
             const pageImages = await pdfToPageImages(file);
             extracted = await extractBankStatementFromImages(pageImages, (pg, total) => {
               setUploadProgress(`Processing page ${pg} of ${total}…`);
@@ -680,7 +696,12 @@ export default function BookkeepingPage() {
           }
           setUploadProgress('');
 
-          const uploadResult = await uploadFile('documents', `${Date.now()}_${file.name}`, file);
+          // Namespace the storage path with a uuid AND timestamp so re-uploading
+          // a file with the same name (e.g. Dec-24.pdf after a delete) can never
+          // collide with whatever the storage bucket still has lingering.
+          const safeName = file.name.replace(/[^\w.\-]/g, '_');
+          const uploadPath = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+          const uploadResult = await uploadFile('documents', uploadPath, file);
           const stmt = await addBankStatement({ file_name: file.name, file_url: uploadResult?.path || '', upload_date: new Date().toISOString(), transaction_count: extracted.transactions?.length || 0 });
           if (extracted.transactions?.length) {
             for (const t of extracted.transactions) {

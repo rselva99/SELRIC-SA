@@ -57,7 +57,17 @@ Return ONLY valid JSON. No markdown, no explanation.`;
   });
 
   if (!upstream.ok) {
-    return res.status(upstream.status).json({ error: `Upstream error: ${upstream.status}` });
+    const rawBody = await upstream.text();
+    console.error('[api/marketing] upstream error', upstream.status, rawBody);
+    let message = `Upstream error: ${upstream.status}`;
+    try {
+      const parsed = JSON.parse(rawBody);
+      if (parsed?.error?.message) message = parsed.error.message;
+      else if (typeof parsed?.error === 'string') message = parsed.error;
+    } catch {
+      if (rawBody) message = `Upstream error: ${upstream.status} — ${rawBody.slice(0, 500)}`;
+    }
+    return res.status(upstream.status).json({ error: message, upstreamStatus: upstream.status });
   }
 
   const data = await upstream.json();
