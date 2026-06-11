@@ -1,3 +1,37 @@
+// ─── TRANSACTION AMOUNT SIGN CONVENTION ─────────────────────────────────────
+//
+// `transactions.amount` is stored with MIXED SIGNS in this database:
+//   • Bank-imported rows (BookkeepingPage upload flow) store NEGATIVE amounts
+//     for outflows, e.g. -120.00 for a $120 expense debit.
+//   • Journal-created rows (Payroll JE, Manual JE, Capitalize, Depreciation,
+//     Opening Balances, Revenue Breakdown, Reversal) store POSITIVE amounts,
+//     e.g. 37957.97 for a $37,957.97 debit.
+// The direction is always carried by the `type` column ('debit' | 'credit').
+//
+// Display code uses Math.abs(amount) to normalize, but AGGREGATIONS,
+// REPORTS, EXPORTS, and SUMS must do the same — never sum raw `t.amount`
+// across a mix of rows. The helpers below codify the rule. Prefer them
+// over inline `Math.abs(t.amount)`:
+//
+//   debitOf(t)      // |amount| if type === 'debit', else 0
+//   creditOf(t)     // |amount| if type === 'credit', else 0
+//   signedDelta(t)  // +|amount| for credit, -|amount| for debit
+//                   //   — credit-natural sign; used by revenue/liab/equity
+//   debitMinusCredit(t) // +|amount| for debit, -|amount| for credit
+//                   //   — debit-natural sign; used by expenses/assets
+//
+// If you find yourself writing `t.amount` inside a `reduce`, `+=`, or sum,
+// reach for one of these instead. Sign mistakes propagate into the P&L,
+// Balance Sheet, Dashboard, GL, and CSV export — every reader funnels
+// through this file.
+// ────────────────────────────────────────────────────────────────────────────
+
+export function debitOf(t)  { return t?.type === 'debit'  ? Math.abs(Number(t.amount) || 0) : 0; }
+export function creditOf(t) { return t?.type === 'credit' ? Math.abs(Number(t.amount) || 0) : 0; }
+
+export function signedDelta(t)       { return creditOf(t) - debitOf(t); }
+export function debitMinusCredit(t)  { return debitOf(t)  - creditOf(t); }
+
 // Balance-sheet category types — hidden from transaction-categorization
 // dropdowns so day-to-day categorization can't accidentally credit an asset
 // or liability and pollute AI suggestions.
@@ -53,13 +87,12 @@ export function aggregateForPnL(transactions, categories) {
     const cat = t.category;
     if (!cat) continue;
     const type = typeOf.get(cat);
-    const amt  = Math.abs(t.amount || 0);
     if (type === 'revenue') {
-      const delta = t.type === 'credit' ? amt : -amt;
-      revByCat[cat] = (revByCat[cat] || 0) + delta;
+      // Revenue is credit-natural: credits add, debits (refunds/reversals) subtract.
+      revByCat[cat] = (revByCat[cat] || 0) + signedDelta(t);
     } else if (type === 'expense') {
-      const delta = t.type === 'debit' ? amt : -amt;
-      expByCat[cat] = (expByCat[cat] || 0) + delta;
+      // Expense is debit-natural: debits add, credits (reversals) net down.
+      expByCat[cat] = (expByCat[cat] || 0) + debitMinusCredit(t);
     }
   }
 
@@ -81,14 +114,16 @@ export function aggregateForPnL(transactions, categories) {
 }
 
 // Balance sheet: groups balances by category, splits into asset/liability/equity.
-// Sign convention: debit increases assets, credit increases liabilities/equity.
+// Sign convention here is debit-natural — debits add to the per-category bucket,
+// credits subtract — so asset rows end up positive and liability/equity rows
+// negative. The section split below flips the sign back where it makes sense
+// to display each section as a positive number.
 export function aggregateForBS(transactions, categories) {
   const balanceByCat = {};
   for (const t of transactions || []) {
     const cat = t.category;
     if (!cat) continue;
-    const delta = t.type === 'credit' ? -Math.abs(t.amount) : Math.abs(t.amount);
-    balanceByCat[cat] = (balanceByCat[cat] || 0) + delta;
+    balanceByCat[cat] = (balanceByCat[cat] || 0) + debitMinusCredit(t);
   }
   const sections = { asset: [], liability: [], equity: [] };
   for (const c of categories || []) {
