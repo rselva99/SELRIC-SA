@@ -4,6 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { formatCurrency, formatDate } from '../lib/utils';
 import { magnitudeOf } from '../lib/finance';
+import { insertJournalEntryWithRetry } from '../lib/journalReference';
+import { PeriodClosedError } from '../lib/periodLock';
+import PeriodLockedDialog from './PeriodLockedDialog';
 import Spinner from './ui/Spinner';
 import toast from 'react-hot-toast';
 import { AlertCircle, Loader2, CheckCircle2, RotateCw, BookOpen } from 'lucide-react';
@@ -17,14 +20,8 @@ function periodRange(p) {
   return { start: `${y}-${m}-01`, end: `${y}-${m}-${String(last).padStart(2,'0')}` };
 }
 
-async function nextReference() {
-  const { data } = await supabase.from('journal_entries')
-    .select('reference').order('created_at', { ascending: false }).limit(1);
-  const last = data?.[0]?.reference || '';
-  const m = last.match(/JE-(\d+)/);
-  const n = m ? parseInt(m[1], 10) + 1 : 1;
-  return `JE-${String(n).padStart(3, '0')}`;
-}
+// Reference allocation lives in src/lib/journalReference.js — shared with
+// every other JE-NNN-creating path so this form can't drift from them.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level state machine — never hangs.
@@ -111,6 +108,7 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
   const [totalPayroll, setTotalPayroll] = useState('');
   const [accountId, setAccountId]       = useState('');
   const [posting, setPosting]           = useState(false);
+  const [lockedPeriod, setLockedPeriod] = useState(null);
 
   // Period scan state machine: 'loading' | 'error' | 'ready'
   const [scanState, setScanState]       = useState('loading');
@@ -201,12 +199,10 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
 
     setPosting(true);
     try {
-      const reference  = await nextReference();
       const monthLabel = periodFullLabel(activePeriod);
       const jeDate     = pEnd;
 
-      const { data: entry, error: e1 } = await supabase.from('journal_entries').insert({
-        reference,
+      const { data: entry, reference } = await insertJournalEntryWithRetry({
         date: jeDate,
         description: `Payroll — ${monthLabel}`,
         memo: `Total payroll $${total.toFixed(2)} | Venmo/CashApp already posted $${venmoTotal.toFixed(2)} | Check/Other recorded here $${remaining.toFixed(2)}`,
@@ -215,8 +211,7 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
         entry_type: 'simple',
         created_by: user?.id || null,
         posted_at: new Date().toISOString(),
-      }).select().single();
-      if (e1) throw e1;
+      });
 
       const { error: e2 } = await supabase.from('journal_entry_lines').insert({
         journal_entry_id: entry.id,
@@ -248,7 +243,11 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
       setExistingJE({ id: entry.id, reference, total_amount: remaining, date: jeDate });
       onPosted?.({ reference, amount: remaining });
     } catch (err) {
-      toast.error(err.message || 'Failed to post');
+      if (err instanceof PeriodClosedError) {
+        setLockedPeriod(err.period);
+      } else {
+        toast.error(err.message || 'Failed to post');
+      }
     } finally {
       setPosting(false);
     }
@@ -256,6 +255,11 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
 
   return (
     <div className="space-y-4">
+      <PeriodLockedDialog
+        period={lockedPeriod}
+        onClose={() => setLockedPeriod(null)}
+        onRetry={postJE}
+      />
       {allowPeriodChange && (
         <div>
           <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Period</label>

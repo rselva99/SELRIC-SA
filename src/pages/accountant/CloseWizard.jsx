@@ -6,6 +6,7 @@ import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS, pickableCategories, debitOf, creditOf, signedDelta, magnitudeOf } from '../../lib/finance';
+import { insertJournalEntryWithRetry } from '../../lib/journalReference';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -426,17 +427,24 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
   }
 
   async function doFinalClose() {
+    // Capture the snapshot from live data BEFORE we flip status to 'closed'.
+    // Once status is closed, the period-lock trigger would block any new
+    // writes; but reading is always allowed, so building a snapshot is safe.
+    const snapshot = await buildPeriodSnapshotForClose(period, periodStart, periodEnd, categories);
+    const snapshotAt = new Date().toISOString();
     const { error } = await supabase.from('period_close').upsert({
       period,
       status: 'closed',
       closed_by: user?.id,
-      closed_at: new Date().toISOString(),
+      closed_at: snapshotAt,
+      snapshot,
+      snapshot_at: snapshotAt,
     }, { onConflict: 'period' });
     if (error) { toast.error(error.message); return; }
 
     await supabase.from('accountant_audit_log').insert({
       action: 'close_period',
-      description: `Closed ${periodFullLabel(period)} via wizard`,
+      description: `Closed ${periodFullLabel(period)} via wizard (snapshot captured)`,
       period,
       performed_by: 'user',
       approved_by: user?.id,
@@ -1562,12 +1570,10 @@ function StepGeneratePnL({ data, period, reload }) {
       await ensureRevenueCategories(clean.map(l => l.label));
       await deleteExistingRevenueJEs();
 
-      const reference = await nextRevenueReference();
       const total     = clean.reduce((s, l) => s + l.amount, 0);
       const jeDate    = periodRange(period).end;
 
-      const { data: entry, error: e1 } = await supabase.from('journal_entries').insert({
-        reference,
+      const { data: entry, reference } = await insertJournalEntryWithRetry({
         date: jeDate,
         description: `Revenue Breakdown — ${monthLabel}`,
         memo: `Manual revenue breakdown for ${monthLabel}: ${clean.map(l => `${l.label} ${l.amount.toFixed(2)}`).join(', ')}`,
@@ -1576,8 +1582,7 @@ function StepGeneratePnL({ data, period, reload }) {
         entry_type: 'simple',
         created_by: user?.id || null,
         posted_at: new Date().toISOString(),
-      }).select().single();
-      if (e1) throw e1;
+      });
 
       const lineRows = clean.map(l => ({
         journal_entry_id: entry.id,
@@ -1796,15 +1801,7 @@ function StepGeneratePnL({ data, period, reload }) {
   );
 }
 
-// Revenue JE reference numbers share the JE-### sequence with payroll.
-async function nextRevenueReference() {
-  const { data } = await supabase.from('journal_entries')
-    .select('reference').order('created_at', { ascending: false }).limit(1);
-  const last = data?.[0]?.reference || '';
-  const m = last.match(/JE-(\d+)/);
-  const n = m ? parseInt(m[1], 10) + 1 : 1;
-  return `JE-${String(n).padStart(3, '0')}`;
-}
+// Reference allocation lives in src/lib/journalReference.js.
 
 function StepClose({ data, period, streak, finalStats }) {
   if (finalStats) {
@@ -1878,3 +1875,21 @@ function StatPill({ label, value, tone = 'neutral' }) {
 }
 
 // P&L / BS aggregators live in src/lib/finance.js — shared by every report site.
+
+// Snapshot capture used by doFinalClose. Matches the shape produced by
+// AccountantPage.buildPeriodSnapshot so the View Snapshot modal there can
+// render either one identically.
+async function buildPeriodSnapshotForClose(period, periodStart, periodEnd, categories) {
+  const { data: txns, error } = await supabase.from('transactions')
+    .select('id, date, description, category, amount, type')
+    .gte('date', periodStart).lte('date', periodEnd)
+    .eq('posted', true).eq('voided', false);
+  if (error) throw error;
+  return {
+    period,
+    pl:            aggregateForPnL(txns || [], categories),
+    balance_sheet: aggregateForBS(txns || [], categories),
+    txn_count:     (txns || []).length,
+    captured_at:   new Date().toISOString(),
+  };
+}

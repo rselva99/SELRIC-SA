@@ -20,6 +20,8 @@ import {
 import CapitalizeModal from '../../components/CapitalizeModal';
 import { CAPITALIZE_THRESHOLD } from '../../lib/capitalize';
 import { debitOf } from '../../lib/finance';
+import { isPeriodLockedError, periodFromLockedError, wrapIfPeriodLocked } from '../../lib/periodLock';
+import PeriodLockedDialog from '../../components/PeriodLockedDialog';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
 const ALLOWED_INVOICE_TYPES = ['application/pdf','image/png','image/jpeg','image/webp'];
@@ -190,6 +192,8 @@ export default function BookkeepingPage() {
   const [profileMap, setProfileMap]             = useState({});
   const [capitalizeTxn, setCapitalizeTxn]       = useState(null);
   const [openRowMenu, setOpenRowMenu]           = useState(null);
+  const [lockedPeriod, setLockedPeriod]         = useState(null);
+  const [lockedRetry,  setLockedRetry]          = useState(null);
 
   useEffect(() => {
     supabase.from('profiles').select('id, full_name')
@@ -555,7 +559,7 @@ export default function BookkeepingPage() {
       const ids = txns.map(t => t.id);
       const idSet = new Set(ids);
       const { error } = await supabase.from('transactions').update({ posted: true }).in('id', ids);
-      if (error) throw error;
+      if (error) throw wrapIfPeriodLocked(error);
       // Optimistic: remove from local state
       setTxnsByStmt(prev => {
         const next = {};
@@ -568,6 +572,13 @@ export default function BookkeepingPage() {
       toast.success(`Posted ${ids.length} transaction${ids.length !== 1 ? 's' : ''}`);
       loadUnpostedCount();
     } catch (err) {
+      const period = err?.period || periodFromLockedError(err);
+      if (isPeriodLockedError(err) && period) {
+        setLockedPeriod(period);
+        setLockedRetry(() => () => bulkPostTxns(txns));
+        loadUnposted();
+        return;
+      }
       toast.error(err.message || 'Bulk post failed');
       loadUnposted();
     } finally {
@@ -1223,6 +1234,12 @@ export default function BookkeepingPage() {
           // menu action disables without a full refetch.
           setPostedTxns(prev => prev.map(t => t.id === capitalizeTxn?.id ? { ...t, capitalized_asset_id: asset.id } : t));
         }}
+      />
+
+      <PeriodLockedDialog
+        period={lockedPeriod}
+        onClose={() => { setLockedPeriod(null); setLockedRetry(null); }}
+        onRetry={lockedRetry}
       />
 
     </div>

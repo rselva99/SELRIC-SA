@@ -7,6 +7,7 @@ import { formatCurrency } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
 import Spinner from '../../components/ui/Spinner';
+import Modal from '../../components/ui/Modal';
 import toast from 'react-hot-toast';
 import {
   Calculator, CheckCircle2, Circle, AlertCircle, Lock, ChevronRight,
@@ -98,6 +99,7 @@ export default function AccountantPage() {
   const [showLauncher, setShowLauncher]         = useState(false);
   const [wizardPeriod, setWizardPeriod]         = useState(null);
   const [wizardMinimized, setWizardMinimized]   = useState(false);
+  const [snapshotView, setSnapshotView]         = useState(null); // { kind: 'pl'|'balance_sheet', snapshot, snapshotAt }
 
   const periodsOfYear = useMemo(
     () => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`),
@@ -177,7 +179,7 @@ export default function AccountantPage() {
         .select('*', { count: 'exact', head: true })
         .eq('period', selectedPeriod).eq('report_type', 'balance_sheet'),
 
-      supabase.from('period_close').select('status').eq('period', selectedPeriod).maybeSingle(),
+      supabase.from('period_close').select('status, snapshot, snapshot_at, closed_at').eq('period', selectedPeriod).maybeSingle(),
     ]);
 
     const manualByKey = {};
@@ -189,7 +191,11 @@ export default function AccountantPage() {
     const unrecCount  = unrecRes.count  || 0;
     const plCount     = plRes.count     || 0;
     const bsCount     = bsRes.count     || 0;
-    const closeStatus = closeRes.data?.status;
+    const closeStatus  = closeRes.data?.status;
+    const isClosed     = closeStatus === 'closed';
+    const snapshot     = closeRes.data?.snapshot;
+    const snapshotAt   = closeRes.data?.snapshot_at;
+    const hasSnapshot  = !!(isClosed && snapshot);
 
     const steps = [
       {
@@ -247,25 +253,29 @@ export default function AccountantPage() {
       {
         key:    'generate_pl',
         status: plCount > 0 ? 'done' : 'pending',
-        detail: plCount > 0 ? 'Generated' : 'Not generated for this period',
-        actionLabel: plCount > 0 ? 'Regenerate' : 'Generate P&L',
-        actionType:  'generate_report',
+        detail: hasSnapshot
+          ? `Snapshot captured ${snapshotAt ? `as of ${new Date(snapshotAt).toLocaleString()}` : ''}`
+          : (plCount > 0 ? 'Generated' : 'Not generated for this period'),
+        actionLabel: hasSnapshot ? 'View close snapshot' : (plCount > 0 ? 'Regenerate' : 'Generate P&L'),
+        actionType:  hasSnapshot ? 'view_snapshot' : 'generate_report',
         actionTarget: 'pl',
       },
       {
         key:    'generate_bs',
         status: bsCount > 0 ? 'done' : 'pending',
-        detail: bsCount > 0 ? 'Generated' : 'Not generated for this period',
-        actionLabel: bsCount > 0 ? 'Regenerate' : 'Generate Balance Sheet',
-        actionType:  'generate_report',
+        detail: hasSnapshot
+          ? `Snapshot captured ${snapshotAt ? `as of ${new Date(snapshotAt).toLocaleString()}` : ''}`
+          : (bsCount > 0 ? 'Generated' : 'Not generated for this period'),
+        actionLabel: hasSnapshot ? 'View close snapshot' : (bsCount > 0 ? 'Regenerate' : 'Generate Balance Sheet'),
+        actionType:  hasSnapshot ? 'view_snapshot' : 'generate_report',
         actionTarget: 'balance_sheet',
       },
       {
         key:    'close',
-        status: closeStatus === 'closed' ? 'done' : 'pending',
-        detail: closeStatus === 'closed' ? 'Period closed' : 'Complete all steps above to enable',
-        actionLabel: closeStatus === 'closed' ? 'Reopen' : 'Close Period',
-        actionType:  closeStatus === 'closed' ? 'reopen_period' : 'close_period',
+        status: isClosed ? 'done' : 'pending',
+        detail: isClosed ? 'Period closed' : 'Complete all steps above to enable',
+        actionLabel: isClosed ? 'Reopen to regenerate' : 'Close Period',
+        actionType:  isClosed ? 'reopen_period' : 'close_period',
       },
     ];
 
@@ -389,25 +399,46 @@ export default function AccountantPage() {
           break;
 
         case 'close_period': {
-          if (!confirm(`Close ${periodFullLabel(selectedPeriod)}? This marks the period as closed.`)) {
+          if (!confirm(`Close ${periodFullLabel(selectedPeriod)}? This freezes the books for this period; new writes will be rejected until you reopen.`)) {
             setActionBusy('');
             return;
           }
+          // Build a snapshot from live data BEFORE we flip status to
+          // 'closed' (the trigger would block live reads from the close
+          // SET clause once status is closed if we re-read here).
+          const snapshot = await buildPeriodSnapshot(selectedPeriod, categories);
+          const snapshotAt = new Date().toISOString();
           const { error } = await supabase.from('period_close').upsert({
-            period:    selectedPeriod,
-            status:    'closed',
-            closed_by: user?.id,
-            closed_at: new Date().toISOString(),
+            period:       selectedPeriod,
+            status:       'closed',
+            closed_by:    user?.id,
+            closed_at:    snapshotAt,
+            snapshot,
+            snapshot_at:  snapshotAt,
           }, { onConflict: 'period' });
           if (error) throw error;
           await supabase.from('accountant_audit_log').insert({
             action: 'close_period',
-            description: `Closed ${periodFullLabel(selectedPeriod)}`,
+            description: `Closed ${periodFullLabel(selectedPeriod)} (snapshot captured)`,
             period: selectedPeriod,
             performed_by: 'user',
             approved_by: user?.id,
           });
-          toast.success(`${periodFullLabel(selectedPeriod)} closed`);
+          toast.success(`${periodFullLabel(selectedPeriod)} closed and snapshot captured`);
+          break;
+        }
+
+        case 'view_snapshot': {
+          // Snapshot was loaded during loadChecklist; surface it in a modal.
+          const { data: row } = await supabase.from('period_close')
+            .select('snapshot, snapshot_at')
+            .eq('period', selectedPeriod)
+            .maybeSingle();
+          setSnapshotView({
+            kind: step.actionTarget,
+            snapshot: row?.snapshot || null,
+            snapshotAt: row?.snapshot_at || null,
+          });
           break;
         }
 
@@ -805,6 +836,115 @@ export default function AccountantPage() {
           </div>
         </div>
       </div>
+
+      <SnapshotModal
+        view={snapshotView}
+        period={selectedPeriod}
+        onClose={() => setSnapshotView(null)}
+      />
+    </div>
+  );
+}
+
+// Compute the P&L + Balance Sheet aggregations against current live data
+// and freeze them as a snapshot. Stored on period_close.snapshot at close
+// time so a closed period always reads from this, not from the live ledger.
+async function buildPeriodSnapshot(period, categories) {
+  const { start, end } = periodRange(period);
+  const { data: txns, error } = await supabase.from('transactions')
+    .select('id, date, description, category, amount, type')
+    .gte('date', start).lte('date', end)
+    .eq('posted', true).eq('voided', false);
+  if (error) throw error;
+  return {
+    period,
+    pl:            aggregateForPnL(txns || [], categories),
+    balance_sheet: aggregateForBS(txns || [], categories),
+    txn_count:     (txns || []).length,
+    captured_at:   new Date().toISOString(),
+  };
+}
+
+// Read-only modal that renders the frozen snapshot data with the close
+// timestamp. Used in place of the live "Regenerate" button on closed
+// periods.
+function SnapshotModal({ view, period, onClose }) {
+  if (!view) return null;
+  const isPL = view.kind === 'pl';
+  const data = isPL ? view.snapshot?.pl : view.snapshot?.balance_sheet;
+  const asOf = view.snapshotAt ? new Date(view.snapshotAt).toLocaleString() : null;
+
+  return (
+    <Modal open={!!view} onClose={onClose} title={isPL ? 'P&L · close snapshot' : 'Balance Sheet · close snapshot'} size="lg">
+      <div className="space-y-4 p-1">
+        <div className="text-xs text-surface-500 flex items-center gap-2">
+          <span className="uppercase tracking-wider font-semibold">{periodFullLabel(period)}</span>
+          {asOf && <span>· as of {asOf}</span>}
+          <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] uppercase tracking-wider">snapshot</span>
+        </div>
+
+        {!data ? (
+          <p className="text-sm text-surface-500">No snapshot was captured for this period.</p>
+        ) : isPL ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <StatTile label="Revenue"  value={formatCurrency(data.totalRevenue || 0)}  tone="green" />
+              <StatTile label="Expenses" value={formatCurrency(data.totalExpenses || 0)} tone="red"   />
+              <StatTile label="Net"      value={formatCurrency((data.totalRevenue || 0) - (data.totalExpenses || 0))} tone={(data.totalRevenue || 0) - (data.totalExpenses || 0) >= 0 ? 'green' : 'red'} />
+            </div>
+            <SnapshotBreakdown title="Revenue"  rows={data.revenue}  />
+            <SnapshotBreakdown title="Expenses" rows={data.expenses} />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <StatTile label="Assets"      value={formatCurrency(data.totalAssets || 0)} />
+              <StatTile label="Liabilities" value={formatCurrency(data.totalLiabilities || 0)} />
+              <StatTile label="Equity"      value={formatCurrency(data.totalEquity || 0)} />
+            </div>
+            <SnapshotBreakdown title="Assets"      rows={data.assets} />
+            <SnapshotBreakdown title="Liabilities" rows={data.liabilities} />
+            <SnapshotBreakdown title="Equity"      rows={data.equity} />
+          </div>
+        )}
+
+        <p className="text-xs text-surface-500">
+          This view is read-only. Reopen the period from the Close step to make new writes and regenerate.
+        </p>
+
+        <div className="flex justify-end pt-1">
+          <button onClick={onClose} className="btn-ghost">Close</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function StatTile({ label, value, tone = 'neutral' }) {
+  const cls = { green: 'text-green-700', red: 'text-red-700', neutral: 'text-surface-800' }[tone];
+  return (
+    <div className="card p-3">
+      <div className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{label}</div>
+      <div className={`font-mono text-lg font-semibold mt-1 ${cls}`}>{value}</div>
+    </div>
+  );
+}
+
+function SnapshotBreakdown({ title, rows }) {
+  if (!rows?.length) return null;
+  return (
+    <div className="rounded-lg border border-surface-100">
+      <div className="px-3 py-1.5 bg-surface-50 text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</div>
+      <table className="w-full text-sm">
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.account} className="border-t border-surface-50">
+              <td className="px-3 py-1.5">{r.account}</td>
+              <td className="px-3 py-1.5 text-right font-mono">{formatCurrency(r.amount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

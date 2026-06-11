@@ -5,6 +5,9 @@ import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate, DEFAULT_CATEGORIES } from '../../lib/utils';
 import Modal from '../../components/ui/Modal';
 import { signedDelta } from '../../lib/finance';
+import { insertJournalEntryWithRetry } from '../../lib/journalReference';
+import { PeriodClosedError, isPeriodLockedError, periodFromLockedError } from '../../lib/periodLock';
+import PeriodLockedDialog from '../../components/PeriodLockedDialog';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -51,31 +54,8 @@ function blankRuleForm() {
   };
 }
 
-async function nextReference() {
-  // Find the highest existing JE-NNN reference. We must ignore the
-  // non-numeric variants (JE-OPENING, JE-CAP-NNN, JE-DA-YYYY-MM) — otherwise
-  // peeking at just the most-recently-created entry yields a stray "JE-1"
-  // (or some inner digit run) and the insert collides with an existing
-  // reference, failing on the unique constraint.
-  const { data, error } = await supabase
-    .from('journal_entries')
-    .select('reference')
-    .ilike('reference', 'JE-%')
-    .order('reference', { ascending: false })
-    .limit(500);
-  if (error) {
-    console.error('nextReference: failed to load references', error);
-    throw error;
-  }
-  let maxN = 0;
-  for (const r of data || []) {
-    const m = (r.reference || '').match(/^JE-(\d+)$/);
-    if (!m) continue;
-    const n = parseInt(m[1], 10);
-    if (n > maxN) maxN = n;
-  }
-  return `JE-${String(maxN + 1).padStart(3, '0')}`;
-}
+// Reference allocation + 23505-aware retry live in src/lib/journalReference.js
+// so every JE-NNN-creating path uses the same logic.
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -106,6 +86,8 @@ export default function JournalPage() {
   const [entryLines, setEntryLines]         = useState({});  // {entryId: [lines]}
   const [expandedEntries, setExpandedEntries] = useState(new Set());
   const [reverseTarget, setReverseTarget]   = useState(null); // { entry, date }
+  const [lockedPeriod, setLockedPeriod]     = useState(null); // open the reopen dialog
+  const [lockedRetry,  setLockedRetry]      = useState(null); // function to retry after reopen
   const [historyLoading, setHistoryLoading] = useState(true);
 
   const allCategories = useMemo(() => {
@@ -147,6 +129,18 @@ export default function JournalPage() {
     }
   }
 
+  // Centralized period-lock catch. Stash the retry so the dialog can run it
+  // after the user clicks "Reopen and retry". Returns true when the error
+  // was a period-lock so the caller can early-out instead of showing a toast.
+  function handlePeriodLock(err, retry) {
+    if (!(err instanceof PeriodClosedError) && !isPeriodLockedError(err)) return false;
+    const period = err.period || periodFromLockedError(err);
+    if (!period) return false;
+    setLockedPeriod(period);
+    setLockedRetry(() => retry);
+    return true;
+  }
+
   // ── Simple entry ──────────────────────────────────────────────────────────
 
   async function handleSimpleSubmit(e) {
@@ -157,19 +151,16 @@ export default function JournalPage() {
     setSavingSimple(true);
     try {
       const amount = Math.abs(parseFloat(simpleForm.amount));
-      const reference = await nextReference();
-      const { data: entry, error: e1 } = await supabase.from('journal_entries')
-        .insert({
-          reference, date: simpleForm.date,
-          description: simpleForm.description,
-          memo: simpleForm.reference || null,
-          total_amount: amount,
-          status: 'posted',
-          entry_type: 'simple',
-          created_by: user?.id || null,
-          posted_at: new Date().toISOString(),
-        }).select().single();
-      if (e1) throw e1;
+      const { data: entry, reference } = await insertJournalEntryWithRetry({
+        date: simpleForm.date,
+        description: simpleForm.description,
+        memo: simpleForm.reference || null,
+        total_amount: amount,
+        status: 'posted',
+        entry_type: 'simple',
+        created_by: user?.id || null,
+        posted_at: new Date().toISOString(),
+      });
 
       // simpleForm.account_id holds a `categories.id`; the schema's account_id
       // column FKs to the legacy (empty) `accounts` table. Pass null and fall
@@ -203,7 +194,10 @@ export default function JournalPage() {
       toast.success(`Posted ${reference}`);
       setSimpleForm(blankSimpleForm());
       loadEntries();
-    } catch (err) { toast.error(err.message || 'Failed'); }
+    } catch (err) {
+      if (handlePeriodLock(err, () => handleSimpleSubmit({ preventDefault: () => {} }))) return;
+      toast.error(err.message || 'Failed');
+    }
     finally { setSavingSimple(false); }
   }
 
@@ -245,19 +239,16 @@ export default function JournalPage() {
     if (!advancedForm.description) { toast.error('Description required'); return; }
     setSavingAdvanced(true);
     try {
-      const reference = await nextReference();
-      const { data: entry, error: e1 } = await supabase.from('journal_entries')
-        .insert({
-          reference, date: advancedForm.date,
-          description: advancedForm.description,
-          memo: advancedForm.memo || null,
-          total_amount: totalDebit,
-          status: 'posted',
-          entry_type: 'double',
-          created_by: user?.id || null,
-          posted_at: new Date().toISOString(),
-        }).select().single();
-      if (e1) throw e1;
+      const { data: entry, reference } = await insertJournalEntryWithRetry({
+        date: advancedForm.date,
+        description: advancedForm.description,
+        memo: advancedForm.memo || null,
+        total_amount: totalDebit,
+        status: 'posted',
+        entry_type: 'double',
+        created_by: user?.id || null,
+        posted_at: new Date().toISOString(),
+      });
 
       const validLines = advancedForm.lines.filter(l =>
         (parseFloat(l.debit) || 0) > 0 || (parseFloat(l.credit) || 0) > 0
@@ -303,7 +294,10 @@ export default function JournalPage() {
       toast.success(`Posted ${reference} (${validLines.length} lines)`);
       setAdvancedForm(blankAdvancedForm());
       loadEntries();
-    } catch (err) { toast.error(err.message || 'Failed'); }
+    } catch (err) {
+      if (handlePeriodLock(err, () => handleAdvancedPost({ preventDefault: () => {} }))) return;
+      toast.error(err.message || 'Failed');
+    }
     finally { setSavingAdvanced(false); }
   }
 
@@ -423,9 +417,7 @@ export default function JournalPage() {
     setApprovingGen(true);
     try {
       for (const p of toPost) {
-        const reference = await nextReference();
-        const { data: entry } = await supabase.from('journal_entries').insert({
-          reference,
+        const { data: entry, reference } = await insertJournalEntryWithRetry({
           date: p.entry.date,
           description: p.entry.description,
           memo: p.entry.memo,
@@ -435,7 +427,7 @@ export default function JournalPage() {
           rule_id: p.rule.id,
           created_by: user?.id || null,
           posted_at: new Date().toISOString(),
-        }).select().single();
+        });
         if (!entry) continue;
 
         const lineRows = p.lines.map(l => ({ ...l, journal_entry_id: entry.id }));
@@ -464,7 +456,10 @@ export default function JournalPage() {
       setGenPreview([]);
       setSelectedGen(new Set());
       loadEntries();
-    } catch (err) { toast.error(err.message || 'Failed'); }
+    } catch (err) {
+      if (handlePeriodLock(err, () => approveAllGenerated())) return;
+      toast.error(err.message || 'Failed');
+    }
     finally { setApprovingGen(false); }
   }
 
@@ -542,31 +537,21 @@ export default function JournalPage() {
       }
       if (!origLines?.length) throw new Error('No lines to reverse');
 
-      const reference = await nextReference();
       const dateStr   = reversalDate || entry.date;
 
-      // 2. Insert the reversal JE. Captures the Supabase error so a unique-
-      //    constraint collision (or RLS failure, etc.) shows the real reason
-      //    instead of a silent "Failed to create reversal".
-      const { data: rev, error: revErr } = await supabase
-        .from('journal_entries')
-        .insert({
-          reference,
-          date: dateStr,
-          description: `Reversal of ${entry.reference}`,
-          memo: entry.description || null,
-          total_amount: entry.total_amount,
-          status: 'posted',
-          entry_type: 'auto',
-          created_by: user?.id || null,
-          posted_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
-      if (revErr) {
-        console.error('reverseEntry: failed to insert reversal JE', revErr);
-        throw revErr;
-      }
+      // 2. Insert the reversal JE. Reference allocation + 23505 retry are
+      //    handled by insertJournalEntryWithRetry so a concurrent insert
+      //    can't park us on a colliding number.
+      const { data: rev, reference } = await insertJournalEntryWithRetry({
+        date: dateStr,
+        description: `Reversal of ${entry.reference}`,
+        memo: entry.description || null,
+        total_amount: entry.total_amount,
+        status: 'posted',
+        entry_type: 'auto',
+        created_by: user?.id || null,
+        posted_at: new Date().toISOString(),
+      });
       if (!rev) throw new Error('Reversal insert returned no row');
       createdReversalId = rev.id;
 
@@ -625,6 +610,7 @@ export default function JournalPage() {
         }
       }
       console.error('reverseEntry failed:', err);
+      if (handlePeriodLock(err, () => reverseEntry(entry, reversalDate))) return;
       toast.error(err?.message || 'Failed to create reversal');
     }
   }
@@ -1246,6 +1232,12 @@ export default function JournalPage() {
         onChangeDate={d => setReverseTarget(prev => prev ? { ...prev, date: d } : prev)}
         onCancel={() => setReverseTarget(null)}
         onConfirm={() => reverseTarget && reverseEntry(reverseTarget.entry, reverseTarget.date)}
+      />
+
+      <PeriodLockedDialog
+        period={lockedPeriod}
+        onClose={() => { setLockedPeriod(null); setLockedRetry(null); }}
+        onRetry={lockedRetry}
       />
     </div>
   );
