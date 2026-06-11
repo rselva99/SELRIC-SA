@@ -7,6 +7,7 @@ import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS, pickableCategories, debitOf, creditOf, signedDelta, magnitudeOf } from '../../lib/finance';
 import { insertJournalEntryWithRetry } from '../../lib/journalReference';
+import { runPeriodPreflight } from '../../lib/preflightChecks';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -302,16 +303,19 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
           next.dailySalesRowCount = ds.length;
         }
       } else if (key === 'close') {
-        const [postedRes, jeRes, deliverRes] = await Promise.all([
+        const [postedRes, jeRes, deliverRes, preflight] = await Promise.all([
           supabase.from('transactions').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('posted', true).eq('voided', false),
           supabase.from('journal_entries').select('*', { count: 'exact', head: true }).gte('date', periodStart).lte('date', periodEnd).eq('status', 'posted'),
           supabase.from('report_deliverables').select('report_type').eq('period', period),
+          runPeriodPreflight({ periodStart, periodEnd }),
         ]);
         next = {
           postedCount: postedRes.count || 0,
           journalCount: jeRes.count || 0,
           reportsCount: deliverRes.data?.length || 0,
           reportTypes: [...new Set((deliverRes.data || []).map(r => r.report_type))],
+          preflight,
+          acknowledged: false,
         };
       }
 
@@ -356,7 +360,11 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
     if (key === 'review_balances') return { met: (stepData.accountBalances?.length || 0) === 0 || (stepData.accountBalances || []).every(a => accountsReviewed.has(a.id)), label: `${(stepData.accountBalances?.length || 0) - accountsReviewed.size} account(s) not yet reviewed` };
     if (key === 'generate_pl')     return { met: !!stepData.existingReport, label: stepData.existingReport ? 'P&L generated' : 'P&L not generated' };
     if (key === 'generate_bs')     return { met: !!stepData.existingReport, label: stepData.existingReport ? 'Balance Sheet generated' : 'Balance Sheet not generated' };
-    if (key === 'close')           return { met: true, label: 'Ready to close' };
+    if (key === 'close') {
+      const warns = stepData.preflight?.hasWarnings;
+      if (warns && !stepData.acknowledged) return { met: false, label: 'Acknowledge warnings to close' };
+      return { met: true, label: warns ? 'Acknowledged — ready to close' : 'Pre-flight clean — ready to close' };
+    }
     return { met: false, label: '' };
   }, [currentStep.key, stepData, stepLoading, accountsReviewed]);
 
@@ -485,7 +493,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
       case 'review_balances':  return <StepReviewBalances data={stepData} reviewed={accountsReviewed} setReviewed={setAccountsReviewed} />;
       case 'generate_pl':      return <StepGenerateReport data={stepData} period={period} reportType="pl" reload={loadStepData} />;
       case 'generate_bs':      return <StepGenerateReport data={stepData} period={period} reportType="balance_sheet" reload={loadStepData} />;
-      case 'close':            return <StepClose data={stepData} period={period} streak={streak} finalStats={finalStats} />;
+      case 'close':            return <StepClose data={stepData} setData={setStepData} navigate={navigate} period={period} streak={streak} finalStats={finalStats} />;
       default: return null;
     }
   }
@@ -1803,7 +1811,7 @@ function StepGeneratePnL({ data, period, reload }) {
 
 // Reference allocation lives in src/lib/journalReference.js.
 
-function StepClose({ data, period, streak, finalStats }) {
+function StepClose({ data, setData, navigate, period, streak, finalStats }) {
   if (finalStats) {
     return (
       <div className="text-center py-4">
@@ -1834,6 +1842,9 @@ function StepClose({ data, period, streak, finalStats }) {
     );
   }
 
+  const pf = data.preflight;
+  const warns = !!pf?.hasWarnings;
+
   return (
     <div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
@@ -1841,17 +1852,136 @@ function StepClose({ data, period, streak, finalStats }) {
         <StatPill label="Journal entries"     value={data.journalCount || 0} />
         <StatPill label="Reports generated"   value={data.reportsCount || 0} tone="green" />
       </div>
-      <div className="card p-5 bg-gradient-to-br from-brand-50 to-green-50">
+
+      <PreflightChecklist preflight={pf} period={period} navigate={navigate} />
+
+      <div className={`card p-5 mt-4 ${warns ? 'bg-amber-50/40 border-amber-200' : 'bg-gradient-to-br from-brand-50 to-green-50'}`}>
         <div className="font-display text-lg mb-1">Ready to close {periodFullLabel(period)}?</div>
         <p className="text-sm text-surface-600">
-          Once closed, this period is marked done. You can reopen it later from the Accountant dashboard if needed.
+          {warns
+            ? 'Pre-flight raised one or more warnings. Review them above, then tick the box below to acknowledge and continue.'
+            : 'Once closed, this period is marked done. You can reopen it later from the Accountant dashboard if needed.'}
         </p>
         {streak > 0 && (
           <p className="text-sm mt-2 text-orange-700 flex items-center gap-1.5">
             <Flame size={14} /> Closing this keeps your {streak}-month streak alive.
           </p>
         )}
+        {warns && (
+          <label className="mt-4 flex items-start gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={!!data.acknowledged}
+              onChange={e => setData(d => ({ ...d, acknowledged: e.target.checked }))}
+              className="mt-0.5 rounded accent-brand-600"
+            />
+            <span className="text-sm text-surface-700">
+              I've reviewed every warning above. <span className="font-semibold">Close anyway.</span>
+            </span>
+          </label>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Pre-flight integrity checks for the close step. Pass = green check,
+// warning = amber alert with a count and a navigate-to-fix link.
+function PreflightChecklist({ preflight, period, navigate }) {
+  if (!preflight) {
+    return (
+      <div className="card p-4 flex items-center justify-center gap-2 text-sm text-surface-500">
+        <Loader2 size={14} className="animate-spin" /> Running pre-flight checks…
+      </div>
+    );
+  }
+
+  const items = [
+    {
+      key: 'unposted',
+      label: 'No unposted transactions in the period',
+      count: preflight.unposted?.count || 0,
+      hint:  'These never reached the ledger and won\'t appear in the P&L or Balance Sheet.',
+      action: { label: 'View in Bookkeeping', to: '/bookkeeping' },
+    },
+    {
+      key: 'uncategorized',
+      label: 'All transactions are categorized',
+      count: preflight.uncategorized?.count || 0,
+      hint:  'Uncategorized rows skew per-account balances and the P&L breakdown.',
+      action: { label: 'View in Bookkeeping', to: '/bookkeeping' },
+    },
+    {
+      key: 'duplicates',
+      label: 'No suspicious duplicates ($1,000+ same amount + category)',
+      count: (preflight.duplicates || []).length,
+      hint:  'Same magnitude posted twice — usually a double-posted payroll, vendor invoice, or rent payment.',
+      details: preflight.duplicates,
+      action: { label: 'View in General Ledger', to: '/ledger' },
+    },
+    {
+      key: 'orphanedVoids',
+      label: 'No orphaned void state (txn alive but its JE is voided)',
+      count: preflight.orphanedVoids?.count || 0,
+      hint:  'The JE was voided but the mirrored transaction still feeds the ledger.',
+      action: { label: 'View in Journal History', to: '/journal' },
+    },
+  ];
+
+  const allClean = items.every(i => i.count === 0);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3 border-b border-surface-100 bg-surface-50 flex items-center gap-2">
+        <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Pre-flight integrity check</div>
+        <span className={`ml-auto text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full ${allClean ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+          {allClean ? 'All checks pass' : 'Warnings raised'}
+        </span>
+      </div>
+      <ul>
+        {items.map(it => (
+          <li key={it.key} className="border-b border-surface-50 last:border-0 px-4 py-3 flex items-start gap-3">
+            {it.count === 0 ? (
+              <CheckCircle2 size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
+            ) : (
+              <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium">
+                {it.label}
+                {it.count > 0 && (
+                  <span className="ml-2 text-xs font-semibold text-amber-700">
+                    · {it.count} {it.key === 'duplicates' ? 'group' : 'txn'}{it.count !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              {it.count > 0 && (
+                <div className="text-xs text-surface-500 mt-0.5">{it.hint}</div>
+              )}
+              {it.key === 'duplicates' && it.count > 0 && (
+                <ul className="mt-1.5 text-[11px] text-surface-600 space-y-0.5">
+                  {(it.details || []).slice(0, 5).map((d, i) => (
+                    <li key={i} className="font-mono">
+                      <span className="text-amber-700">{d.count}×</span> {formatCurrency(d.amount)} · <span className="text-surface-700">{d.category}</span>
+                    </li>
+                  ))}
+                  {(it.details || []).length > 5 && (
+                    <li className="text-surface-400">… plus {it.details.length - 5} more</li>
+                  )}
+                </ul>
+              )}
+            </div>
+            {it.count > 0 && navigate && (
+              <button
+                onClick={() => navigate(it.action.to)}
+                className="btn-ghost text-xs whitespace-nowrap"
+              >
+                {it.action.label}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

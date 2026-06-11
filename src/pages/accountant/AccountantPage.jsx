@@ -6,6 +6,7 @@ import { useData } from '../../contexts/DataContext';
 import { formatCurrency } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
+import { computeSnapshotDrift } from '../../lib/snapshotDrift';
 import Spinner from '../../components/ui/Spinner';
 import Modal from '../../components/ui/Modal';
 import toast from 'react-hot-toast';
@@ -100,6 +101,8 @@ export default function AccountantPage() {
   const [wizardPeriod, setWizardPeriod]         = useState(null);
   const [wizardMinimized, setWizardMinimized]   = useState(false);
   const [snapshotView, setSnapshotView]         = useState(null); // { kind: 'pl'|'balance_sheet', snapshot, snapshotAt }
+  const [snapshotDrift, setSnapshotDrift]       = useState(null); // computeSnapshotDrift result for selectedPeriod
+  const [snapshotDriftState, setSnapshotDriftState] = useState('idle');
 
   const periodsOfYear = useMemo(
     () => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`),
@@ -284,7 +287,33 @@ export default function AccountantPage() {
     steps[steps.length - 1].actionDisabled = !priorAllDone && closeStatus !== 'closed';
 
     setChecklist(steps);
-  }, [selectedPeriod]);
+
+    // Snapshot drift detection — only for THIS selected period, and only if
+    // it's actually closed-with-snapshot. Cheap enough to run inline because
+    // it pulls a slim column set for one period.
+    if (hasSnapshot) {
+      setSnapshotDriftState('computing');
+      try {
+        const { start, end } = periodRange(selectedPeriod);
+        const result = await computeSnapshotDrift({
+          periodStart: start,
+          periodEnd: end,
+          categories,
+          snapshot,
+          snapshotAt,
+        });
+        setSnapshotDrift(result);
+        setSnapshotDriftState('ready');
+      } catch (err) {
+        console.error('snapshot drift compute failed', err);
+        setSnapshotDrift(null);
+        setSnapshotDriftState('error');
+      }
+    } else {
+      setSnapshotDrift(null);
+      setSnapshotDriftState('idle');
+    }
+  }, [selectedPeriod, categories]);
 
   // ── Open Items (cross-period) ──────────────────────────────────────────────
   const loadOpenItems = useCallback(async () => {
@@ -598,6 +627,9 @@ export default function AccountantPage() {
             const status = periodStatuses[p] || 'open';
             const style  = STATUS_STYLES[status];
             const isSelected = p === selectedPeriod;
+            // Drift dot only shown on the SELECTED period chip — drift is
+            // computed on-demand for that one period, not for the whole grid.
+            const showDriftDot = isSelected && snapshotDriftState === 'ready' && snapshotDrift?.kind === 'stale';
             return (
               <button
                 key={p}
@@ -606,6 +638,12 @@ export default function AccountantPage() {
                   isSelected ? 'ring-2 ring-brand-500 ring-offset-1' : 'hover:scale-105'
                 }`}
               >
+                {showDriftDot && (
+                  <span
+                    title="Snapshot out of date"
+                    className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-500 border-2 border-white"
+                  />
+                )}
                 <div className={`flex items-center justify-center gap-1.5 ${style.text}`}>
                   <span className={`w-2 h-2 rounded-full ${style.dot}`} />
                   <span className="font-mono text-xs font-bold">{periodLabel(p)}</span>
@@ -664,9 +702,15 @@ export default function AccountantPage() {
                         {done ? <CheckCircle2 size={16} /> : <Icon size={16} />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-surface-800">{STEP_LABELS[step.key]}</div>
+                        <div className="font-medium text-sm text-surface-800 flex items-center gap-2">
+                          {STEP_LABELS[step.key]}
+                          {step.key === 'close' && <SnapshotDriftBadge state={snapshotDriftState} drift={snapshotDrift} />}
+                        </div>
                         <div className={`text-xs mt-0.5 ${done ? 'text-green-700' : 'text-surface-500'}`}>
                           {step.detail}
+                          {step.key === 'close' && (
+                            <SnapshotDriftDetail state={snapshotDriftState} drift={snapshotDrift} />
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -917,6 +961,51 @@ function SnapshotModal({ view, period, onClose }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ── Snapshot drift surfacing ────────────────────────────────────────────────
+function SnapshotDriftBadge({ state, drift }) {
+  if (state !== 'ready' || !drift) return null;
+  if (drift.kind === 'no-snapshot') return null;
+  if (drift.kind === 'verified') {
+    return (
+      <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+        snapshot verified
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+      snapshot out of date
+    </span>
+  );
+}
+
+function SnapshotDriftDetail({ state, drift }) {
+  if (state === 'computing') {
+    return <span className="block text-amber-700 mt-0.5">Checking snapshot against live ledger…</span>;
+  }
+  if (state !== 'ready' || !drift) return null;
+  if (drift.kind === 'no-snapshot') return null;
+  if (drift.kind === 'verified') {
+    return (
+      <span className="block text-green-700 mt-0.5">
+        Snapshot verified against live data
+        {drift.snapshotAt ? ` · as of ${new Date(drift.snapshotAt).toLocaleString()}` : ''}.
+      </span>
+    );
+  }
+  // stale
+  const ld = drift.largestDelta;
+  const sign = ld?.amount >= 0 ? '+' : '−';
+  const accountPhrase = ld?.account
+    ? ` (live ${ld.side === 'revenue' ? 'revenue' : 'expense'} on ${ld.account} differs by ${sign}${formatCurrency(Math.abs(ld.amount || 0))})`
+    : '';
+  return (
+    <span className="block text-amber-700 mt-0.5">
+      Live ledger differs from snapshot{accountPhrase}. Reopen to regenerate or click the snapshot to see the frozen numbers.
+    </span>
   );
 }
 
