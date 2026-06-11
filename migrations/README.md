@@ -42,3 +42,9 @@ and safe to re-run.
   three stages (PREVIEW → FIX → RECOMPUTE), scoped to those two
   statements' UNPOSTED, NON-VOIDED rows. Read this script's header for
   the safety contract before running.
+- `2026-06-11-statement-match.sql` — adds period / file_path /
+  statement_totals / match_status columns to bank_statements,
+  bank_statement_id + verified on transactions, ensures the private
+  `bank-statements` storage bucket exists, and gates every read/write
+  through `public.is_admin()`. Required for the Accountant Import &
+  Match flow.

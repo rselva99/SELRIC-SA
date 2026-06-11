@@ -22,6 +22,7 @@ import CalendarPage from './pages/calendar/CalendarPage';
 import MarketingPage from './pages/marketing/MarketingPage';
 import DailySalesPage from './pages/sales/DailySalesPage';
 import AccountantPage from './pages/accountant/AccountantPage';
+import StatementReviewMatch from './pages/accountant/StatementReviewMatch';
 import AssetsPage from './pages/assets/AssetsPage';
 import PinGate from './components/PinGate';
 import './index.css';
@@ -54,6 +55,7 @@ function App() {
             <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
               <Route index element={<DashboardPage />} />
               <Route path="accountant" element={<ProtectedRoute adminOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
+              <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />
               <Route path="bookkeeping" element={<ProtectedRoute adminOnly><BookkeepingPage /></ProtectedRoute>} />
               <Route path="bookkeeping/reconcile" element={<ProtectedRoute adminOnly><ReconciliationPage /></ProtectedRoute>} />
               <Route path="ledger" element={<ProtectedRoute adminOnly><LedgerPage /></ProtectedRoute>} />

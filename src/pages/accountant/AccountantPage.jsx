@@ -16,6 +16,7 @@ import {
   Download, Loader2, Inbox, ListChecks, Play, Maximize2,
 } from 'lucide-react';
 import CloseWizard, { CloseLauncher } from './CloseWizard';
+import StatementImportModal from './StatementImportModal';
 
 const MONTHS_ABBR = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 
@@ -103,6 +104,7 @@ export default function AccountantPage() {
   const [snapshotView, setSnapshotView]         = useState(null); // { kind: 'pl'|'balance_sheet', snapshot, snapshotAt }
   const [snapshotDrift, setSnapshotDrift]       = useState(null); // computeSnapshotDrift result for selectedPeriod
   const [snapshotDriftState, setSnapshotDriftState] = useState('idle');
+  const [importOpen, setImportOpen]             = useState(false);
 
   const periodsOfYear = useMemo(
     () => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`),
@@ -152,9 +154,12 @@ export default function AccountantPage() {
     const [
       stmtRes, uncatRes, unpostedRes, manualRes, unrecRes, plRes, bsRes, closeRes,
     ] = await Promise.all([
+      // Pull the full rows for this period so we can show "imported / matched /
+      // confirmed manually" on the import step rather than just a count.
       supabase.from('bank_statements')
-        .select('*', { count: 'exact', head: true })
-        .lte('period_start', end).gte('period_end', start),
+        .select('id, file_name, match_status, period, period_start, period_end, upload_date')
+        .lte('period_start', end).gte('period_end', start)
+        .order('upload_date', { ascending: false, nullsFirst: false }),
 
       supabase.from('transactions')
         .select('*', { count: 'exact', head: true })
@@ -188,7 +193,18 @@ export default function AccountantPage() {
     const manualByKey = {};
     (manualRes.data || []).forEach(r => { manualByKey[r.step_key] = r.status; });
 
-    const stmtCount   = stmtRes.count   || 0;
+    const stmtRows    = stmtRes.data    || [];
+    const stmtCount   = stmtRows.length;
+    // Pick the most recent statement for the period as the "active" one
+    // the import step points at. matched/confirmed_manually count as done.
+    const activeStmt  = stmtRows[0] || null;
+    const allDone     = stmtCount > 0 && stmtRows.every(s =>
+      s.match_status === 'matched' || s.match_status === 'confirmed_manually'
+    );
+    const importStatementsStatus =
+      stmtCount === 0 ? 'pending' :
+      allDone         ? 'done'    :
+                        'in_progress';
     const uncatCount  = uncatRes.count  || 0;
     const unposted    = unpostedRes.count || 0;
     const unrecCount  = unrecRes.count  || 0;
@@ -201,14 +217,48 @@ export default function AccountantPage() {
     const hasSnapshot  = !!(isClosed && snapshot);
 
     const steps = [
-      {
-        key:    'import_statements',
-        status: stmtCount > 0 ? 'done' : 'pending',
-        detail: stmtCount > 0 ? `${stmtCount} statement${stmtCount !== 1 ? 's' : ''} cover this period` : 'No bank statement covers this period',
-        actionLabel: 'Go to Bookkeeping',
-        actionType:  'navigate',
-        actionTarget: '/bookkeeping',
-      },
+      // ── 1. Import Bank Statements — 3 states ────────────────────────────
+      // A: no statement      → "Import Statement" opens the upload modal.
+      // B: needs matching    → "Review & Match" opens the side-by-side.
+      // C: matched/confirmed → quiet "View" link to the same screen, row
+      //    rendered with the standard green Done treatment.
+      (() => {
+        const stmt = activeStmt;
+        if (importStatementsStatus === 'pending') {
+          return {
+            key:    'import_statements',
+            status: 'pending',
+            detail: 'No bank statement covers this period',
+            actionLabel: 'Import Statement',
+            actionType:  'import_statement',
+            secondaryActionLabel: 'Go to Bookkeeping',
+            secondaryActionType:  'navigate',
+            secondaryActionTarget: '/bookkeeping',
+          };
+        }
+        if (importStatementsStatus === 'in_progress') {
+          return {
+            key:    'import_statements',
+            status: 'pending',
+            detail: stmtCount === 1 ? 'Imported — needs matching' : `${stmtCount} imported — ${stmtRows.filter(s => s.match_status === 'needs_matching').length} need matching`,
+            actionLabel: 'Review & Match',
+            actionType:  'review_match',
+            actionTarget: stmt?.id,
+          };
+        }
+        // done
+        const detail = stmtRows.every(s => s.match_status === 'matched')
+          ? (stmtCount === 1 ? 'Matched to the cent' : `${stmtCount} statements matched`)
+          : 'Confirmed manually';
+        return {
+          key:    'import_statements',
+          status: 'done',
+          detail,
+          actionLabel: 'View',
+          actionType:  'review_match',
+          actionTarget: stmt?.id,
+        };
+      })(),
       {
         key:    'categorize',
         status: uncatCount === 0 ? 'done' : 'pending',
@@ -423,6 +473,14 @@ export default function AccountantPage() {
           break;
         }
 
+        case 'import_statement':
+          setImportOpen(true);
+          break;
+
+        case 'review_match':
+          if (step.actionTarget) navigate(`/accountant/review-match/${step.actionTarget}`);
+          break;
+
         case 'generate_report':
           await generateReport(step.actionTarget);
           break;
@@ -500,6 +558,8 @@ export default function AccountantPage() {
   async function runSecondaryAction(step) {
     if (step.secondaryActionType === 'mark_done') {
       await runAction({ ...step, actionType: 'mark_done', actionDisabled: false });
+    } else if (step.secondaryActionType === 'navigate') {
+      navigate(step.secondaryActionTarget);
     }
   }
 
@@ -885,6 +945,13 @@ export default function AccountantPage() {
         view={snapshotView}
         period={selectedPeriod}
         onClose={() => setSnapshotView(null)}
+      />
+
+      <StatementImportModal
+        open={importOpen}
+        period={selectedPeriod}
+        onClose={() => setImportOpen(false)}
+        onImported={async () => { await loadChecklist(); }}
       />
     </div>
   );

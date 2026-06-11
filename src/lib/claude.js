@@ -130,6 +130,14 @@ Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. 
   "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "opening_balance": number,
   "closing_balance": number,
+  "statement_totals": {
+    "withdrawals_total": number,
+    "deposits_total": number,
+    "withdrawal_count": number,
+    "deposit_count": number,
+    "beginning_balance": number,
+    "ending_balance": number
+  },
   "transactions": [
     {
       "date": "YYYY-MM-DD",
@@ -141,11 +149,19 @@ Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. 
     }
   ]
 }
-Use negative numbers for amounts. If unsure whether an item is a check, exclude it.`;
+
+statement_totals MUST come from the statement's own PRINTED SUMMARY section
+(usually labelled "Account Summary", "Activity Summary", or similar), not
+computed from the rows you extracted. withdrawals_total and deposits_total
+are positive dollar amounts. If the summary doesn't print a value, use 0
+for that field — never invent it.
+
+Use negative numbers for transaction amounts (debits). If unsure whether
+an item is a check, exclude it.`;
 
   const messages = [{
     role: 'user',
-    content: `Extract only electronic withdrawal/debit transactions from this bank statement text. Exclude ALL checks and deposits.\n\n${text}`,
+    content: `Extract only electronic withdrawal/debit transactions AND the statement's printed summary section from this bank statement text. Exclude ALL checks and deposits from the transactions list.\n\n${text}`,
   }];
 
   const raw = await callClaude(messages, systemPrompt);
@@ -195,11 +211,22 @@ Return ONLY valid JSON — no markdown:
   "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "opening_balance": number,
   "closing_balance": number,
+  "statement_totals": {
+    "withdrawals_total": number,
+    "deposits_total": number,
+    "withdrawal_count": number,
+    "deposit_count": number,
+    "beginning_balance": number,
+    "ending_balance": number
+  },
   "transactions": [
     { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "debit", "balance": number or null }
   ]
 }
-Use negative numbers for amounts.`;
+
+statement_totals MUST come from the printed summary block on this image
+(not summed from rows). Use 0 for fields the summary doesn't print.
+Use negative numbers for transaction amounts.`;
 }
 
 async function extractPageImage(base64Jpeg, isFirstPage, anchorPeriod) {
