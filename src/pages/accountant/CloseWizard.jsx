@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
-import { aggregateForPnL, aggregateForBS, pickableCategories } from '../../lib/finance';
+import { aggregateForPnL, aggregateForBS, pickableCategories, debitOf, creditOf, signedDelta, magnitudeOf } from '../../lib/finance';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -240,8 +240,9 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         const txnsByCategory = {};
         (txns || []).forEach(t => {
           if (!t.category) return;
-          const delta = t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
-          balByCat[t.category] = (balByCat[t.category] || 0) + delta;
+          // Credit-natural sign: credits add, debits subtract. Matches the
+          // Account Balance Review's existing display where positive=green.
+          balByCat[t.category] = (balByCat[t.category] || 0) + signedDelta(t);
           (txnsByCategory[t.category] = txnsByCategory[t.category] || []).push(t);
         });
         const list = categories
@@ -753,7 +754,7 @@ function StepPost({ data, setData, reload }) {
   const [busy, setBusy] = useState(false);
   const list = data.unposted || [];
   const selected = data.selected || new Set();
-  const total = list.filter(t => selected.has(t.id)).reduce((s, t) => s + Math.abs(t.amount), 0);
+  const total = list.filter(t => selected.has(t.id)).reduce((s, t) => s + magnitudeOf(t), 0);
 
   function toggle(id) {
     const next = new Set(selected);
@@ -1314,9 +1315,8 @@ function TxnDetail({ txns, parentBalance }) {
   const { debitTotal, creditTotal, subtotal } = useMemo(() => {
     let d = 0, c = 0;
     for (const t of txns) {
-      const amt = Math.abs(t.amount);
-      if (t.type === 'debit') d += amt;
-      else if (t.type === 'credit') c += amt;
+      d += debitOf(t);
+      c += creditOf(t);
     }
     return { debitTotal: d, creditTotal: c, subtotal: c - d };
   }, [txns]);

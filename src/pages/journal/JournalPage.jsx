@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate, DEFAULT_CATEGORIES } from '../../lib/utils';
 import Modal from '../../components/ui/Modal';
+import { signedDelta } from '../../lib/finance';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -386,8 +387,7 @@ export default function JournalPage() {
           if (rule.match_category) q = q.eq('category', rule.match_category);
           if (rule.match_keyword)  q = q.ilike('description', `%${rule.match_keyword}%`);
           const { data: matched } = await q;
-          const net = (matched || []).reduce((s, t) =>
-            s + (t.type === 'debit' ? -Math.abs(t.amount) : Math.abs(t.amount)), 0);
+          const net = (matched || []).reduce((s, t) => s + signedDelta(t), 0);
           if (Math.abs(net) < 0.01) continue;
           // Offset: if net is negative (debits > credits), add a credit equal to |net|
           const offsetIsCredit = net < 0;

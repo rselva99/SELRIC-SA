@@ -19,6 +19,8 @@
 //                   //   — credit-natural sign; used by revenue/liab/equity
 //   debitMinusCredit(t) // +|amount| for debit, -|amount| for credit
 //                   //   — debit-natural sign; used by expenses/assets
+//   magnitudeOf(t)  // |amount| regardless of type — only for "how much
+//                   //   money" sums where direction is irrelevant
 //
 // If you find yourself writing `t.amount` inside a `reduce`, `+=`, or sum,
 // reach for one of these instead. Sign mistakes propagate into the P&L,
@@ -31,6 +33,8 @@ export function creditOf(t) { return t?.type === 'credit' ? Math.abs(Number(t.am
 
 export function signedDelta(t)       { return creditOf(t) - debitOf(t); }
 export function debitMinusCredit(t)  { return debitOf(t)  - creditOf(t); }
+
+export function magnitudeOf(t)       { return Math.abs(Number(t?.amount) || 0); }
 
 // Balance-sheet category types — hidden from transaction-categorization
 // dropdowns so day-to-day categorization can't accidentally credit an asset

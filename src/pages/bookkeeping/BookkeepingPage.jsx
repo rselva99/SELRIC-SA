@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import CapitalizeModal from '../../components/CapitalizeModal';
 import { CAPITALIZE_THRESHOLD } from '../../lib/capitalize';
+import { debitOf } from '../../lib/finance';
 
 const ALLOWED_BANK_TYPES    = ['application/pdf'];
 const ALLOWED_INVOICE_TYPES = ['application/pdf','image/png','image/jpeg','image/webp'];
@@ -992,7 +993,7 @@ export default function BookkeepingPage() {
                     quickFilter === 'uncategorized' ? !t.category  : true
                   );
                   const isCollapsed = collapsedGroups.has(stmt.id);
-                  const total = grpTxns.filter(t=>t.type==='debit').reduce((s,t)=>s+Math.abs(t.amount),0);
+                  const total = grpTxns.reduce((s,t)=>s+debitOf(t),0);
                   const allSelected = grpTxns.length > 0 && grpTxns.every(t => selectedTxnIds.has(t.id));
                   return (
                     <div key={stmt.id} className="card overflow-hidden">
@@ -1058,7 +1059,7 @@ export default function BookkeepingPage() {
             <div className="space-y-3">
               {categoryGroups.map(([catName, txns]) => {
                 const allSel = txns.every(t => selectedTxnIds.has(t.id));
-                const total  = txns.filter(t=>t.type==='debit').reduce((s,t)=>s+Math.abs(t.amount),0);
+                const total  = txns.reduce((s,t)=>s+debitOf(t),0);
                 return (
                   <div key={catName} className="card overflow-hidden">
                     <div className="flex items-center gap-3 px-4 py-3 bg-surface-50 border-b border-surface-100">
@@ -1086,7 +1087,7 @@ export default function BookkeepingPage() {
             <div className="space-y-3">
               {vendorGroups.map(([vendor, txns]) => {
                 const allSel = txns.every(t => selectedTxnIds.has(t.id));
-                const total  = txns.filter(t=>t.type==='debit').reduce((s,t)=>s+Math.abs(t.amount),0);
+                const total  = txns.reduce((s,t)=>s+debitOf(t),0);
                 return (
                   <div key={vendor} className="card overflow-hidden">
                     <div className="flex items-center gap-3 px-4 py-3 bg-surface-50 border-b border-surface-100">

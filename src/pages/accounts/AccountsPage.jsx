@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
-import { isBalanceSheetType } from '../../lib/finance';
+import { isBalanceSheetType, debitOf, creditOf } from '../../lib/finance';
 import {
   postOpeningJE,
   findExistingOpeningJE,
@@ -87,8 +87,8 @@ export default function AccountsPage() {
       if (!t.category) continue;
       const e = map.get(t.category) || { count: 0, debit: 0, credit: 0 };
       e.count++;
-      if (t.type === 'debit') e.debit  += Math.abs(t.amount);
-      else if (t.type === 'credit') e.credit += Math.abs(t.amount);
+      e.debit  += debitOf(t);
+      e.credit += creditOf(t);
       map.set(t.category, e);
     }
     return map;
@@ -657,8 +657,8 @@ function LedgerDrawer({ category, onClose }) {
 
   if (!category) return null;
 
-  const totalDebit  = rows.filter(t => t.type === 'debit').reduce((s, t) => s + Math.abs(t.amount), 0);
-  const totalCredit = rows.filter(t => t.type === 'credit').reduce((s, t) => s + Math.abs(t.amount), 0);
+  const totalDebit  = rows.reduce((s, t) => s + debitOf(t),  0);
+  const totalCredit = rows.reduce((s, t) => s + creditOf(t), 0);
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/40 flex items-end sm:items-center justify-center p-4" onClick={onClose}>

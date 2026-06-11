@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { formatCurrency, formatDate } from '../lib/utils';
+import { magnitudeOf } from '../lib/finance';
 import Spinner from './ui/Spinner';
 import toast from 'react-hot-toast';
 import { AlertCircle, Loader2, CheckCircle2, RotateCw, BookOpen } from 'lucide-react';
@@ -180,7 +181,7 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
     return () => { signal.cancelled = true; };
   }, [scan]);
 
-  const venmoTotal = useMemo(() => venmoTxns.reduce((s, t) => s + Math.abs(t.amount), 0), [venmoTxns]);
+  const venmoTotal = useMemo(() => venmoTxns.reduce((s, t) => s + magnitudeOf(t), 0), [venmoTxns]);
   const total      = parseFloat(totalPayroll) || 0;
   const remaining  = Math.max(0, total - venmoTotal);
   const shortfall  = total > 0 && total < venmoTotal;

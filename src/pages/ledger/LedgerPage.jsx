@@ -6,6 +6,7 @@ import { formatCurrency, formatDate } from '../../lib/utils';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
+import { debitOf, creditOf, signedDelta } from '../../lib/finance';
 import { BookOpen, TrendingDown, TrendingUp, X, Search, Download, Loader2 } from 'lucide-react';
 
 const PAGE_SIZE   = 100;
@@ -197,8 +198,8 @@ export default function LedgerPage() {
   const summary = useMemo(() => {
     let debit = 0, credit = 0;
     for (const t of filterSummary) {
-      if (t.type === 'debit')  debit  += Math.abs(t.amount);
-      else if (t.type === 'credit') credit += Math.abs(t.amount);
+      debit  += debitOf(t);
+      credit += creditOf(t);
     }
     return { count: filterSummary.length, debits: debit, credits: credit, net: credit - debit };
   }, [filterSummary]);
@@ -207,7 +208,7 @@ export default function LedgerPage() {
     const map = {};
     let running = 0;
     for (const t of filterSummary) {
-      running += t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
+      running += signedDelta(t);
       map[t.id] = running;
     }
     return map;
@@ -227,8 +228,8 @@ export default function LedgerPage() {
     return Object.entries(groups)
       .sort(([a],[b]) => a.localeCompare(b))
       .map(([key, txns]) => {
-        const debits  = txns.filter(t => t.type === 'debit').reduce((s,t) => s + Math.abs(t.amount), 0);
-        const credits = txns.filter(t => t.type === 'credit').reduce((s,t) => s + Math.abs(t.amount), 0);
+        const debits  = txns.reduce((s,t) => s + debitOf(t),  0);
+        const credits = txns.reduce((s,t) => s + creditOf(t), 0);
         return { key, label: monthLabel(key), transactions: txns, debits, credits, net: credits - debits };
       });
   }, [enrichedTxns]);
@@ -272,7 +273,9 @@ export default function LedgerPage() {
       // Recompute running balance over the EXACT same ordering as displayed.
       let running = 0;
       const data = rows.map(t => {
-        running += t.type === 'credit' ? Math.abs(t.amount) : -Math.abs(t.amount);
+        running += signedDelta(t);
+        // Display columns keep the inline form so empty cells render as ''
+        // (a $0 debit must still print 0, not blank).
         const debit  = t.type === 'debit'  ? Math.abs(t.amount) : '';
         const credit = t.type === 'credit' ? Math.abs(t.amount) : '';
         return [

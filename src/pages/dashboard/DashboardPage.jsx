@@ -3,7 +3,7 @@ import { subMonths, startOfMonth, format } from 'date-fns';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
-import { aggregateForPnL } from '../../lib/finance';
+import { aggregateForPnL, debitOf } from '../../lib/finance';
 import StatCard from '../../components/ui/StatCard';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import {
@@ -75,7 +75,11 @@ export default function DashboardPage() {
 
   const categoryData = useMemo(() => {
     const map = {};
-    transactions.filter((t) => t.category && t.type === 'debit').forEach((t) => { map[t.category] = (map[t.category] || 0) + Math.abs(t.amount); });
+    for (const t of transactions) {
+      if (!t.category) continue;
+      const d = debitOf(t);
+      if (d > 0) map[t.category] = (map[t.category] || 0) + d;
+    }
     return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 7);
   }, [transactions]);
 
