@@ -1,36 +1,51 @@
-// Compute per-statement totals for the "Direct from PDF pull" view.
-// Returns a map { statementId -> { count, debits, credits, postedCount } }
-// using the finance.js helpers, so the mixed-sign convention on
-// transactions.amount is handled in one place.
+// Server-side aggregates for the "Direct from PDF pull" view.
+//
+// The previous implementation fetched raw transaction rows for every
+// statement id and summed them in JavaScript. PostgREST defaults to a
+// 1000-row cap per request, so once the union of linked transactions
+// across the requested statements exceeded that cap, every statement
+// got a partial slice — different call sites (Bookkeeping vs. Reports)
+// passed different statement-id pools and therefore got different
+// partial totals for the same statement. That was the bug.
+//
+// Now we delegate to `statement_totals(uuid[])` (see migrations/
+// 2026-06-11-statement-totals-and-period.sql). The RPC computes
+// COUNT / SUM(ABS(amount)) keyed off the type column on the server —
+// only one row per statement crosses the wire, so the row cap can't
+// truncate the answer.
 
 import { supabase } from './supabase';
-import { debitOf, creditOf } from './finance';
 
-// Fetch totals for a list of bank statement ids. Empty input → empty map.
-// Single batched query — no per-statement round-trip.
+const EMPTY = { count: 0, debits: 0, credits: 0, postedCount: 0, voidedCount: 0 };
+
+function mapRow(r) {
+  return {
+    count:        Number(r.txn_count)    || 0,
+    debits:       Number(r.debits)       || 0,
+    credits:      Number(r.credits)      || 0,
+    postedCount:  Number(r.posted_count) || 0,
+    voidedCount:  Number(r.voided_count) || 0,
+  };
+}
+
+// Returns a Map<statementId, totals>. Statements with no linked txns
+// are filled with zeros so the caller can render them without an
+// extra null check.
 export async function fetchStatementTotals(stmtIds) {
   const totals = new Map();
   if (!stmtIds?.length) return totals;
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('bank_statement_id, amount, type, posted, voided')
-    .in('bank_statement_id', stmtIds);
+  for (const id of stmtIds) totals.set(id, { ...EMPTY });
+
+  const { data, error } = await supabase.rpc('statement_totals', { stmt_ids: stmtIds });
   if (error) throw error;
-  for (const id of stmtIds) totals.set(id, { count: 0, debits: 0, credits: 0, postedCount: 0, voidedCount: 0 });
-  for (const t of data || []) {
-    const entry = totals.get(t.bank_statement_id);
-    if (!entry) continue;
-    entry.count++;
-    entry.debits  += debitOf(t);
-    entry.credits += creditOf(t);
-    if (t.posted) entry.postedCount++;
-    if (t.voided) entry.voidedCount++;
+  for (const row of data || []) {
+    totals.set(row.bank_statement_id, mapRow(row));
   }
   return totals;
 }
 
-// Fetch every bank statement plus its totals for the Reports "Source
-// Documents" section. Sorted newest-first by upload_date.
+// Reports "Source Documents" — every statement + its totals, newest first
+// by upload_date.
 export async function fetchAllStatementsWithTotals() {
   const { data: stmts, error } = await supabase
     .from('bank_statements')
@@ -38,7 +53,6 @@ export async function fetchAllStatementsWithTotals() {
     .order('upload_date', { ascending: false, nullsFirst: false })
     .order('created_at',  { ascending: false });
   if (error) throw error;
-  const ids = (stmts || []).map(s => s.id);
-  const totals = await fetchStatementTotals(ids);
-  return (stmts || []).map(s => ({ ...s, totals: totals.get(s.id) || { count: 0, debits: 0, credits: 0, postedCount: 0, voidedCount: 0 } }));
+  const totals = await fetchStatementTotals((stmts || []).map(s => s.id));
+  return (stmts || []).map(s => ({ ...s, totals: totals.get(s.id) || { ...EMPTY } }));
 }

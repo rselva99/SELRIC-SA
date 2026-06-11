@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { extractBankStatementFromText, extractBankStatementFromImages, extractInvoice } from '../../lib/claude';
-import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES } from '../../lib/utils';
+import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES, formatStatementPeriod } from '../../lib/utils';
 import { isBalanceSheetType } from '../../lib/finance';
 import FileDropZone from '../../components/ui/FileDropZone';
 import Modal from '../../components/ui/Modal';
@@ -702,7 +702,24 @@ export default function BookkeepingPage() {
           const safeName = file.name.replace(/[^\w.\-]/g, '_');
           const uploadPath = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
           const uploadResult = await uploadFile('documents', uploadPath, file);
-          const stmt = await addBankStatement({ file_name: file.name, file_url: uploadResult?.path || '', upload_date: new Date().toISOString(), transaction_count: extracted.transactions?.length || 0 });
+          // Period range derived from the extracted txns' dates. We compute
+          // it from the parsed payload (not a follow-up SELECT) so the
+          // period is committed atomically with the statement row.
+          const extractedDates = (extracted.transactions || [])
+            .map(t => t.date)
+            .filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
+            .sort();
+          const periodStart = extractedDates[0] || null;
+          const periodEnd   = extractedDates[extractedDates.length - 1] || null;
+
+          const stmt = await addBankStatement({
+            file_name: file.name,
+            file_url: uploadResult?.path || '',
+            upload_date: new Date().toISOString(),
+            transaction_count: extracted.transactions?.length || 0,
+            period_start: periodStart,
+            period_end:   periodEnd,
+          });
           if (extracted.transactions?.length) {
             for (const t of extracted.transactions) {
               const suggestedCat = fuzzyMatchCategory(t.description || '', supplierCategories);
@@ -1055,8 +1072,13 @@ export default function BookkeepingPage() {
                         <button onClick={() => toggleGroup(stmt.id)} className="flex-1 flex items-center gap-2.5 min-w-0 text-left">
                           {isCollapsed ? <Folder size={16} className="shrink-0 text-brand-500" /> : <FolderOpen size={16} className="shrink-0 text-brand-500" />}
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium text-sm truncate">{stmt.file_name}</span>
+                              {formatStatementPeriod(stmt.period_start, stmt.period_end) && (
+                                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-800 shrink-0">
+                                  {formatStatementPeriod(stmt.period_start, stmt.period_end)}
+                                </span>
+                              )}
                               <span className="text-xs text-surface-400 shrink-0">{grpTxns.length} unposted{total>0&&` · ${formatCurrency(total)}`}</span>
                             </div>
                             {pull && pull.count > 0 && (

@@ -20,6 +20,27 @@ export function formatCurrency(amount) {
   });
 }
 
+// Human-friendly range string for a bank statement's period_start /
+// period_end. Returns null when both are missing so the caller can hide
+// the chip entirely.
+//   Dec 1 2024 → Dec 31 2024  → "Dec 2024"
+//   Nov 29 2024 → Dec 31 2024 → "Nov 29 – Dec 31, 2024"
+//   Dec 1 2024 → Jan 5 2025   → "Dec 1, 2024 – Jan 5, 2025"
+export function formatStatementPeriod(start, end) {
+  if (!start && !end) return null;
+  if (!start) start = end;
+  if (!end)   end   = start;
+  const s = typeof start === 'string' ? parseISO(start) : start;
+  const e = typeof end   === 'string' ? parseISO(end)   : end;
+  if (s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth()) {
+    return format(s, 'MMM yyyy');
+  }
+  const sameYear = s.getFullYear() === e.getFullYear();
+  const sStr = sameYear ? format(s, 'MMM d') : format(s, 'MMM d, yyyy');
+  const eStr = format(e, 'MMM d, yyyy');
+  return `${sStr} – ${eStr}`;
+}
+
 export function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

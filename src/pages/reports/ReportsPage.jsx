@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf } from '../../lib/reports';
 import { aggregateForPnL } from '../../lib/finance';
-import { formatCurrency, formatDate } from '../../lib/utils';
+import { formatCurrency, formatDate, formatStatementPeriod } from '../../lib/utils';
 import { fetchAllStatementsWithTotals } from '../../lib/statementTotals';
 import { FileText } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
@@ -26,6 +26,7 @@ export default function ReportsPage() {
   const [transactions, setTransactions]   = useState([]);
   const [sourceDocs, setSourceDocs]       = useState([]);
   const [sourceDocsState, setSourceDocsState] = useState('loading');
+  const [sourceDocsShowAll, setSourceDocsShowAll] = useState(false);
 
   useEffect(() => {
     const m     = selectedMonth + 1;
@@ -63,6 +64,36 @@ export default function ReportsPage() {
   }, [periodTxns, categories]);
 
   const periodLabel = `${MONTHS[selectedMonth]} ${selectedYear}`;
+
+  // Source documents filter: statements whose [period_start, period_end]
+  // range overlaps the selected month. NULL-period statements only appear
+  // in the All-statements view.
+  const periodBounds = useMemo(() => {
+    const m = selectedMonth + 1;
+    const start = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
+    const lastDay = new Date(selectedYear, m, 0).getDate();
+    const end   = `${selectedYear}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    return { start, end };
+  }, [selectedMonth, selectedYear]);
+
+  const visibleSourceDocs = useMemo(() => {
+    if (sourceDocsShowAll) return sourceDocs;
+    const { start, end } = periodBounds;
+    // Overlap: statement.period_start <= month_end AND statement.period_end >= month_start.
+    return sourceDocs.filter(s => {
+      if (!s.period_start || !s.period_end) return false;
+      return s.period_start <= end && s.period_end >= start;
+    });
+  }, [sourceDocs, sourceDocsShowAll, periodBounds]);
+
+  const sourceDocsSummary = useMemo(() => {
+    let debits = 0, credits = 0;
+    for (const s of visibleSourceDocs) {
+      debits  += Number(s.totals?.debits)  || 0;
+      credits += Number(s.totals?.credits) || 0;
+    }
+    return { count: visibleSourceDocs.length, debits, credits };
+  }, [visibleSourceDocs]);
 
   function buildPdf(type) {
     const data = { transactions: periodTxns, period: periodLabel, categories };
@@ -217,18 +248,47 @@ export default function ReportsPage() {
 
       {/* Source Documents — bank statements with PDF-pull totals */}
       <div className="card overflow-hidden mb-6">
-        <div className="px-5 py-4 border-b border-surface-100 flex items-center gap-2">
+        <div className="px-5 py-4 border-b border-surface-100 flex items-center gap-3 flex-wrap">
           <FileText size={16} className="text-surface-400" />
           <h3 className="section-title">Source Documents · Direct from PDF pull</h3>
-          {sourceDocsState === 'ready' && (
-            <span className="text-xs text-surface-400 ml-auto">{sourceDocs.length} {sourceDocs.length === 1 ? 'statement' : 'statements'}</span>
-          )}
+          <div className="ml-auto flex items-center gap-2 text-xs">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none text-surface-600">
+              <input type="checkbox" checked={sourceDocsShowAll} onChange={e => setSourceDocsShowAll(e.target.checked)} />
+              All statements
+            </label>
+            {sourceDocsState === 'ready' && (
+              <span className="text-surface-400">
+                {visibleSourceDocs.length} / {sourceDocs.length}
+              </span>
+            )}
+          </div>
         </div>
+
+        {/* Summary line — narrates the filtered slice or the full set. */}
+        {sourceDocsState === 'ready' && sourceDocs.length > 0 && (
+          <div className="px-5 py-2.5 border-b border-surface-100 bg-brand-50/40 text-xs text-surface-700 flex items-baseline gap-2 flex-wrap">
+            <span className="font-semibold">
+              {sourceDocsShowAll
+                ? `${sourceDocsSummary.count} statement${sourceDocsSummary.count === 1 ? '' : 's'} total`
+                : `${sourceDocsSummary.count} statement${sourceDocsSummary.count === 1 ? '' : 's'} cover ${periodLabel}`}
+            </span>
+            <span className="text-surface-400">·</span>
+            <span><span className="font-mono text-red-600">{formatCurrency(sourceDocsSummary.debits)}</span> total debits</span>
+            <span className="text-surface-400">·</span>
+            <span><span className="font-mono text-green-600">{formatCurrency(sourceDocsSummary.credits)}</span> total credits</span>
+            <span className="text-surface-400 ml-1">from PDF pulls</span>
+          </div>
+        )}
+
         {sourceDocsState === 'loading' && <div className="flex justify-center py-10"><Spinner size="lg" /></div>}
         {sourceDocsState === 'error'   && <div className="p-5 text-sm text-red-700">Failed to load source documents.</div>}
         {sourceDocsState === 'ready' && (
           sourceDocs.length === 0 ? (
             <div className="p-8 text-center text-sm text-surface-400">No bank statements uploaded yet.</div>
+          ) : visibleSourceDocs.length === 0 ? (
+            <div className="p-8 text-center text-sm text-surface-400">
+              No statements cover {periodLabel}. Tick <span className="font-semibold">All statements</span> to see the full list.
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -243,20 +303,25 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sourceDocs.map(s => (
-                    <tr key={s.id} className="border-b border-surface-50 hover:bg-surface-50">
-                      <td className="table-cell text-sm font-medium max-w-xs truncate" title={s.file_name}>{s.file_name || '—'}</td>
-                      <td className="table-cell font-mono text-xs whitespace-nowrap">{s.upload_date ? formatDate(s.upload_date) : '—'}</td>
-                      <td className="table-cell text-xs text-surface-500 whitespace-nowrap">
-                        {s.period_start && s.period_end
-                          ? `${formatDate(s.period_start)} — ${formatDate(s.period_end)}`
-                          : '—'}
-                      </td>
-                      <td className="table-cell text-right font-mono text-xs">{s.totals.count}</td>
-                      <td className="table-cell text-right font-mono text-xs text-red-600">{formatCurrency(s.totals.debits)}</td>
-                      <td className="table-cell text-right font-mono text-xs text-green-600">{formatCurrency(s.totals.credits)}</td>
-                    </tr>
-                  ))}
+                  {visibleSourceDocs.map(s => {
+                    const range = formatStatementPeriod(s.period_start, s.period_end);
+                    return (
+                      <tr key={s.id} className="border-b border-surface-50 hover:bg-surface-50">
+                        <td className="table-cell text-sm font-medium max-w-xs truncate" title={s.file_name}>{s.file_name || '—'}</td>
+                        <td className="table-cell font-mono text-xs whitespace-nowrap">{s.upload_date ? formatDate(s.upload_date) : '—'}</td>
+                        <td className="table-cell text-xs whitespace-nowrap">
+                          {range ? (
+                            <span className="font-mono text-surface-700">{range}</span>
+                          ) : (
+                            <span className="text-surface-400 italic">no transactions</span>
+                          )}
+                        </td>
+                        <td className="table-cell text-right font-mono text-xs">{s.totals.count}</td>
+                        <td className="table-cell text-right font-mono text-xs text-red-600">{formatCurrency(s.totals.debits)}</td>
+                        <td className="table-cell text-right font-mono text-xs text-green-600">{formatCurrency(s.totals.credits)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

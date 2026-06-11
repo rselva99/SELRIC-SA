@@ -31,3 +31,8 @@ and safe to re-run.
 - `2026-06-11-extend-period-lock-delete.sql` — extends the period-lock
   trigger to also fire on DELETE so the bank-statement delete recovery
   path can't silently drop closed-period rows.
+- `2026-06-11-statement-totals-and-period.sql` — fixes the "Direct from
+  PDF pull" truncation bug by introducing a `statement_totals(uuid[])`
+  RPC that aggregates server-side; adds idempotent backfill of
+  bank_statements.period_start / period_end from the linked txns'
+  min/max date (additive columns only — never touches transactions).
