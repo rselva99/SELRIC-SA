@@ -99,8 +99,18 @@ Use negative numbers for amounts. If you are unsure whether an item is a check, 
 // The resulting string is typically 20–100 KB — well under Vercel's 4.5 MB
 // request body limit even for 9 MB PDFs. No base64, no images, no size issues.
 
-export async function extractBankStatementFromText(text) {
-  const systemPrompt = `You are a financial document parser. The following is text extracted from a bank statement PDF. The text preserves the original line structure but column alignment may be imperfect.
+// Optional `anchorPeriod = { start, end }` (YYYY-MM-DD) tells the model
+// the statement's actual date range so entries without an explicit year
+// (e.g. "12/05" rendered without "2024" in the source row) resolve to
+// THIS period's year, not the model's default. See src/lib/statementPeriod.js
+// for how the upload pipeline derives the anchor.
+function anchorClause(anchorPeriod) {
+  if (!anchorPeriod?.start || !anchorPeriod?.end) return '';
+  return `\n\nSTATEMENT PERIOD ANCHOR — REQUIRED CONSTRAINT:\nThis statement covers ${anchorPeriod.start} to ${anchorPeriod.end}. Every transaction date MUST fall within or near this range. If a row's date is written without an explicit year (e.g. "12/05" or "Dec 5"), resolve it to the year(s) that place it inside this anchor — never to the current calendar year.\n`;
+}
+
+export async function extractBankStatementFromText(text, anchorPeriod = null) {
+  const systemPrompt = `You are a financial document parser. The following is text extracted from a bank statement PDF. The text preserves the original line structure but column alignment may be imperfect.${anchorClause(anchorPeriod)}
 
 STRICT EXCLUSION RULES — do NOT include:
 - Checks of any kind: paper checks, check payments, items listed under a "Checks" or "Checks Paid" section, entries with check numbers (e.g. "Check 1234", "Ck #5678", "CHK 0042", or any description that is just a number)
@@ -150,7 +160,8 @@ Use negative numbers for amounts. If unsure whether an item is a check, exclude 
 // page images client-side, send each ~200 KB image as a separate request,
 // then merge the results here.
 
-const PAGE_TXN_SYSTEM = `You are extracting withdrawal/debit transactions from a single page of a bank statement image.
+function pageTxnSystem(anchorPeriod) {
+  return `You are extracting withdrawal/debit transactions from a single page of a bank statement image.${anchorClause(anchorPeriod)}
 
 STRICT EXCLUSION RULES:
 - No checks of any kind (paper checks, check numbers, "Checks Paid" section entries)
@@ -166,8 +177,10 @@ Return ONLY valid JSON — no markdown:
 }
 Use negative numbers for amounts. If unsure whether an item is a check, exclude it.
 If this page contains no relevant transactions, return { "transactions": [] }.`;
+}
 
-const PAGE_META_SYSTEM = `You are extracting bank account metadata and withdrawal/debit transactions from the first page of a bank statement image.
+function pageMetaSystem(anchorPeriod) {
+  return `You are extracting bank account metadata and withdrawal/debit transactions from the first page of a bank statement image.${anchorClause(anchorPeriod)}
 
 STRICT EXCLUSION RULES:
 - No checks of any kind (paper checks, check numbers, "Checks Paid" section entries)
@@ -187,9 +200,10 @@ Return ONLY valid JSON — no markdown:
   ]
 }
 Use negative numbers for amounts.`;
+}
 
-async function extractPageImage(base64Jpeg, isFirstPage) {
-  const systemPrompt = isFirstPage ? PAGE_META_SYSTEM : PAGE_TXN_SYSTEM;
+async function extractPageImage(base64Jpeg, isFirstPage, anchorPeriod) {
+  const systemPrompt = isFirstPage ? pageMetaSystem(anchorPeriod) : pageTxnSystem(anchorPeriod);
   const messages = [{
     role: 'user',
     content: [
@@ -209,7 +223,7 @@ async function extractPageImage(base64Jpeg, isFirstPage) {
  * @param {string[]} pageImages  base64 JPEG strings, one per page
  * @param {function} onProgress  optional callback(pageNum, total)
  */
-export async function extractBankStatementFromImages(pageImages, onProgress) {
+export async function extractBankStatementFromImages(pageImages, onProgress, anchorPeriod = null) {
   if (!pageImages.length) throw new Error('No pages to process');
 
   let meta = {};
@@ -217,7 +231,7 @@ export async function extractBankStatementFromImages(pageImages, onProgress) {
 
   for (let i = 0; i < pageImages.length; i++) {
     if (onProgress) onProgress(i + 1, pageImages.length);
-    const result = await extractPageImage(pageImages[i], i === 0);
+    const result = await extractPageImage(pageImages[i], i === 0, anchorPeriod);
     if (i === 0) meta = result; // capture bank_name, period, balances from page 1
     if (result.transactions?.length) allTransactions.push(...result.transactions);
   }

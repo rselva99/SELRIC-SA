@@ -22,6 +22,14 @@ import { CAPITALIZE_THRESHOLD } from '../../lib/capitalize';
 import { debitOf } from '../../lib/finance';
 import { fetchStatementTotals } from '../../lib/statementTotals';
 import DeleteStatementDialog from '../../components/DeleteStatementDialog';
+import StatementAnchorPrompt from '../../components/StatementAnchorPrompt';
+import DateAnchorWarningModal from '../../components/DateAnchorWarningModal';
+import {
+  parseStatementPeriodFromText,
+  parseStatementPeriodFromFilename,
+  findOutOfAnchorDates,
+  shiftOutOfAnchorTransactionDates,
+} from '../../lib/statementPeriod';
 import { isPeriodLockedError, periodFromLockedError, wrapIfPeriodLocked } from '../../lib/periodLock';
 import PeriodLockedDialog from '../../components/PeriodLockedDialog';
 
@@ -197,6 +205,10 @@ export default function BookkeepingPage() {
   const [lockedPeriod, setLockedPeriod]         = useState(null);
   const [lockedRetry,  setLockedRetry]          = useState(null);
   const [deleteStmt,   setDeleteStmt]           = useState(null);
+  // Promise-driven modal handles. Each holds the deferred resolve/reject
+  // so the async upload pipeline can `await` user input.
+  const [anchorPrompt, setAnchorPrompt]         = useState(null);   // { id, fileName, resolve, reject }
+  const [dateWarning,  setDateWarning]          = useState(null);   // { id, outOfRange, anchor, totalCount, resolve }
 
   useEffect(() => {
     supabase.from('profiles').select('id, full_name')
@@ -672,6 +684,27 @@ export default function BookkeepingPage() {
           }
 
           const pdfText = await extractPdfText(file);
+
+          // ── Anchor period detection ────────────────────────────────────
+          // PDF header → filename → ask the user. The anchor flows into
+          // the extraction prompts so partial dates resolve to this
+          // period's year and never to the model's calendar-default.
+          let anchorPeriod =
+            parseStatementPeriodFromText(pdfText) ||
+            parseStatementPeriodFromFilename(file.name);
+          if (!anchorPeriod) {
+            setUploadProgress('');
+            anchorPeriod = await new Promise((resolve, reject) => {
+              setAnchorPrompt({
+                id: crypto.randomUUID(),
+                fileName: file.name,
+                resolve,
+                reject,
+              });
+            }).finally(() => setAnchorPrompt(null));
+          }
+          if (!anchorPeriod) throw new Error('No statement period selected; upload aborted.');
+
           let extracted;
           const hasText = pdfText.replace(/[-\s|]/g, '').length > 200;
 
@@ -685,16 +718,42 @@ export default function BookkeepingPage() {
               throw new Error(`${file.name}: extracted text is ${(pdfText.length / 1024).toFixed(0)} KB, too large for one request. Split the PDF and re-upload.`);
             }
             setUploadProgress(`Analyzing ${pageCount}-page statement…`);
-            extracted = await extractBankStatementFromText(pdfText);
+            extracted = await extractBankStatementFromText(pdfText, anchorPeriod);
           } else {
             // Scanned/image PDF — fall back to page-by-page JPEG.
             setUploadProgress(`Scanned PDF — rendering ${pageCount} page${pageCount === 1 ? '' : 's'}…`);
             const pageImages = await pdfToPageImages(file);
-            extracted = await extractBankStatementFromImages(pageImages, (pg, total) => {
-              setUploadProgress(`Processing page ${pg} of ${total}…`);
-            });
+            extracted = await extractBankStatementFromImages(
+              pageImages,
+              (pg, total) => setUploadProgress(`Processing page ${pg} of ${total}…`),
+              anchorPeriod,
+            );
           }
           setUploadProgress('');
+
+          // ── Sanity gate: dates within ±15 days of the anchor ──────────
+          let txnsForInsert = extracted.transactions || [];
+          const outOfRange = findOutOfAnchorDates(txnsForInsert, anchorPeriod, 15);
+          if (outOfRange.length > 0) {
+            const decision = await new Promise(resolve => {
+              setDateWarning({
+                id: crypto.randomUUID(),
+                outOfRange,
+                anchor: anchorPeriod,
+                totalCount: txnsForInsert.length,
+                resolve,
+              });
+            }).finally(() => setDateWarning(null));
+            if (decision === 'cancel') throw new Error('Upload canceled by user after date warning.');
+            if (decision === 'shift') {
+              const { transactions: shifted, shifted: count } =
+                shiftOutOfAnchorTransactionDates(txnsForInsert, anchorPeriod, 15);
+              txnsForInsert = shifted;
+              if (count > 0) toast(`Shifted ${count} date${count === 1 ? '' : 's'} into ${anchorPeriod.start.slice(0, 7)}`, { icon: '↪️' });
+            }
+            // 'insert' → keep original dates
+          }
+          extracted = { ...extracted, transactions: txnsForInsert };
 
           // Namespace the storage path with a uuid AND timestamp so re-uploading
           // a file with the same name (e.g. Dec-24.pdf after a delete) can never
@@ -702,23 +761,19 @@ export default function BookkeepingPage() {
           const safeName = file.name.replace(/[^\w.\-]/g, '_');
           const uploadPath = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
           const uploadResult = await uploadFile('documents', uploadPath, file);
-          // Period range derived from the extracted txns' dates. We compute
-          // it from the parsed payload (not a follow-up SELECT) so the
-          // period is committed atomically with the statement row.
-          const extractedDates = (extracted.transactions || [])
-            .map(t => t.date)
-            .filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
-            .sort();
-          const periodStart = extractedDates[0] || null;
-          const periodEnd   = extractedDates[extractedDates.length - 1] || null;
-
+          // Period range comes from the ANCHOR, not from the extracted txns.
+          // The anchor is the statement's own self-reported period (or the
+          // user's pick when the PDF/filename didn't say); the dates on
+          // individual transactions can drift if extraction was imperfect,
+          // but the anchor is the contract for "what period this statement
+          // covers" and it's what every downstream filter should respect.
           const stmt = await addBankStatement({
             file_name: file.name,
             file_url: uploadResult?.path || '',
             upload_date: new Date().toISOString(),
             transaction_count: extracted.transactions?.length || 0,
-            period_start: periodStart,
-            period_end:   periodEnd,
+            period_start: anchorPeriod?.start || null,
+            period_end:   anchorPeriod?.end   || null,
           });
           if (extracted.transactions?.length) {
             for (const t of extracted.transactions) {
@@ -1325,6 +1380,20 @@ export default function BookkeepingPage() {
         statement={deleteStmt}
         onClose={() => setDeleteStmt(null)}
         onDeleted={async () => { await loadUnposted(); await loadUnpostedCount(); }}
+      />
+
+      <StatementAnchorPrompt
+        request={anchorPrompt}
+        fileName={anchorPrompt?.fileName}
+        onResolve={(anchor) => anchorPrompt?.resolve?.(anchor)}
+        onCancel={() => anchorPrompt?.reject?.(new Error('Anchor selection canceled'))}
+      />
+
+      <DateAnchorWarningModal
+        request={dateWarning}
+        onShift={()      => dateWarning?.resolve?.('shift')}
+        onInsertAsIs={() => dateWarning?.resolve?.('insert')}
+        onCancel={()     => dateWarning?.resolve?.('cancel')}
       />
 
     </div>

@@ -36,3 +36,9 @@ and safe to re-run.
   RPC that aggregates server-side; adds idempotent backfill of
   bank_statements.period_start / period_end from the linked txns'
   min/max date (additive columns only — never touches transactions).
+- `2026-06-11-repair-misdated-statement-uploads.sql` — one-time manual
+  data repair for `Dec-24.pdf` + `Reprint Oct-24.pdf` whose extractions
+  came back with the wrong year on some/all rows. Paste-and-run in
+  three stages (PREVIEW → FIX → RECOMPUTE), scoped to those two
+  statements' UNPOSTED, NON-VOIDED rows. Read this script's header for
+  the safety contract before running.
