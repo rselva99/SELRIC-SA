@@ -3,7 +3,9 @@ import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf } from '../../lib/reports';
 import { aggregateForPnL } from '../../lib/finance';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, formatDate } from '../../lib/utils';
+import { fetchAllStatementsWithTotals } from '../../lib/statementTotals';
+import { FileText } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
@@ -22,6 +24,8 @@ export default function ReportsPage() {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear]   = useState(now.getFullYear());
   const [transactions, setTransactions]   = useState([]);
+  const [sourceDocs, setSourceDocs]       = useState([]);
+  const [sourceDocsState, setSourceDocsState] = useState('loading');
 
   useEffect(() => {
     const m     = selectedMonth + 1;
@@ -30,6 +34,18 @@ export default function ReportsPage() {
     supabase.from('transactions').select('*').gte('date', start).lte('date', end).eq('voided', false)
       .then(({ data }) => setTransactions(data || []));
   }, [selectedMonth, selectedYear]);
+
+  // Source documents — every bank statement plus its PDF-pull totals.
+  // Single fetch on mount; the section is informational so we don't
+  // re-pull on every period change.
+  useEffect(() => {
+    let cancelled = false;
+    setSourceDocsState('loading');
+    fetchAllStatementsWithTotals()
+      .then(rows => { if (!cancelled) { setSourceDocs(rows); setSourceDocsState('ready'); } })
+      .catch(() => { if (!cancelled) setSourceDocsState('error'); });
+    return () => { cancelled = true; };
+  }, []);
   const [generating, setGenerating] = useState('');
 
   // transactions is already filtered to the selected period by the useEffect above
@@ -197,6 +213,55 @@ export default function ReportsPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Source Documents — bank statements with PDF-pull totals */}
+      <div className="card overflow-hidden mb-6">
+        <div className="px-5 py-4 border-b border-surface-100 flex items-center gap-2">
+          <FileText size={16} className="text-surface-400" />
+          <h3 className="section-title">Source Documents · Direct from PDF pull</h3>
+          {sourceDocsState === 'ready' && (
+            <span className="text-xs text-surface-400 ml-auto">{sourceDocs.length} {sourceDocs.length === 1 ? 'statement' : 'statements'}</span>
+          )}
+        </div>
+        {sourceDocsState === 'loading' && <div className="flex justify-center py-10"><Spinner size="lg" /></div>}
+        {sourceDocsState === 'error'   && <div className="p-5 text-sm text-red-700">Failed to load source documents.</div>}
+        {sourceDocsState === 'ready' && (
+          sourceDocs.length === 0 ? (
+            <div className="p-8 text-center text-sm text-surface-400">No bank statements uploaded yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-surface-100 bg-surface-50/50">
+                    <th className="table-header">Statement</th>
+                    <th className="table-header">Uploaded</th>
+                    <th className="table-header">Period covered</th>
+                    <th className="table-header text-right">Txns</th>
+                    <th className="table-header text-right">Debits</th>
+                    <th className="table-header text-right">Credits</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sourceDocs.map(s => (
+                    <tr key={s.id} className="border-b border-surface-50 hover:bg-surface-50">
+                      <td className="table-cell text-sm font-medium max-w-xs truncate" title={s.file_name}>{s.file_name || '—'}</td>
+                      <td className="table-cell font-mono text-xs whitespace-nowrap">{s.upload_date ? formatDate(s.upload_date) : '—'}</td>
+                      <td className="table-cell text-xs text-surface-500 whitespace-nowrap">
+                        {s.period_start && s.period_end
+                          ? `${formatDate(s.period_start)} — ${formatDate(s.period_end)}`
+                          : '—'}
+                      </td>
+                      <td className="table-cell text-right font-mono text-xs">{s.totals.count}</td>
+                      <td className="table-cell text-right font-mono text-xs text-red-600">{formatCurrency(s.totals.debits)}</td>
+                      <td className="table-cell text-right font-mono text-xs text-green-600">{formatCurrency(s.totals.credits)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
       </div>
 
       {/* Expense Breakdown Table */}

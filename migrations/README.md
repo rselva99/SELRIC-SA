@@ -28,3 +28,6 @@ and safe to re-run.
   closed period (status='closed' in period_close).
 - `2026-06-11-period-close-snapshot.sql` — period_close.snapshot JSONB +
   period_close.snapshot_at, plus an UPDATE-on-reopen helper.
+- `2026-06-11-extend-period-lock-delete.sql` — extends the period-lock
+  trigger to also fire on DELETE so the bank-statement delete recovery
+  path can't silently drop closed-period rows.

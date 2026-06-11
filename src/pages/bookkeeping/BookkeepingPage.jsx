@@ -20,6 +20,8 @@ import {
 import CapitalizeModal from '../../components/CapitalizeModal';
 import { CAPITALIZE_THRESHOLD } from '../../lib/capitalize';
 import { debitOf } from '../../lib/finance';
+import { fetchStatementTotals } from '../../lib/statementTotals';
+import DeleteStatementDialog from '../../components/DeleteStatementDialog';
 import { isPeriodLockedError, periodFromLockedError, wrapIfPeriodLocked } from '../../lib/periodLock';
 import PeriodLockedDialog from '../../components/PeriodLockedDialog';
 
@@ -194,6 +196,7 @@ export default function BookkeepingPage() {
   const [openRowMenu, setOpenRowMenu]           = useState(null);
   const [lockedPeriod, setLockedPeriod]         = useState(null);
   const [lockedRetry,  setLockedRetry]          = useState(null);
+  const [deleteStmt,   setDeleteStmt]           = useState(null);
 
   useEffect(() => {
     supabase.from('profiles').select('id, full_name')
@@ -207,6 +210,9 @@ export default function BookkeepingPage() {
   // ── Transactions (unposted) — paginated by bank statement ─────────────────
   const [stmts, setStmts]                   = useState([]);
   const [stmtsTotal, setStmtsTotal]         = useState(0);
+  // Totals across ALL linked transactions per statement (posted + unposted),
+  // for the "Pulled from PDF" header line.
+  const [stmtTotals, setStmtTotals]         = useState(new Map());
   const [stmtsPage, setStmtsPage]           = useState(0);
   const [txnsByStmt, setTxnsByStmt]         = useState({});
   const [manualTxns, setManualTxns]         = useState([]);
@@ -270,9 +276,13 @@ export default function BookkeepingPage() {
       const stmtIds = Object.keys(grouped);
       if (stmtIds.length) {
         const { data: matchedStmts } = await supabase.from('bank_statements')
-          .select('*').in('id', stmtIds).order('created_at', { ascending: false });
+          .select('*').in('id', stmtIds)
+          .order('upload_date', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false });
         setStmts(matchedStmts || []);
         setStmtsTotal(matchedStmts?.length || 0);
+        // PDF-pull totals across every linked txn (posted or not).
+        try { setStmtTotals(await fetchStatementTotals((matchedStmts || []).map(s => s.id))); } catch {}
       } else {
         setStmts([]); setStmtsTotal(0);
       }
@@ -281,9 +291,13 @@ export default function BookkeepingPage() {
       const from = stmtsPage * STMTS_PER_PAGE;
       const { data: stmtData, count: stmtCount } = await supabase
         .from('bank_statements').select('*', { count: 'exact' })
-        .order('created_at', { ascending: false }).range(from, from + STMTS_PER_PAGE - 1);
+        .order('upload_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .range(from, from + STMTS_PER_PAGE - 1);
       setStmts(stmtData || []);
       setStmtsTotal(stmtCount || 0);
+      // PDF-pull totals across every linked txn (posted or not).
+      try { setStmtTotals(await fetchStatementTotals((stmtData || []).map(s => s.id))); } catch {}
 
       if (stmtData?.length) {
         const ids = stmtData.map(s => s.id);
@@ -990,7 +1004,10 @@ export default function BookkeepingPage() {
           {stmtsLoading ? <div className="flex justify-center py-16"><Spinner size="lg" /></div>
           : allVisibleTxns.length === 0 && stmtsTotal === 0 ? (
             <EmptyState icon={FileText} title="No unposted transactions" description="Upload a bank statement or add a manual entry" action={{ label:'Upload Statement', onClick:()=>{ setUploadType('bank'); setShowUploadModal(true); } }} />
-          ) : filteredTxns.length === 0 ? (
+          ) : filteredTxns.length === 0 && groupBy !== 'none' ? (
+            // For category / vendor group views, no filtered txns means truly
+            // empty. Keep the original empty message. Statement view falls
+            // through so the folder list + PageBar still render.
             <div className="card p-8 text-center text-sm text-surface-400">
               No {quickFilter === 'categorized' ? 'categorized' : 'uncategorized'} transactions on this page.
             </div>
@@ -1005,6 +1022,7 @@ export default function BookkeepingPage() {
                   );
                   const isCollapsed = collapsedGroups.has(stmt.id);
                   const total = grpTxns.reduce((s,t)=>s+debitOf(t),0);
+                  const pull  = stmtTotals.get(stmt.id);
                   const allSelected = grpTxns.length > 0 && grpTxns.every(t => selectedTxnIds.has(t.id));
                   return (
                     <div key={stmt.id} className="card overflow-hidden">
@@ -1015,12 +1033,30 @@ export default function BookkeepingPage() {
                         />
                         <button onClick={() => toggleGroup(stmt.id)} className="flex-1 flex items-center gap-2.5 min-w-0 text-left">
                           {isCollapsed ? <Folder size={16} className="shrink-0 text-brand-500" /> : <FolderOpen size={16} className="shrink-0 text-brand-500" />}
-                          <span className="font-medium text-sm truncate">{stmt.file_name}</span>
-                          <span className="text-xs text-surface-400 shrink-0">{grpTxns.length} unposted{total>0&&` · ${formatCurrency(total)}`}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm truncate">{stmt.file_name}</span>
+                              <span className="text-xs text-surface-400 shrink-0">{grpTxns.length} unposted{total>0&&` · ${formatCurrency(total)}`}</span>
+                            </div>
+                            {pull && pull.count > 0 && (
+                              <div className="text-[11px] text-surface-500 mt-0.5">
+                                <span className="uppercase tracking-wider text-surface-400 mr-1">Pulled from PDF:</span>
+                                {pull.count} transaction{pull.count !== 1 ? 's' : ''} · <span className="font-mono text-red-600">{formatCurrency(pull.debits)} debits</span> · <span className="font-mono text-green-600">{formatCurrency(pull.credits)} credits</span>
+                              </div>
+                            )}
+                          </div>
                         </button>
                         {grpTxns.length > 0 && (
                           <button onClick={() => bulkPostTxns(grpTxns)} disabled={bulkPosting} className="btn-ghost text-xs flex items-center gap-1 shrink-0">
                             <BookCheck size={12} /> Post All
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeleteStmt(stmt); }}
+                            title="Delete statement and every linked transaction"
+                            className="p-1.5 text-surface-400 hover:text-red-600 transition shrink-0">
+                            <Trash2 size={14} />
                           </button>
                         )}
                         <button onClick={() => toggleGroup(stmt.id)} className="shrink-0">
@@ -1240,6 +1276,12 @@ export default function BookkeepingPage() {
         period={lockedPeriod}
         onClose={() => { setLockedPeriod(null); setLockedRetry(null); }}
         onRetry={lockedRetry}
+      />
+
+      <DeleteStatementDialog
+        statement={deleteStmt}
+        onClose={() => setDeleteStmt(null)}
+        onDeleted={async () => { await loadUnposted(); await loadUnpostedCount(); }}
       />
 
     </div>
