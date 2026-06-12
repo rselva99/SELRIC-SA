@@ -14,13 +14,12 @@ const TOLERANCE      = 0.01;        // dollars — totals must agree to the cent
 
 // Storage buckets we look in, in order. The new import flow writes to
 // `bank-statements`; legacy bookkeeping uploads ended up in `documents`.
-// The PDF-loader tries each before giving up.
+// The PDF loader tries each bucket before giving up.
 const STORAGE_BUCKET_CHAIN = ['bank-statements', 'documents'];
 
-// True when the stored file_path is already a full http(s) URL (some
-// older imports stamped public URLs directly into the column). When
-// that's the case we skip the signed-URL machinery entirely and let
-// the iframe load it as-is.
+// True when the stored file_path is already a full http(s) URL. Older
+// imports occasionally wrote a public URL into file_url instead of a
+// bucket key; we still try to load those into a blob via fetch.
 function looksLikeAbsoluteUrl(p) {
   return typeof p === 'string' && /^https?:\/\//i.test(p);
 }
@@ -64,41 +63,75 @@ export default function StatementReviewMatch() {
   const [txns,    setTxns]    = useState([]);
   // pdfState: loading | ok | unavailable
   //   loading      — initial fetch in flight
-  //   ok           — a signed URL (or full URL) is in pdfUrl
-  //   unavailable  — exhausted every bucket; file is just not there.
-  //                  Treat as a permanent absence and show the friendly
-  //                  empty state. (Retry stays around for the rare
-  //                  transient that masquerades as a 404.)
-  const [pdfState, setPdfState] = useState('loading');
-  const [pdfUrl,   setPdfUrl]   = useState(null);
+  //   ok           — pdfBlobUrl holds an object URL safe to put in an iframe
+  //   unavailable  — exhausted every bucket; show the friendly empty state.
+  const [pdfState,    setPdfState]    = useState('loading');
+  const [pdfBlobUrl,  setPdfBlobUrl]  = useState(null);    // for the <iframe src>
+  const [pdfSignedUrl, setPdfSignedUrl] = useState(null);  // for "Open in new tab"
   const [pdfRetrying, setPdfRetrying] = useState(false);
-  const [savingId, setSavingId] = useState(null);    // txn id currently saving
+  const [savingId, setSavingId] = useState(null);          // txn id currently saving
   const [confirming, setConfirming] = useState(false);
+
+  // Revoke any blob: URL when it changes or when the component unmounts.
+  // Plain http(s) URLs (the absolute-URL fallback) get a no-op here.
+  useEffect(() => {
+    const u = pdfBlobUrl;
+    return () => {
+      if (u && typeof u === 'string' && u.startsWith('blob:')) {
+        URL.revokeObjectURL(u);
+      }
+    };
+  }, [pdfBlobUrl]);
 
   const loadPdfUrl = useCallback(async (path) => {
     setPdfState('loading');
-    setPdfUrl(null);
+    setPdfBlobUrl(null);
+    setPdfSignedUrl(null);
     if (!path) { setPdfState('unavailable'); return; }
 
-    // (b) Absolute URLs — older imports occasionally wrote a full URL
-    // into file_url. Use it as-is; the iframe handles it.
+    // Absolute URL — older imports occasionally stamped a public URL
+    // straight into file_url. We still want the iframe path to render
+    // it through a blob (so Chrome's X-Frame-Options on the storage
+    // origin doesn't matter), so we fetch the bytes ourselves. CORS
+    // failure or non-2xx response falls through to the empty state.
     if (looksLikeAbsoluteUrl(path)) {
-      setPdfUrl(path);
-      setPdfState('ok');
-      return;
+      try {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        setPdfBlobUrl(blobUrl);
+        setPdfSignedUrl(path);    // the absolute URL is itself link-safe
+        setPdfState('ok');
+        return;
+      } catch (_) {
+        // try the bucket chain anyway (some absolute URLs are actually
+        // Supabase public URLs whose path also resolves inside a bucket)
+      }
     }
 
-    // (a) + (c) Try every known bucket in order. createSignedUrl returns
-    // an error rather than throwing for missing objects, so we just move
-    // on. A genuine RLS-denied or network failure would surface
-    // identically here — the Retry button in the empty state covers both.
+    // Try each known bucket in order. supabase.storage.download() returns
+    // a Blob the iframe can render via object URL — that's the whole
+    // point of the blob switch: storage signed URLs are served with
+    // headers Chrome refuses to embed, but a same-origin blob URL has
+    // no frame restrictions.
     for (const bucket of STORAGE_BUCKET_CHAIN) {
       try {
-        const { data, error: e } = await supabase.storage
-          .from(bucket)
-          .createSignedUrl(path, SIGNED_URL_TTL);
-        if (!e && data?.signedUrl) {
-          setPdfUrl(data.signedUrl);
+        const { data, error: e } = await supabase.storage.from(bucket).download(path);
+        if (!e && data) {
+          const blob = new Blob([data], { type: 'application/pdf' });
+          const blobUrl = URL.createObjectURL(blob);
+          setPdfBlobUrl(blobUrl);
+          // Pair the blob with a signed URL for the "Open in new tab"
+          // link — outside an iframe the storage headers are fine.
+          try {
+            const { data: signed } = await supabase.storage
+              .from(bucket)
+              .createSignedUrl(path, SIGNED_URL_TTL);
+            setPdfSignedUrl(signed?.signedUrl || null);
+          } catch {
+            setPdfSignedUrl(null);
+          }
           setPdfState('ok');
           return;
         }
@@ -331,15 +364,15 @@ export default function StatementReviewMatch() {
         <div className="card overflow-hidden h-[78vh] flex flex-col">
           <div className="px-4 py-2 border-b border-surface-100 bg-surface-50 text-xs text-surface-500 flex items-center justify-between">
             <span>Original PDF</span>
-            {pdfState === 'ok' && pdfUrl && (
-              <a href={pdfUrl} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline">Open in new tab</a>
+            {pdfState === 'ok' && pdfSignedUrl && (
+              <a href={pdfSignedUrl} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline">Open in new tab</a>
             )}
           </div>
           {pdfState === 'loading' && (
             <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
           )}
-          {pdfState === 'ok' && pdfUrl && (
-            <iframe title="Statement PDF" src={pdfUrl} className="flex-1 w-full bg-surface-100" />
+          {pdfState === 'ok' && pdfBlobUrl && (
+            <iframe title="Statement PDF" src={pdfBlobUrl} className="flex-1 w-full bg-surface-100" />
           )}
           {pdfState === 'unavailable' && (
             <div className="flex-1 flex items-center justify-center p-6">
