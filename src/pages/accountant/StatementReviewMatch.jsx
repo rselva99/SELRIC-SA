@@ -3,17 +3,50 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency, formatDate, formatStatementPeriod } from '../../lib/utils';
-import { debitOf, creditOf } from '../../lib/finance';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, CheckCircle2, AlertCircle, Loader2, RotateCw,
+  ArrowLeft, CheckCircle2, AlertCircle, Loader2, RotateCw, Info, FileX2,
 } from 'lucide-react';
 
-const STORAGE_BUCKET = 'bank-statements';
-const SIGNED_URL_TTL = 60 * 60; // 1 hour
+const SIGNED_URL_TTL = 60 * 60;     // 1 hour
+const TOLERANCE      = 0.01;        // dollars — totals must agree to the cent
 
-const TOLERANCE = 0.01; // dollars — totals must agree to the cent
+// Storage buckets we look in, in order. The new import flow writes to
+// `bank-statements`; legacy bookkeeping uploads ended up in `documents`.
+// The PDF-loader tries each before giving up.
+const STORAGE_BUCKET_CHAIN = ['bank-statements', 'documents'];
+
+// True when the stored file_path is already a full http(s) URL (some
+// older imports stamped public URLs directly into the column). When
+// that's the case we skip the signed-URL machinery entirely and let
+// the iframe load it as-is.
+function looksLikeAbsoluteUrl(p) {
+  return typeof p === 'string' && /^https?:\/\//i.test(p);
+}
+
+// ── Local row-direction helpers ─────────────────────────────────────────
+// Sign of `amount` is the authoritative direction for bank-imported
+// rows. The OLD extraction prompt hardcoded `"type": "debit"` for every
+// row, so the `type` column on legacy imports is uniformly 'debit' even
+// when the row was actually a deposit. JE-mirrored rows (Payroll,
+// Capitalize, Depreciation, Opening Balances, Revenue Breakdown,
+// Reversal) all carry `bank_statement_id IS NULL` and never reach this
+// screen, so we don't need finance.js's type-aware helpers here.
+function rowDirection(t) {
+  const amt = Number(t?.amount) || 0;
+  if (amt < 0) return 'debit';
+  if (amt > 0) return 'credit';
+  // Exactly zero — defer to whatever the stored type says.
+  return t?.type === 'credit' ? 'credit' : 'debit';
+}
+
+function withdrawalOf(t) {
+  return rowDirection(t) === 'debit'  ? Math.abs(Number(t?.amount) || 0) : 0;
+}
+function depositOf(t) {
+  return rowDirection(t) === 'credit' ? Math.abs(Number(t?.amount) || 0) : 0;
+}
 
 // Side-by-side Review & Match. Loads one bank_statements row + its
 // transactions, signs a 1-hour URL for the original PDF, shows match
@@ -29,23 +62,52 @@ export default function StatementReviewMatch() {
   const [error,   setError]   = useState(null);
   const [stmt,    setStmt]    = useState(null);
   const [txns,    setTxns]    = useState([]);
-  const [pdfUrl,  setPdfUrl]  = useState(null);
-  const [pdfErr,  setPdfErr]  = useState(null);
+  // pdfState: loading | ok | unavailable
+  //   loading      — initial fetch in flight
+  //   ok           — a signed URL (or full URL) is in pdfUrl
+  //   unavailable  — exhausted every bucket; file is just not there.
+  //                  Treat as a permanent absence and show the friendly
+  //                  empty state. (Retry stays around for the rare
+  //                  transient that masquerades as a 404.)
+  const [pdfState, setPdfState] = useState('loading');
+  const [pdfUrl,   setPdfUrl]   = useState(null);
   const [pdfRetrying, setPdfRetrying] = useState(false);
   const [savingId, setSavingId] = useState(null);    // txn id currently saving
   const [confirming, setConfirming] = useState(false);
 
   const loadPdfUrl = useCallback(async (path) => {
-    if (!path) return;
-    setPdfErr(null);
-    try {
-      const { data, error: e } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl(path, SIGNED_URL_TTL);
-      if (e) throw e;
-      setPdfUrl(data?.signedUrl || null);
-    } catch (e) {
-      setPdfUrl(null);
-      setPdfErr(e.message || 'Could not load PDF');
+    setPdfState('loading');
+    setPdfUrl(null);
+    if (!path) { setPdfState('unavailable'); return; }
+
+    // (b) Absolute URLs — older imports occasionally wrote a full URL
+    // into file_url. Use it as-is; the iframe handles it.
+    if (looksLikeAbsoluteUrl(path)) {
+      setPdfUrl(path);
+      setPdfState('ok');
+      return;
     }
+
+    // (a) + (c) Try every known bucket in order. createSignedUrl returns
+    // an error rather than throwing for missing objects, so we just move
+    // on. A genuine RLS-denied or network failure would surface
+    // identically here — the Retry button in the empty state covers both.
+    for (const bucket of STORAGE_BUCKET_CHAIN) {
+      try {
+        const { data, error: e } = await supabase.storage
+          .from(bucket)
+          .createSignedUrl(path, SIGNED_URL_TTL);
+        if (!e && data?.signedUrl) {
+          setPdfUrl(data.signedUrl);
+          setPdfState('ok');
+          return;
+        }
+      } catch (_) {
+        // try the next bucket
+      }
+    }
+
+    setPdfState('unavailable');
   }, []);
 
   const load = useCallback(async () => {
@@ -78,10 +140,10 @@ export default function StatementReviewMatch() {
   const computed = useMemo(() => {
     let withdrawalsTotal = 0, depositsTotal = 0, wCount = 0, dCount = 0;
     for (const t of txns) {
-      const d = debitOf(t);
-      const c = creditOf(t);
-      if (d > 0) { withdrawalsTotal += d; wCount += 1; }
-      if (c > 0) { depositsTotal    += c; dCount += 1; }
+      const w = withdrawalOf(t);
+      const d = depositOf(t);
+      if (w > 0) { withdrawalsTotal += w; wCount += 1; }
+      if (d > 0) { depositsTotal    += d; dCount += 1; }
     }
     return { withdrawalsTotal, depositsTotal, wCount, dCount };
   }, [txns]);
@@ -240,11 +302,17 @@ export default function StatementReviewMatch() {
         </button>
       </div>
 
+      {/* Legacy-import notice — brand palette, proper spacing */}
       {!hasTotals && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 mb-4 flex items-start gap-2">
-          <AlertCircle size={14} className="text-amber-700 mt-0.5" />
-          <div>
-            Statement totals unavailable — re-import to enable auto-matching. The extracted sums are shown below for reference; Confirm Match will mark this as "confirmed manually".
+        <div className="rounded-xl border border-brand-100 bg-brand-50/60 p-4 mb-4 flex items-start gap-3">
+          <Info size={18} className="text-brand-700 mt-0.5 flex-shrink-0" />
+          <div className="min-w-0">
+            <div className="font-semibold text-brand-900 text-sm">Statement totals unavailable</div>
+            <p className="text-xs text-surface-600 mt-1 leading-relaxed">
+              This import predates the auto-matching feature, so the bank's printed totals weren't captured.
+              The cards below show the extracted sums for reference; <span className="font-semibold text-surface-700">Confirm Match</span> will mark this statement as "confirmed manually".
+              Re-import the original PDF on a future close to enable side-by-side total verification.
+            </p>
           </div>
         </div>
       )}
@@ -263,27 +331,35 @@ export default function StatementReviewMatch() {
         <div className="card overflow-hidden h-[78vh] flex flex-col">
           <div className="px-4 py-2 border-b border-surface-100 bg-surface-50 text-xs text-surface-500 flex items-center justify-between">
             <span>Original PDF</span>
-            {pdfUrl && <a href={pdfUrl} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline">Open in new tab</a>}
+            {pdfState === 'ok' && pdfUrl && (
+              <a href={pdfUrl} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline">Open in new tab</a>
+            )}
           </div>
-          {pdfErr ? (
-            <div className="flex-1 flex items-center justify-center p-5 text-sm text-red-700">
-              <div>
-                Could not load the PDF: {pdfErr}
-                <div className="mt-3">
-                  <button
-                    onClick={async () => { setPdfRetrying(true); await loadPdfUrl(stmt.file_path || stmt.file_url); setPdfRetrying(false); }}
-                    disabled={pdfRetrying}
-                    className="btn-ghost text-sm inline-flex items-center gap-1.5"
-                  >
-                    <RotateCw size={12} className={pdfRetrying ? 'animate-spin' : ''} /> Retry
-                  </button>
+          {pdfState === 'loading' && (
+            <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+          )}
+          {pdfState === 'ok' && pdfUrl && (
+            <iframe title="Statement PDF" src={pdfUrl} className="flex-1 w-full bg-surface-100" />
+          )}
+          {pdfState === 'unavailable' && (
+            <div className="flex-1 flex items-center justify-center p-6">
+              <div className="text-center max-w-sm">
+                <div className="w-12 h-12 rounded-full bg-brand-50 text-brand-700 mx-auto mb-3 flex items-center justify-center">
+                  <FileX2 size={22} />
                 </div>
+                <div className="font-semibold text-surface-800">Original PDF isn't available</div>
+                <p className="text-xs text-surface-500 mt-1.5 leading-relaxed">
+                  Imports made before this feature didn't store the original file. Re-import the statement to enable the side-by-side view; the extracted transactions on the right are still usable.
+                </p>
+                <button
+                  onClick={async () => { setPdfRetrying(true); await loadPdfUrl(stmt.file_path || stmt.file_url); setPdfRetrying(false); }}
+                  disabled={pdfRetrying}
+                  className="btn-ghost text-xs inline-flex items-center gap-1.5 mt-3"
+                >
+                  <RotateCw size={12} className={pdfRetrying ? 'animate-spin' : ''} /> Try again
+                </button>
               </div>
             </div>
-          ) : pdfUrl ? (
-            <iframe title="Statement PDF" src={pdfUrl} className="flex-1 w-full bg-surface-100" />
-          ) : (
-            <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
           )}
         </div>
 
@@ -306,45 +382,48 @@ export default function StatementReviewMatch() {
                 </tr>
               </thead>
               <tbody>
-                {txns.map(t => (
-                  <tr key={t.id} className={`border-b border-surface-50 ${t.verified ? 'bg-green-50/40' : ''}`}>
-                    <td className="px-3 py-1.5">
-                      <input
-                        type="checkbox"
-                        checked={!!t.verified}
-                        onChange={() => handleVerifiedToggle(t)}
-                        disabled={savingId === t.id}
-                        title="Verified"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        defaultValue={t.description || ''}
-                        onBlur={(e) => handleDescriptionBlur(t, e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                        className="w-full bg-transparent text-sm focus:bg-white focus:border focus:border-brand-300 rounded px-1 py-0.5"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      <input
-                        defaultValue={Math.abs(Number(t.amount) || 0).toFixed(2)}
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        onBlur={(e) => handleAmountBlur(t, e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                        className="w-28 text-right bg-transparent font-mono text-sm focus:bg-white focus:border focus:border-brand-300 rounded px-1 py-0.5"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 text-xs">
-                      <span className={`uppercase tracking-wider px-1.5 py-0.5 rounded-full ${t.type === 'debit' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                        {t.type}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-surface-600">{t.category || <span className="text-surface-400">—</span>}</td>
-                  </tr>
-                ))}
+                {txns.map(t => {
+                  const dir = rowDirection(t);
+                  return (
+                    <tr key={t.id} className={`border-b border-surface-50 ${t.verified ? 'bg-green-50/40' : ''}`}>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={!!t.verified}
+                          onChange={() => handleVerifiedToggle(t)}
+                          disabled={savingId === t.id}
+                          title="Verified"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          defaultValue={t.description || ''}
+                          onBlur={(e) => handleDescriptionBlur(t, e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                          className="w-full bg-transparent text-sm focus:bg-white focus:border focus:border-brand-300 rounded px-1 py-0.5"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <input
+                          defaultValue={Math.abs(Number(t.amount) || 0).toFixed(2)}
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          onBlur={(e) => handleAmountBlur(t, e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                          className="w-28 text-right bg-transparent font-mono text-sm focus:bg-white focus:border focus:border-brand-300 rounded px-1 py-0.5"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-xs">
+                        <span className={`uppercase tracking-wider px-1.5 py-0.5 rounded-full ${dir === 'debit' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                          {dir}
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 text-xs text-surface-600">{t.category || <span className="text-surface-400">—</span>}</td>
+                    </tr>
+                  );
+                })}
                 {txns.length === 0 && (
                   <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-surface-400">No transactions extracted.</td></tr>
                 )}
