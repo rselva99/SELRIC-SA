@@ -102,11 +102,21 @@ export default function ReportsPage() {
     return generateIncomeStatementPdf(data);
   }
 
+  // Download filenames intentionally carry the report name, not a brand
+  // prefix. Period gets underscores so it round-trips through Finder /
+  // Explorer cleanly.
+  const FILENAME_PREFIX = {
+    pnl:     'PnL',
+    balance: 'Balance_Sheet',
+    income:  'Income_Statement',
+  };
+
   async function handleDownload(type) {
     setGenerating(type + '-dl');
     try {
       const pdf = buildPdf(type);
-      pdf.save(`SelRic_${type}_${periodLabel.replace(' ', '_')}.pdf`);
+      const prefix = FILENAME_PREFIX[type] || 'Report';
+      pdf.save(`${prefix}_${periodLabel.replace(/\s+/g, '_')}.pdf`);
       toast.success('Report downloaded');
     } catch (err) {
       toast.error('Failed to generate report');

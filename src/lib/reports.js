@@ -151,15 +151,15 @@ function addHeader(doc, title, period) {
   doc.setFillColor(...BRAND_GREEN);
   doc.rect(0, 0, PAGE_WIDTH, 36, 'F');
 
+  // Left side: business-line heading promoted to the primary banner text
+  // now that the SelRic SA wordmark is gone. Sized to balance the title /
+  // period / timestamp stack on the right.
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(22);
+  doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text(safeText('SelRic SA'), PAGE_MARGIN, 16);
+  doc.text(safeText('College Bar Finance'), PAGE_MARGIN, 22);
 
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(safeText('College Bar Finance'), PAGE_MARGIN, 24);
-
+  // Right side: title (top), period (middle), generated-at (bottom).
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.text(safeText(title, 'Report'), PAGE_WIDTH - PAGE_MARGIN, 16, { align: 'right' });
@@ -189,7 +189,7 @@ function addFooter(doc, pageNum) {
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...TEXT_MED);
-  doc.text(safeText('SelRic SA — Confidential'), PAGE_MARGIN, pageHeight - 10);
+  doc.text(safeText('Confidential'), PAGE_MARGIN, pageHeight - 10);
   doc.text(safeText(`Page ${pageNum}`), PAGE_WIDTH - PAGE_MARGIN, pageHeight - 10, { align: 'right' });
 }
 
