@@ -42,7 +42,11 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { format } from 'date-fns';
-import { aggregateForPnL, aggregateForBS } from './finance';
+import {
+  aggregateForPnL, aggregateForBS, aggregateTrialBalance,
+  trialBalanceTypeOrder, trialBalanceTypeLabel,
+  debitOf, creditOf,
+} from './finance';
 
 const BRAND_GREEN = [39, 110, 82];
 const BRAND_DARK  = [25, 59, 46];
@@ -300,9 +304,267 @@ function renderSummaryBand(doc, y, label, amount, positive) {
   return y + SUMMARY_BAND_H + 4;
 }
 
+// ── Trial Balance section renderer ───────────────────────────────────────
+// 5-column layout: Account / Type / Debit total / Credit total / Balance.
+// Sum to USABLE_WIDTH (182mm): 74 + 22 + 28 + 28 + 30 = 182.
+const TB_COL_WIDTHS  = { account: 74, type: 22, debit: 28, credit: 28, balance: 30 };
+const TB_TABLE_BASE  = {
+  theme: 'plain',
+  styles: { fontSize: 9, textColor: TEXT_DARK, cellPadding: 2, overflow: 'linebreak' },
+  headStyles: { fillColor: LIGHT_BG, textColor: TEXT_MED, fontStyle: 'bold', fontSize: 8 },
+  margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, bottom: FOOTER_RESERVED },
+  tableWidth: USABLE_WIDTH,
+  columnStyles: {
+    0: { cellWidth: TB_COL_WIDTHS.account },
+    1: { cellWidth: TB_COL_WIDTHS.type },
+    2: { cellWidth: TB_COL_WIDTHS.debit,   halign: 'right' },
+    3: { cellWidth: TB_COL_WIDTHS.credit,  halign: 'right' },
+    4: { cellWidth: TB_COL_WIDTHS.balance, halign: 'right' },
+  },
+};
+
+function balanceCellText(row) {
+  if (row.debitBalance > 0)  return `${formatCurrency(row.debitBalance)} DR`;
+  if (row.creditBalance > 0) return `${formatCurrency(row.creditBalance)} CR`;
+  return formatCurrency(0);
+}
+
+function renderTrialBalanceSection(doc, y, typeLabel, rows) {
+  if (!rows.length) return y;
+
+  y = ensureSpace(doc, y, 19);
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText(typeLabel), PAGE_MARGIN, y);
+  y += 6;
+
+  let sectionDebits  = 0;
+  let sectionCredits = 0;
+  let sectionDB      = 0;
+  let sectionCB      = 0;
+  const body = rows.map((r) => {
+    sectionDebits  += r.totalDebits;
+    sectionCredits += r.totalCredits;
+    sectionDB      += r.debitBalance;
+    sectionCB      += r.creditBalance;
+    return [
+      safeText(r.name),
+      safeText(trialBalanceTypeLabel(r.type)),
+      safeText(formatCurrency(r.totalDebits)),
+      safeText(formatCurrency(r.totalCredits)),
+      safeText(balanceCellText(r)),
+    ];
+  });
+  const sectionNet = sectionDB - sectionCB;
+  const subtotalBalance = sectionNet >= 0
+    ? `${formatCurrency(sectionNet)} DR`
+    : `${formatCurrency(-sectionNet)} CR`;
+  body.push([
+    { content: safeText(`Subtotal — ${typeLabel}`), colSpan: 2, styles: { fontStyle: 'bold' } },
+    { content: safeText(formatCurrency(sectionDebits)),  styles: { fontStyle: 'bold' } },
+    { content: safeText(formatCurrency(sectionCredits)), styles: { fontStyle: 'bold' } },
+    { content: safeText(subtotalBalance),                styles: { fontStyle: 'bold' } },
+  ]);
+
+  doc.autoTable({
+    ...TB_TABLE_BASE,
+    startY: y,
+    head: [['Account', 'Type', 'Debits', 'Credits', 'Balance']],
+    body,
+  });
+
+  return (doc.lastAutoTable?.finalY ?? y) + 8;
+}
+
+// ── Supporting Detail renderer ───────────────────────────────────────────
+//
+// sections = [{ title, accounts: [{ name, stated, statedSide, expectedNet, transactions: [...] }] }]
+//
+// Per account: small autoTable with Date / Description / Reference / Debit /
+// Credit columns. Subtotal row sums every transaction (cap-truncation does
+// NOT affect the subtotal — we render only the first DETAIL_ROW_CAP rows but
+// sum them all). A ✓ / ✗ badge compares the subtotal's net to the stated
+// balance from the summary above.
+//
+// All sub-tables share margin.bottom = FOOTER_RESERVED so autoTable
+// paginates rather than spilling into the footer zone. addFootersToAllPages
+// (called at the end of each generator) stamps every page.
+
+const DETAIL_ROW_CAP   = 500;
+const DETAIL_COL_WIDTHS = { date: 22, description: 86, reference: 24, debit: 25, credit: 25 };
+// Sums to USABLE_WIDTH = 182.
+
+const DETAIL_TABLE_BASE = {
+  theme: 'plain',
+  styles: { fontSize: 8, textColor: TEXT_DARK, cellPadding: 1.5, overflow: 'linebreak' },
+  headStyles: { fillColor: LIGHT_BG, textColor: TEXT_MED, fontStyle: 'bold', fontSize: 7 },
+  margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, bottom: FOOTER_RESERVED },
+  tableWidth: USABLE_WIDTH,
+  columnStyles: {
+    0: { cellWidth: DETAIL_COL_WIDTHS.date },
+    1: { cellWidth: DETAIL_COL_WIDTHS.description, overflow: 'linebreak' },
+    2: { cellWidth: DETAIL_COL_WIDTHS.reference },
+    3: { cellWidth: DETAIL_COL_WIDTHS.debit,  halign: 'right' },
+    4: { cellWidth: DETAIL_COL_WIDTHS.credit, halign: 'right' },
+  },
+};
+
+function renderDetailAccount(doc, y, account) {
+  const all = safeArray(account?.transactions);
+  // Sort by date ascending — already done by caller but defensive.
+  const sorted = [...all].sort((a, b) => (a?.date || '').localeCompare(b?.date || ''));
+
+  // Reserve enough space for header row + table head + 1 body row + subtotal.
+  y = ensureSpace(doc, y, 24);
+
+  // Account heading line: name + stated balance.
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...TEXT_DARK);
+  doc.text(safeText(account?.name, '—'), PAGE_MARGIN, y);
+
+  const statedLabel = account?.statedSide
+    ? `${formatCurrency(Math.abs(Number(account.stated) || 0))} ${account.statedSide}`
+    : formatCurrency(account?.stated);
+  doc.text(safeText(statedLabel), PAGE_WIDTH - PAGE_MARGIN, y, { align: 'right' });
+  y += 3;
+
+  // Compute the full-population subtotal BEFORE truncating for display.
+  let sumDebits = 0;
+  let sumCredits = 0;
+  for (const t of sorted) {
+    sumDebits  += debitOf(t);
+    sumCredits += creditOf(t);
+  }
+  const net = sumDebits - sumCredits;
+  // expectedNet is the signed amount (DR positive, CR negative) the caller
+  // computed from the summary aggregator. The detail's net must equal it.
+  const expected = Number(account?.expectedNet ?? (
+    account?.statedSide === 'CR'
+      ? -Math.abs(Number(account?.stated) || 0)
+      : Math.abs(Number(account?.stated) || 0)
+  ));
+  const diff    = Math.round((net - expected) * 100) / 100;
+  const matches = Math.abs(diff) < 0.005;
+
+  const visible    = sorted.slice(0, DETAIL_ROW_CAP);
+  const omittedCount = Math.max(0, sorted.length - visible.length);
+
+  const body = visible.map((t) => {
+    const d = debitOf(t);
+    const c = creditOf(t);
+    return [
+      safeText(t?.date, '—'),
+      safeText(t?.description, '—'),
+      safeText(t?.reference, '—'),
+      safeText(d > 0 ? formatCurrency(d) : ''),
+      safeText(c > 0 ? formatCurrency(c) : ''),
+    ];
+  });
+  if (omittedCount > 0) {
+    body.push([
+      { content: safeText(`+${omittedCount} more rows (not shown) — subtotal below still includes them`),
+        colSpan: 5,
+        styles: { fontStyle: 'italic', textColor: TEXT_MED } },
+    ]);
+  }
+
+  const matchBadge = matches
+    ? 'Subtotal matches summary  ✓'
+    : `Subtotal does NOT match summary — off by ${formatCurrency(Math.abs(diff))}  ✗`;
+  body.push([
+    { content: safeText(matchBadge), colSpan: 3, styles: { fontStyle: 'bold' } },
+    { content: safeText(formatCurrency(sumDebits)),  styles: { fontStyle: 'bold' } },
+    { content: safeText(formatCurrency(sumCredits)), styles: { fontStyle: 'bold' } },
+  ]);
+
+  if (sorted.length === 0) {
+    // No transactions for this account in the period — render an empty
+    // table with a single note so the report stays consistent.
+    body.length = 0;
+    body.push([
+      { content: safeText('No transactions in period'), colSpan: 5, styles: { fontStyle: 'italic', textColor: TEXT_MED } },
+    ]);
+    body.push([
+      { content: safeText(matchBadge), colSpan: 3, styles: { fontStyle: 'bold' } },
+      { content: safeText(formatCurrency(0)), styles: { fontStyle: 'bold' } },
+      { content: safeText(formatCurrency(0)), styles: { fontStyle: 'bold' } },
+    ]);
+  }
+
+  doc.autoTable({
+    ...DETAIL_TABLE_BASE,
+    startY: y,
+    head: [['Date', 'Description', 'Reference', 'Debit', 'Credit']],
+    body,
+  });
+
+  return (doc.lastAutoTable?.finalY ?? y) + 5;
+}
+
+function renderSupportingDetail(doc, y, sections) {
+  if (!Array.isArray(sections) || !sections.length) return y;
+
+  // Section title for the whole appendix.
+  y = ensureSpace(doc, y, 14);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('Supporting Detail'), PAGE_MARGIN, y);
+  y += 4;
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText('Every balance above is backed by the transactions listed below, grouped by account. Each account\'s subtotal must match its summary balance.'), PAGE_MARGIN, y);
+  y += 6;
+
+  for (const section of sections) {
+    if (!section?.accounts?.length) continue;
+
+    y = ensureSpace(doc, y, 12);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...BRAND_DARK);
+    doc.text(safeText(section.title), PAGE_MARGIN, y);
+    y += 5;
+
+    for (const account of section.accounts) {
+      y = renderDetailAccount(doc, y, account);
+    }
+    y += 3;
+  }
+
+  return y;
+}
+
+// Builds the supporting-detail "accounts" list for one section by joining
+// each aggregator row with its raw transactions (filtered to that category).
+// statedSide is 'DR' or 'CR'; the expectedNet is the signed net (DR positive,
+// CR negative) that the subtotal must match.
+function buildDetailAccounts(rows, txns, statedSide) {
+  return safeArray(rows).map((r) => {
+    const name = r?.account ?? r?.name ?? '';
+    const stated = Math.abs(Number(r?.amount ?? r?.balance ?? 0));
+    const expectedNet = statedSide === 'CR' ? -stated : stated;
+    const transactions = (txns || [])
+      .filter((t) => t?.category === name)
+      .sort((a, b) => (a?.date || '').localeCompare(b?.date || ''));
+    return { name, stated, statedSide, expectedNet, transactions };
+  });
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
-export function generatePnLPdf(input, periodArg) {
+// Common pattern for the BS/P&L/IS extension: when opts.supportingDetail is
+// true, callers MUST pass the raw transactions and categories so the detail
+// can be joined. Pre-aggregated callers (Accountant page snapshot replay)
+// don't get detail because they don't have the underlying txns.
+function detailDataAvailable(input) {
+  return Array.isArray(input?.transactions) && Array.isArray(input?.categories);
+}
+
+export function generatePnLPdf(input, periodArg, opts = {}) {
   const data = normalizePnLData(input, periodArg);
   const doc  = new jsPDF();
   let y = addHeader(doc, 'Profit & Loss Statement', data.period);
@@ -311,13 +573,21 @@ export function generatePnLPdf(input, periodArg) {
   y = renderSection(doc, y, 'Expenses', data.expenses, data.totalExpenses, 'Total Expenses');
 
   const netProfit = data.totalRevenue - data.totalExpenses;
-  renderSummaryBand(doc, y, 'Net Profit', netProfit, netProfit >= 0);
+  let cursor = renderSummaryBand(doc, y, 'Net Profit', netProfit, netProfit >= 0);
+
+  if (opts?.supportingDetail && detailDataAvailable(input)) {
+    const sections = [
+      { title: 'Revenue',  accounts: buildDetailAccounts(data.revenue,  input.transactions, 'CR') },
+      { title: 'Expenses', accounts: buildDetailAccounts(data.expenses, input.transactions, 'DR') },
+    ];
+    renderSupportingDetail(doc, cursor + 2, sections);
+  }
 
   addFootersToAllPages(doc);
   return doc;
 }
 
-export function generateBalanceSheetPdf(input, periodArg) {
+export function generateBalanceSheetPdf(input, periodArg, opts = {}) {
   const data = normalizeBSData(input, periodArg);
   const doc  = new jsPDF();
   let y = addHeader(doc, 'Balance Sheet', data.period);
@@ -326,12 +596,112 @@ export function generateBalanceSheetPdf(input, periodArg) {
   y = renderSection(doc, y, 'Liabilities', data.liabilities, data.totalLiabilities, 'Total Liabilities');
   y = renderSection(doc, y, 'Equity',      data.equity,      data.totalEquity,      'Total Equity');
 
+  if (opts?.supportingDetail && detailDataAvailable(input)) {
+    const sections = [
+      // Assets are debit-natural; liabilities + equity are credit-natural.
+      // The aggregator stores liab/equity with a NEGATIVE amount (debit-credit
+      // is negative for credit-natural accounts) so buildDetailAccounts takes
+      // Math.abs() of stated. expectedNet uses the natural side.
+      { title: 'Assets',      accounts: buildDetailAccounts(data.assets,      input.transactions, 'DR') },
+      { title: 'Liabilities', accounts: buildDetailAccounts(data.liabilities, input.transactions, 'CR') },
+      { title: 'Equity',      accounts: buildDetailAccounts(data.equity,      input.transactions, 'CR') },
+    ];
+    renderSupportingDetail(doc, y, sections);
+  }
+
   addFootersToAllPages(doc);
   return doc;
 }
 
 // Income Statement intentionally reuses the P&L layout — same content,
 // different filename. Kept as its own export so future divergence is easy.
-export function generateIncomeStatementPdf(input, periodArg) {
-  return generatePnLPdf(input, periodArg);
+export function generateIncomeStatementPdf(input, periodArg, opts = {}) {
+  return generatePnLPdf(input, periodArg, opts);
+}
+
+// Trial Balance — its own generator. Always raw input + categories.
+//   opts.includeUnposted (default true) is forwarded to aggregateTrialBalance.
+//   opts.supportingDetail (default false) renders the per-account txn appendix.
+export function generateTrialBalancePdf(input, periodArg, opts = {}) {
+  const includeUnposted = opts?.includeUnposted !== false;
+  const supportingDetail = !!opts?.supportingDetail;
+  const period = safeText(input?.period ?? periodArg);
+
+  const txns = safeArray(input?.transactions);
+  const cats = safeArray(input?.categories);
+  const tb   = aggregateTrialBalance(txns, cats, { includeUnposted });
+
+  const doc = new jsPDF();
+  let y = addHeader(doc, 'Trial Balance', period);
+
+  // Group by type, then render each section.
+  const order = trialBalanceTypeOrder();
+  const buckets = new Map();
+  for (const row of tb.accounts) {
+    const key = row.type in order ? row.type : 'other';
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(row);
+  }
+  const sectionKeys = ['asset', 'liability', 'equity', 'revenue', 'expense']
+    .filter((k) => buckets.has(k))
+    .concat([...buckets.keys()].filter((k) => !['asset','liability','equity','revenue','expense'].includes(k)));
+
+  for (const k of sectionKeys) {
+    y = renderTrialBalanceSection(doc, y, trialBalanceTypeLabel(k), buckets.get(k));
+  }
+
+  // Grand total band. If raw debits ≠ raw credits, render a separate
+  // imbalance band underneath in red so the user sees it immediately.
+  y = ensureSpace(doc, y, SUMMARY_BAND_H + 4);
+  doc.setFillColor(...LIGHT_BG);
+  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, SUMMARY_BAND_H, 3, 3, 'F');
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('Grand Total'), PAGE_MARGIN + 6, y + 8);
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  // Right-side: print "Debits  $X    Credits  $Y".
+  const totalsLine = `Debits ${formatCurrency(tb.totalDebits)}    Credits ${formatCurrency(tb.totalCredits)}`;
+  doc.text(safeText(totalsLine), PAGE_WIDTH - PAGE_MARGIN - 6, y + 8, { align: 'right' });
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  const balLine = `Balance: ${formatCurrency(tb.totalDebitBalance)} DR · ${formatCurrency(tb.totalCreditBalance)} CR`;
+  doc.text(safeText(balLine), PAGE_WIDTH - PAGE_MARGIN - 6, y + 14, { align: 'right' });
+  y += SUMMARY_BAND_H + 4;
+
+  const balanced = Math.abs(tb.imbalance) < 0.005;
+  if (!balanced) {
+    y = ensureSpace(doc, y, 16);
+    doc.setFillColor(255, 230, 230);
+    doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 14, 3, 3, 'F');
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(224, 49, 49);
+    const off = Math.abs(tb.imbalance);
+    doc.text(safeText(`OUT OF BALANCE by ${formatCurrency(off)}  (bank-imported txns without an explicit cash leg cause this — book the missing entries via Journal)`), PAGE_MARGIN + 4, y + 9);
+    y += 18;
+  }
+
+  if (supportingDetail) {
+    const sections = sectionKeys.map((k) => ({
+      title: trialBalanceTypeLabel(k),
+      accounts: buckets.get(k).map((r) => {
+        const statedSide = r.debitBalance > 0 ? 'DR' : (r.creditBalance > 0 ? 'CR' : 'DR');
+        const stated = r.debitBalance > 0 ? r.debitBalance : r.creditBalance;
+        const expectedNet = (r.totalDebits - r.totalCredits);
+        const transactions = txns
+          .filter((t) => t?.category === r.name)
+          .filter((t) => includeUnposted || t?.posted)
+          .sort((a, b) => (a?.date || '').localeCompare(b?.date || ''));
+        return { name: r.name, stated, statedSide, expectedNet, transactions };
+      }),
+    }));
+    renderSupportingDetail(doc, y, sections);
+  }
+
+  addFootersToAllPages(doc);
+  return doc;
 }

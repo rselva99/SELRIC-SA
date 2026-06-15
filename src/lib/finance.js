@@ -117,6 +117,116 @@ export function aggregateForPnL(transactions, categories) {
   };
 }
 
+// Trial Balance: per-category totals + DR/CR balance, ordered by category type.
+//
+// Unlike aggregateForPnL / aggregateForBS — which classify and sum at the TYPE
+// level — this groups by category NAME so every account gets its own row with
+// its own debit total, credit total, and DR-or-CR ending balance.
+//
+//   transactions  — txns already filtered by date range and voided=false at
+//                   the call site. Posted filtering happens here via opts.
+//   categories    — the chart of accounts; provides the per-name type.
+//   opts.includeUnposted (default true)
+//                 — when false, unposted txns are dropped (defensible year-
+//                   end TB). When true, the basis matches the existing P&L
+//                   so the TB ties to those statements.
+//
+// Returns:
+//   {
+//     accounts: [{
+//       name, type,                       // 'asset' | 'liability' | 'equity' | ...
+//       totalDebits, totalCredits,        // raw sums on each side
+//       debitBalance, creditBalance,      // exactly one is > 0 per row
+//     }],
+//     totalDebits, totalCredits,          // SUM of all txn debits / credits
+//     totalDebitBalance, totalCreditBalance, // SUM of ending balances per side
+//     imbalance                           // totalDebitBalance - totalCreditBalance
+//   }
+//
+// Zero-balance accounts (totalDebits === 0 && totalCredits === 0) are skipped.
+//
+// Note on imbalance: this codebase mixes single-entry bank-imported rows with
+// double-entry journal-mirrored rows, so total raw debits won't always equal
+// total raw credits — the implicit "Cash" leg of statement-imported rows is
+// not booked. The TB renderer surfaces any imbalance rather than hiding it.
+const TB_TYPE_ORDER = { asset: 1, liability: 2, equity: 3, revenue: 4, expense: 5 };
+const TB_TYPE_LABEL = {
+  asset: 'Assets', liability: 'Liabilities', equity: 'Equity',
+  revenue: 'Revenue', expense: 'Expenses',
+};
+
+export function trialBalanceTypeOrder() { return { ...TB_TYPE_ORDER }; }
+export function trialBalanceTypeLabel(type) { return TB_TYPE_LABEL[type] || (type || 'Other'); }
+
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
+export function aggregateTrialBalance(transactions, categories, opts = {}) {
+  const { includeUnposted = true } = opts;
+  const typeOf = buildCategoryTypeMap(categories);
+
+  const byCategory = new Map();
+  for (const t of transactions || []) {
+    if (!t?.category) continue;
+    if (!includeUnposted && !t.posted) continue;
+    const b = byCategory.get(t.category) || { debits: 0, credits: 0 };
+    b.debits  += debitOf(t);
+    b.credits += creditOf(t);
+    byCategory.set(t.category, b);
+  }
+
+  const accounts = [];
+  let totalDebits = 0;
+  let totalCredits = 0;
+  let totalDebitBalance = 0;
+  let totalCreditBalance = 0;
+
+  for (const [name, b] of byCategory.entries()) {
+    if (b.debits === 0 && b.credits === 0) continue;
+    const type = typeOf.get(name) || 'other';
+    const net = b.debits - b.credits; // positive = debit-side ending
+    const isDebitNatural = type === 'asset' || type === 'expense';
+    let debitBalance = 0;
+    let creditBalance = 0;
+    if (isDebitNatural) {
+      if (net >= 0) debitBalance = net;
+      else          creditBalance = -net;
+    } else {
+      // credit-natural (liability, equity, revenue, and 'other' as fallback)
+      if (net <= 0) creditBalance = -net;
+      else          debitBalance = net;
+    }
+    const row = {
+      name,
+      type,
+      totalDebits:   round2(b.debits),
+      totalCredits:  round2(b.credits),
+      debitBalance:  round2(debitBalance),
+      creditBalance: round2(creditBalance),
+    };
+    accounts.push(row);
+    totalDebits += row.totalDebits;
+    totalCredits += row.totalCredits;
+    totalDebitBalance += row.debitBalance;
+    totalCreditBalance += row.creditBalance;
+  }
+
+  accounts.sort((a, b) => {
+    const ao = TB_TYPE_ORDER[a.type] || 99;
+    const bo = TB_TYPE_ORDER[b.type] || 99;
+    if (ao !== bo) return ao - bo;
+    return a.name.localeCompare(b.name);
+  });
+
+  return {
+    accounts,
+    totalDebits:        round2(totalDebits),
+    totalCredits:       round2(totalCredits),
+    totalDebitBalance:  round2(totalDebitBalance),
+    totalCreditBalance: round2(totalCreditBalance),
+    imbalance:          round2(totalDebitBalance - totalCreditBalance),
+  };
+}
+
 // Balance sheet: groups balances by category, splits into asset/liability/equity.
 // Sign convention here is debit-natural — debits add to the per-category bucket,
 // credits subtract — so asset rows end up positive and liability/equity rows

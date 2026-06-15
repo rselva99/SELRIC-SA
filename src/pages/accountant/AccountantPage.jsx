@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency } from '../../lib/utils';
-import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
+import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf, generateTrialBalancePdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
 import { closePeriod } from '../../lib/periodClose';
 import { computeSnapshotDrift } from '../../lib/snapshotDrift';
@@ -106,6 +106,16 @@ export default function AccountantPage() {
   const [snapshotDrift, setSnapshotDrift]       = useState(null); // computeSnapshotDrift result for selectedPeriod
   const [snapshotDriftState, setSnapshotDriftState] = useState('idle');
   const [importOpen, setImportOpen]             = useState(false);
+
+  // ── Year-End Reports card state ──
+  const [yerScope, setYerScope]                 = useState('year');           // 'year' | 'period'
+  const [yerYear, setYerYear]                   = useState(today.getFullYear());
+  const [yerPeriod, setYerPeriod]               = useState(
+    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  );
+  const [yerIncludeDetail, setYerIncludeDetail]     = useState(true);
+  const [yerIncludeUnposted, setYerIncludeUnposted] = useState(true);
+  const [yerGenerating, setYerGenerating]           = useState('');           // '' | 'trial' | 'bs' | 'is'
 
   const periodsOfYear = useMemo(
     () => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`),
@@ -615,6 +625,60 @@ export default function AccountantPage() {
     }
   }
 
+  // ── Year-End Reports: fetch the right txn range and hand off to the
+  //    correct generator. Filename and PDF header both follow the same
+  //    "no SelRic, just the report name" convention we use elsewhere.
+  async function handleYearEndDownload(reportType) {
+    setYerGenerating(reportType);
+    try {
+      let start, end, periodLabel, filenameSlug;
+      if (yerScope === 'year') {
+        start        = `${yerYear}-01-01`;
+        end          = `${yerYear}-12-31`;
+        periodLabel  = String(yerYear);
+        filenameSlug = String(yerYear);
+      } else {
+        const [yr, mo] = yerPeriod.split('-').map(Number);
+        const lastDay  = new Date(yr, mo, 0).getDate();
+        start        = `${yerPeriod}-01`;
+        end          = `${yerPeriod}-${String(lastDay).padStart(2, '0')}`;
+        const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        periodLabel  = `${monthNames[mo - 1]} ${yr}`;
+        filenameSlug = `${monthNames[mo - 1]}_${yr}`;
+      }
+
+      const { data: txns, error } = await supabase
+        .from('transactions')
+        .select('id, date, description, category, amount, type, posted, reference')
+        .gte('date', start).lte('date', end)
+        .eq('voided', false);
+      if (error) throw error;
+
+      const input = { transactions: txns || [], categories, period: periodLabel };
+      const opts  = { supportingDetail: yerIncludeDetail };
+      if (reportType === 'trial') opts.includeUnposted = yerIncludeUnposted;
+
+      let pdf, filename;
+      if (reportType === 'trial') {
+        pdf      = generateTrialBalancePdf(input, periodLabel, opts);
+        filename = `Trial_Balance_${filenameSlug}.pdf`;
+      } else if (reportType === 'bs') {
+        pdf      = generateBalanceSheetPdf(input, periodLabel, opts);
+        filename = `Balance_Sheet_${filenameSlug}.pdf`;
+      } else {
+        pdf      = generateIncomeStatementPdf(input, periodLabel, opts);
+        filename = `Income_Statement_${filenameSlug}.pdf`;
+      }
+      pdf.save(filename);
+      toast.success(`Downloaded ${filename}`);
+    } catch (err) {
+      console.error('Year-end report failed:', err);
+      toast.error(err.message || 'Failed to generate report');
+    } finally {
+      setYerGenerating('');
+    }
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
   const selectedStatus = periodStatuses[selectedPeriod] || 'open';
   const selectedStyle  = STATUS_STYLES[selectedStatus];
@@ -922,6 +986,116 @@ export default function AccountantPage() {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* ── Year-End Reports ─────────────────────────────────────────── */}
+      <div className="card overflow-hidden">
+        <div className="px-5 py-4 border-b border-surface-100 flex items-center justify-between">
+          <h2 className="section-title flex items-center gap-2">
+            <FileBarChart size={18} className="text-brand-600" />
+            Year-End Reports
+          </h2>
+          <span className="text-[10px] uppercase tracking-wider text-surface-400">Admin only</span>
+        </div>
+        <div className="p-5 space-y-4">
+
+          {/* Scope toggle */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Scope</span>
+            <div className="inline-flex bg-surface-100 rounded-lg p-1">
+              {[
+                { id: 'year',   label: 'Full Year' },
+                { id: 'period', label: 'Single Period' },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setYerScope(t.id)}
+                  className={`px-3 py-1.5 text-xs rounded-md font-medium transition ${yerScope === t.id ? 'bg-white shadow-sm text-surface-900' : 'text-surface-500 hover:text-surface-700'}`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 ml-2">
+              <label className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Year</label>
+              <select
+                value={yerYear}
+                onChange={(e) => setYerYear(parseInt(e.target.value))}
+                className="input-field w-auto text-xs py-1.5"
+              >
+                {[yerYear - 2, yerYear - 1, yerYear, yerYear + 1, yerYear + 2]
+                  .filter((v, i, a) => a.indexOf(v) === i)
+                  .map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+
+            {yerScope === 'period' && (
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Period</label>
+                <input
+                  type="month"
+                  value={yerPeriod}
+                  onChange={(e) => setYerPeriod(e.target.value)}
+                  className="input-field w-auto text-xs py-1.5"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Options */}
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-surface-700">
+              <input
+                type="checkbox"
+                checked={yerIncludeDetail}
+                onChange={(e) => setYerIncludeDetail(e.target.checked)}
+              />
+              Include supporting detail
+            </label>
+            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-surface-700">
+              <input
+                type="checkbox"
+                checked={yerIncludeUnposted}
+                onChange={(e) => setYerIncludeUnposted(e.target.checked)}
+              />
+              Include unposted transactions <span className="text-surface-400">(Trial Balance only)</span>
+            </label>
+          </div>
+
+          {/* Buttons */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+            <button
+              onClick={() => handleYearEndDownload('trial')}
+              disabled={yerGenerating !== ''}
+              className="btn-primary flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+            >
+              {yerGenerating === 'trial' ? <Spinner size="sm" className="text-white" /> : <Download size={14} />}
+              Trial Balance
+            </button>
+            <button
+              onClick={() => handleYearEndDownload('bs')}
+              disabled={yerGenerating !== ''}
+              className="btn-primary flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+            >
+              {yerGenerating === 'bs' ? <Spinner size="sm" className="text-white" /> : <Download size={14} />}
+              Balance Sheet
+            </button>
+            <button
+              onClick={() => handleYearEndDownload('is')}
+              disabled={yerGenerating !== ''}
+              className="btn-primary flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+            >
+              {yerGenerating === 'is' ? <Spinner size="sm" className="text-white" /> : <Download size={14} />}
+              Income Statement
+            </button>
+          </div>
+
+          <p className="text-[11px] text-surface-400">
+            Basis: <span className="font-mono">voided=false</span> with no posted filter (ties to existing P&L / Balance Sheet). Untick "Include unposted" for a stricter posted-only Trial Balance. Supporting detail caps each account at 500 rows; subtotals always reflect the full population.
+          </p>
         </div>
       </div>
 
