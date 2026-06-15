@@ -10,6 +10,7 @@ import {
   checkPeriodStatus,
   reopenPeriod,
 } from '../lib/periodLock';
+import { closePeriod } from '../lib/periodClose';
 import {
   RECLASS_SPLIT,
   resolveReclassCategoryNames,
@@ -23,7 +24,8 @@ import Spinner from './ui/Spinner';
 import { formatCurrency, getMonthLabel } from '../lib/utils';
 import toast from 'react-hot-toast';
 import {
-  Repeat, Loader2, AlertTriangle, Lock, Pencil, CheckCircle2, XCircle, Info,
+  Repeat, Loader2, AlertTriangle, Lock, Unlock, Pencil,
+  CheckCircle2, XCircle, Info,
 } from 'lucide-react';
 
 const MIN_YEAR  = 2020;
@@ -79,6 +81,38 @@ function CategoryChip({ label, value, allOptions, onChange }) {
   );
 }
 
+// Render the per-period progress badge. The badge picks colors from the
+// row's final state so a glance at the results panel tells the user which
+// periods succeeded, which failed mid-run, and which ended re-closed.
+function ResultRow({ result }) {
+  const { label, wasClosed, steps, failure, reference } = result;
+  const completed = steps.includes('re-closed') || (!wasClosed && steps.includes('posted'));
+  const tone = failure ? 'bg-red-50 border-red-200 text-red-800'
+             : completed ? 'bg-green-50 border-green-200 text-green-800'
+             : 'bg-amber-50 border-amber-200 text-amber-800';
+  const icon = failure ? <XCircle size={13} />
+             : completed ? <CheckCircle2 size={13} />
+             : <Loader2 size={13} className="animate-spin" />;
+  const stepText = (() => {
+    if (steps.length === 0 && !failure) return 'queued…';
+    const parts = [];
+    if (wasClosed && steps.includes('reopened'))   parts.push('reopened');
+    if (steps.includes('posted'))                   parts.push(`posted${reference ? ` (${reference})` : ''}`);
+    if (wasClosed && steps.includes('re-closed'))   parts.push('re-closed');
+    return parts.join(' · ') || (failure ? 'failed' : 'pending');
+  })();
+  return (
+    <div className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${tone}`}>
+      <span className="mt-0.5 flex-shrink-0">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="font-mono font-semibold">{label}</div>
+        <div className="opacity-90">{stepText}</div>
+        {failure && <div className="mt-0.5 text-[11px]">{failure}</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function AmazonReclassModal({ open, onClose, onPosted }) {
   const { user } = useAuth();
   const { categories } = useData();
@@ -102,6 +136,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [posting, setPosting]         = useState(false);
+  const [results, setResults]         = useState([]); // per-period progress
 
   const expenseCategories = useMemo(
     () => (categories || [])
@@ -129,6 +164,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
   useEffect(() => {
     setPreviews([]);
     setPeriodStatus({});
+    setResults([]);
   }, [scope, month, year]);
 
   // ── Reset everything when the modal closes ──────────────────────────────
@@ -140,6 +176,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
       setLoading(false);
       setStatusChecking(false);
       setPosting(false);
+      setResults([]);
     }
   }, [open]);
 
@@ -154,8 +191,12 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
     () => postableRows.reduce((s, r) => s + r.totalCredits, 0),
     [postableRows]
   );
-  const closedPeriods = useMemo(
-    () => postableRows.filter(r => periodStatus[r.period] === 'closed').map(r => r.period),
+  const closedRows = useMemo(
+    () => postableRows.filter(r => periodStatus[r.period] === 'closed'),
+    [postableRows, periodStatus]
+  );
+  const openRows = useMemo(
+    () => postableRows.filter(r => periodStatus[r.period] !== 'closed'),
     [postableRows, periodStatus]
   );
   const totalUnposted = useMemo(
@@ -163,11 +204,10 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
     [postableRows]
   );
 
-  // Hard guard for the primary button: every category must resolve, at
-  // least one row must be postable, and every row's debits must equal
-  // its credit. We also re-check the math defensively here so a future
-  // refactor of buildReclassLegs can never let an imbalanced row slip
-  // through.
+  // Hard guards: every category must resolve, at least one row must be
+  // postable, and every row must be cent-balanced. We re-check the math
+  // here defensively so a future refactor of buildReclassLegs cannot
+  // let an imbalanced row through.
   const allBalanced = postableRows.every(r => Math.abs(r.totalDebits - r.totalCredits) < 0.005);
   const canPost = allNamesResolved
     && postableRows.length > 0
@@ -189,6 +229,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
     setLoading(true);
     setPreviews([]);
     setPeriodStatus({});
+    setResults([]);
     try {
       let rows;
       if (scope === 'month') {
@@ -282,47 +323,112 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
     return reference;
   }
 
+  // The new flow: each period is handled INDEPENDENTLY.
+  //   • If a period was CLOSED at preview time → reopen, post, re-close
+  //     (re-close uses shared closePeriod, which regenerates the snapshot
+  //     against post-reclass live data).
+  //   • If a period was OPEN → just post, leave it open.
+  //   • try/finally guarantees a previously-closed period ends closed again
+  //     even if the post step throws.
+  // One period's outcome never short-circuits the rest of the batch.
   async function handleConfirmPost() {
     if (!canPost) return;
     setPosting(true);
+
+    // Build a fresh results array we'll mutate-and-replace as we progress.
+    const next = postableRows.map(r => ({
+      period:    r.period,
+      label:     getMonthLabel(monthBounds(r.period).start),
+      wasClosed: periodStatus[r.period] === 'closed',
+      steps:     [],          // 'reopened' | 'posted' | 're-closed'
+      reference: null,
+      failure:   null,
+    }));
+    setResults(next);
+    // Replace state with a shallow clone so React picks up step mutations.
+    const flush = () => setResults(next.map(r => ({ ...r, steps: [...r.steps] })));
+
     try {
-      // 1. Reopen every closed period the user explicitly approved.
-      for (const p of closedPeriods) {
-        await reopenPeriod(p, user?.id);
-      }
-      // 2. Post each row. If a row hits an unexpected period-lock (e.g.
-      //    a different period closed mid-batch), surface the real period
-      //    so the user can act on it.
-      const posted = [];
-      try {
-        for (const row of postableRows) {
-          const ref = await postOneRow(row);
-          posted.push(ref);
+      for (let i = 0; i < postableRows.length; i++) {
+        const row = postableRows[i];
+        const r   = next[i];
+        const wasClosed = r.wasClosed;
+        let reopened = false;
+
+        try {
+          if (wasClosed) {
+            try {
+              await reopenPeriod(row.period, user?.id);
+              r.steps.push('reopened');
+              reopened = true;
+              flush();
+            } catch (reopenErr) {
+              r.failure = `reopen failed: ${reopenErr?.message || String(reopenErr)}`;
+              flush();
+              continue; // nothing to post into; skip to next period
+            }
+          }
+
+          // Post the JE + lines + mirrored transactions.
+          try {
+            const ref = await postOneRow(row);
+            r.steps.push('posted');
+            r.reference = ref;
+            flush();
+          } catch (postErr) {
+            if (isPeriodLockedError(postErr)) {
+              const p = periodFromLockedError(postErr) || row.period;
+              r.failure = `post hit closed period ${p}`;
+            } else {
+              r.failure = `post failed: ${postErr?.message || String(postErr)}`;
+            }
+            flush();
+            // Fall through to finally so the period gets re-closed if we
+            // reopened it.
+          }
+        } finally {
+          // Only re-close periods we actually reopened. If reopen failed
+          // (or the period was open to begin with), don't touch period_close
+          // here — open periods MUST stay open per spec.
+          if (wasClosed && reopened) {
+            try {
+              await closePeriod({
+                period: row.period,
+                userId: user?.id,
+                categories,
+                description: r.reference
+                  ? `Re-closed ${row.period} after Amazon Reclass post (${r.reference})`
+                  : `Re-closed ${row.period} after Amazon Reclass post attempt failed — state restored`,
+              });
+              r.steps.push('re-closed');
+              flush();
+            } catch (closeErr) {
+              const msg = `re-close failed: ${closeErr?.message || String(closeErr)}`;
+              r.failure = r.failure ? `${r.failure}; ${msg}` : msg;
+              flush();
+            }
+          }
         }
-      } catch (err) {
-        if (isPeriodLockedError(err)) {
-          const p = periodFromLockedError(err) || '?';
-          throw new PeriodClosedError(p, err);
-        }
-        throw err;
       }
-      toast.success(`Posted ${posted.length} reclass entr${posted.length === 1 ? 'y' : 'ies'} (${posted.join(', ')})`);
-      setConfirmOpen(false);
-      onPosted?.();
-      onClose?.();
-    } catch (err) {
-      console.error('Amazon reclass post failed:', err);
-      if (err instanceof PeriodClosedError) {
-        toast.error(`Posting hit a closed period: ${err.period}. Reopen it and re-run the preview.`);
+
+      const failed = next.filter(r => r.failure);
+      const ok     = next.filter(r => !r.failure);
+      if (failed.length === 0) {
+        toast.success(`Posted ${ok.length} reclass entr${ok.length === 1 ? 'y' : 'ies'}`);
+      } else if (ok.length === 0) {
+        toast.error(`All ${failed.length} entr${failed.length === 1 ? 'y' : 'ies'} failed — see results`);
       } else {
-        toast.error(err?.message || 'Failed to post reclass');
+        toast(`${ok.length} succeeded, ${failed.length} failed — see results`, { icon: '⚠️' });
       }
+      // Notify the parent regardless of partial success so journal history
+      // refreshes for whatever did post.
+      onPosted?.();
+      setConfirmOpen(false);
     } finally {
       setPosting(false);
     }
   }
 
-  // ── Row renderers ───────────────────────────────────────────────────────
   function renderPreviewRow(row) {
     if (row.reason === 'zero') {
       return (
@@ -358,6 +464,11 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
               <Lock size={10} /> closed
             </div>
           )}
+          {!closed && periodStatus[row.period] && (
+            <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-surface-500">
+              <Unlock size={10} /> open
+            </div>
+          )}
           {row.unpostedCount > 0 && (
             <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-amber-700">
               <AlertTriangle size={10} /> {row.unpostedCount} unposted
@@ -388,6 +499,13 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
+  // Button label adapts to what's in the batch.
+  const primaryLabel = (() => {
+    if (postableRows.length === 0) return 'Create Journal Entries';
+    if (closedRows.length === 0)   return `Post ${postableRows.length} Entr${postableRows.length === 1 ? 'y' : 'ies'}`;
+    return `Reopen, Post & Re-close (${postableRows.length})`;
+  })();
+
   return (
     <>
       <Modal
@@ -535,18 +653,35 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
                 </div>
               )}
 
-              {closedPeriods.length > 0 && !statusChecking && (
+              {closedRows.length > 0 && !statusChecking && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
                   <Lock size={13} className="text-amber-700 mt-0.5 flex-shrink-0" />
                   <div>
                     <div className="font-semibold">
-                      {closedPeriods.length} closed period{closedPeriods.length === 1 ? '' : 's'} in this batch:
+                      {closedRows.length} closed period{closedRows.length === 1 ? '' : 's'} in this batch:
                     </div>
                     <div className="font-mono text-amber-800 mt-0.5">
-                      {closedPeriods.map(p => getMonthLabel(monthBounds(p).start)).join(', ')}
+                      {closedRows.map(r => getMonthLabel(monthBounds(r.period).start)).join(', ')}
                     </div>
                     <div className="mt-1 text-amber-800">
-                      You will be asked to confirm reopening before any entry is posted.
+                      Each will be reopened, posted into, and re-closed automatically. The re-close regenerates the close snapshot so it reflects the post-reclass numbers.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {openRows.length > 0 && !statusChecking && (
+                <div className="rounded-lg border border-surface-200 bg-surface-50 p-3 text-xs text-surface-700 flex items-start gap-2">
+                  <Unlock size={13} className="text-surface-500 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <div className="font-semibold">
+                      {openRows.length} open period{openRows.length === 1 ? '' : 's'} in this batch:
+                    </div>
+                    <div className="font-mono text-surface-600 mt-0.5">
+                      {openRows.map(r => getMonthLabel(monthBounds(r.period).start)).join(', ')}
+                    </div>
+                    <div className="mt-1 text-surface-600">
+                      Each will be posted into and left OPEN — open periods are being actively worked on and the tool will not close them.
                     </div>
                   </div>
                 </div>
@@ -570,6 +705,16 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
             </section>
           )}
 
+          {/* Results — visible after a run, success or partial failure. */}
+          {results.length > 0 && (
+            <section className="space-y-2">
+              <div className="text-xs font-semibold text-surface-600 uppercase tracking-wider">Run results</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {results.map(r => <ResultRow key={r.period} result={r} />)}
+              </div>
+            </section>
+          )}
+
           {/* Actions */}
           <div className="flex justify-end gap-2 pt-2 border-t border-surface-100">
             <button type="button" onClick={onClose} disabled={posting} className="btn-ghost">Close</button>
@@ -580,8 +725,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
               className="btn-primary inline-flex items-center gap-2 disabled:opacity-50"
             >
               <Repeat size={14} />
-              Create Journal Entr{postableRows.length === 1 ? 'y' : 'ies'}
-              {postableRows.length > 0 ? ` (${postableRows.length})` : ''}
+              {primaryLabel}
             </button>
           </div>
         </div>
@@ -603,28 +747,47 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
             <div className="mt-2 max-h-48 overflow-y-auto text-xs">
               <table className="w-full">
                 <tbody>
-                  {postableRows.map(r => (
-                    <tr key={r.period} className="border-t border-surface-100">
-                      <td className="py-1 font-mono pr-3">{getMonthLabel(r.start)}</td>
-                      <td className="py-1 text-surface-500 pr-3">{r.date}</td>
-                      <td className="py-1 text-right font-mono">{formatCurrency(r.totalCredits)}</td>
-                    </tr>
-                  ))}
+                  {postableRows.map(r => {
+                    const closed = periodStatus[r.period] === 'closed';
+                    return (
+                      <tr key={r.period} className="border-t border-surface-100">
+                        <td className="py-1 font-mono pr-3">{getMonthLabel(monthBounds(r.period).start)}</td>
+                        <td className="py-1 text-surface-500 pr-3">{r.date}</td>
+                        <td className="py-1 pr-3 text-[11px]">
+                          {closed
+                            ? <span className="inline-flex items-center gap-1 text-amber-700"><Lock size={10} /> closed → reopen, post, re-close</span>
+                            : <span className="inline-flex items-center gap-1 text-surface-500"><Unlock size={10} /> open → post (stays open)</span>}
+                        </td>
+                        <td className="py-1 text-right font-mono">{formatCurrency(r.totalCredits)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {closedPeriods.length > 0 && (
+          {closedRows.length > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
               <div className="font-semibold inline-flex items-center gap-1">
-                <Lock size={12} /> These closed periods will be reopened to post:
+                <Lock size={12} /> These closed periods will be reopened, posted, and re-closed automatically:
               </div>
               <div className="font-mono text-amber-800">
-                {closedPeriods.map(p => getMonthLabel(monthBounds(p).start)).join(', ')}
+                {closedRows.map(r => getMonthLabel(monthBounds(r.period).start)).join(', ')}
               </div>
               <div className="text-amber-800">
-                Continuing will reopen each closed period above, then post the entries. The reopens are logged in the audit trail.
+                Each is wrapped in try/finally — if posting fails, the period is still re-closed so it returns to its original CLOSED state. The reopen, the post, and the re-close are each logged in the audit trail, and the re-close regenerates the period snapshot against post-reclass live data.
+              </div>
+            </div>
+          )}
+
+          {openRows.length > 0 && (
+            <div className="rounded-lg border border-surface-200 bg-surface-50 p-3 text-xs text-surface-700 space-y-1">
+              <div className="font-semibold inline-flex items-center gap-1">
+                <Unlock size={12} /> These open periods will be posted into and LEFT OPEN:
+              </div>
+              <div className="font-mono text-surface-600">
+                {openRows.map(r => getMonthLabel(monthBounds(r.period).start)).join(', ')}
               </div>
             </div>
           )}
@@ -640,9 +803,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
               className="btn-primary inline-flex items-center gap-2"
             >
               {posting && <Loader2 size={14} className="animate-spin" />}
-              {closedPeriods.length > 0
-                ? `Reopen ${closedPeriods.length} & Post ${postableRows.length}`
-                : `Post ${postableRows.length} Entr${postableRows.length === 1 ? 'y' : 'ies'}`}
+              {primaryLabel}
             </button>
           </div>
         </div>

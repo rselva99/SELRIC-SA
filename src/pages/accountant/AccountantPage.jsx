@@ -6,6 +6,7 @@ import { useData } from '../../contexts/DataContext';
 import { formatCurrency } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS } from '../../lib/finance';
+import { closePeriod } from '../../lib/periodClose';
 import { computeSnapshotDrift } from '../../lib/snapshotDrift';
 import Spinner from '../../components/ui/Spinner';
 import Modal from '../../components/ui/Modal';
@@ -490,27 +491,10 @@ export default function AccountantPage() {
             setActionBusy('');
             return;
           }
-          // Build a snapshot from live data BEFORE we flip status to
-          // 'closed' (the trigger would block live reads from the close
-          // SET clause once status is closed if we re-read here).
-          const snapshot = await buildPeriodSnapshot(selectedPeriod, categories);
-          const snapshotAt = new Date().toISOString();
-          const { error } = await supabase.from('period_close').upsert({
-            period:       selectedPeriod,
-            status:       'closed',
-            closed_by:    user?.id,
-            closed_at:    snapshotAt,
-            snapshot,
-            snapshot_at:  snapshotAt,
-          }, { onConflict: 'period' });
-          if (error) throw error;
-          await supabase.from('accountant_audit_log').insert({
-            action: 'close_period',
-            description: `Closed ${periodFullLabel(selectedPeriod)} (snapshot captured)`,
-            period: selectedPeriod,
-            performed_by: 'user',
-            approved_by: user?.id,
-          });
+          // Shared with CloseWizard's doFinalClose and AmazonReclassModal's
+          // re-close-after-post step. The snapshot is captured from live
+          // data BEFORE the row flips to closed.
+          await closePeriod({ period: selectedPeriod, userId: user?.id, categories });
           toast.success(`${periodFullLabel(selectedPeriod)} closed and snapshot captured`);
           break;
         }
@@ -957,24 +941,9 @@ export default function AccountantPage() {
   );
 }
 
-// Compute the P&L + Balance Sheet aggregations against current live data
-// and freeze them as a snapshot. Stored on period_close.snapshot at close
-// time so a closed period always reads from this, not from the live ledger.
-async function buildPeriodSnapshot(period, categories) {
-  const { start, end } = periodRange(period);
-  const { data: txns, error } = await supabase.from('transactions')
-    .select('id, date, description, category, amount, type')
-    .gte('date', start).lte('date', end)
-    .eq('posted', true).eq('voided', false);
-  if (error) throw error;
-  return {
-    period,
-    pl:            aggregateForPnL(txns || [], categories),
-    balance_sheet: aggregateForBS(txns || [], categories),
-    txn_count:     (txns || []).length,
-    captured_at:   new Date().toISOString(),
-  };
-}
+// buildPeriodSnapshot moved to src/lib/periodClose.js so the close, the
+// wizard's final close, and the Amazon Reclass re-close all share one
+// snapshot implementation.
 
 // Read-only modal that renders the frozen snapshot data with the close
 // timestamp. Used in place of the live "Regenerate" button on closed

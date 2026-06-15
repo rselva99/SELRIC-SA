@@ -6,6 +6,7 @@ import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS, pickableCategories, debitOf, creditOf, signedDelta, magnitudeOf } from '../../lib/finance';
+import { closePeriod } from '../../lib/periodClose';
 import { insertJournalEntryWithRetry } from '../../lib/journalReference';
 import { runPeriodPreflight } from '../../lib/preflightChecks';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
@@ -435,28 +436,20 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
   }
 
   async function doFinalClose() {
-    // Capture the snapshot from live data BEFORE we flip status to 'closed'.
-    // Once status is closed, the period-lock trigger would block any new
-    // writes; but reading is always allowed, so building a snapshot is safe.
-    const snapshot = await buildPeriodSnapshotForClose(period, periodStart, periodEnd, categories);
-    const snapshotAt = new Date().toISOString();
-    const { error } = await supabase.from('period_close').upsert({
-      period,
-      status: 'closed',
-      closed_by: user?.id,
-      closed_at: snapshotAt,
-      snapshot,
-      snapshot_at: snapshotAt,
-    }, { onConflict: 'period' });
-    if (error) { toast.error(error.message); return; }
-
-    await supabase.from('accountant_audit_log').insert({
-      action: 'close_period',
-      description: `Closed ${periodFullLabel(period)} via wizard (snapshot captured)`,
-      period,
-      performed_by: 'user',
-      approved_by: user?.id,
-    });
+    // Shared with AccountantPage's close button and AmazonReclassModal's
+    // re-close-after-post step. See src/lib/periodClose.js — captures the
+    // snapshot from live data BEFORE the row flips to closed.
+    try {
+      await closePeriod({
+        period,
+        userId: user?.id,
+        categories,
+        description: `Closed ${periodFullLabel(period)} via wizard (snapshot captured)`,
+      });
+    } catch (err) {
+      toast.error(err.message);
+      return;
+    }
 
     fireConfetti();
     awardAchievement('Closer', `${periodLabel(period)} is in the books`, '🏆');
@@ -2005,21 +1998,5 @@ function StatPill({ label, value, tone = 'neutral' }) {
 }
 
 // P&L / BS aggregators live in src/lib/finance.js — shared by every report site.
-
-// Snapshot capture used by doFinalClose. Matches the shape produced by
-// AccountantPage.buildPeriodSnapshot so the View Snapshot modal there can
-// render either one identically.
-async function buildPeriodSnapshotForClose(period, periodStart, periodEnd, categories) {
-  const { data: txns, error } = await supabase.from('transactions')
-    .select('id, date, description, category, amount, type')
-    .gte('date', periodStart).lte('date', periodEnd)
-    .eq('posted', true).eq('voided', false);
-  if (error) throw error;
-  return {
-    period,
-    pl:            aggregateForPnL(txns || [], categories),
-    balance_sheet: aggregateForBS(txns || [], categories),
-    txn_count:     (txns || []).length,
-    captured_at:   new Date().toISOString(),
-  };
-}
+// Snapshot capture + close upsert now live in src/lib/periodClose.js so this
+// path and AccountantPage and AmazonReclassModal all close through one helper.
