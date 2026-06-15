@@ -14,7 +14,7 @@ import toast from 'react-hot-toast';
 import {
   Calculator, CheckCircle2, Circle, AlertCircle, Lock, ChevronRight,
   Upload, Tag, BookCheck, Repeat, Scale, Brain, FileBarChart, FileText,
-  Download, Loader2, Inbox, ListChecks, Play, Maximize2,
+  Download, Loader2, Inbox, ListChecks, Play, Maximize2, BookOpen,
 } from 'lucide-react';
 import CloseWizard, { CloseLauncher } from './CloseWizard';
 import StatementImportModal from './StatementImportModal';
@@ -1096,6 +1096,27 @@ export default function AccountantPage() {
           <p className="text-[11px] text-surface-400">
             Basis: <span className="font-mono">voided=false</span> with no posted filter (ties to existing P&L / Balance Sheet). Untick "Include unposted" for a stricter posted-only Trial Balance. Supporting detail caps each account at 500 rows; subtotals always reflect the full population.
           </p>
+        </div>
+      </div>
+
+      {/* ── Book Balance Sheet Builder (launcher) ─────────────────────── */}
+      <div className="card overflow-hidden">
+        <div className="px-5 py-4 border-b border-surface-100 flex items-center justify-between">
+          <h2 className="section-title flex items-center gap-2">
+            <BookOpen size={18} className="text-brand-600" />
+            Book Balance Sheet Builder
+          </h2>
+          <span className="text-[10px] uppercase tracking-wider text-surface-400">Admin only · Stage 1</span>
+        </div>
+        <div className="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-surface-600 max-w-2xl">
+            Compose the firm's structured balance sheet (L-code sections, per-line beginning balances,
+            mapped categories, and manual adjustments). Stage 1 ships the empty skeleton — open it to seed
+            a year from the book's section structure.
+          </p>
+          <Link to="/accountant/book-balance-sheet" className="btn-primary inline-flex items-center gap-2 text-sm whitespace-nowrap">
+            <BookOpen size={14} /> Open Builder
+          </Link>
         </div>
       </div>
 
