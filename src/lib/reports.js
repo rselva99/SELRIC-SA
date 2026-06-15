@@ -24,6 +24,15 @@
 //      no "X units could not fit page" warnings.
 //   4. Long account names wrap (overflow:'linebreak') rather than truncate.
 //
+// Footer-overlap fix:
+//
+//   The page's bottom FOOTER_RESERVED millimetres are off-limits to content.
+//   autoTable respects this via margin.bottom (it paginates rather than
+//   spilling into the zone). The Net Profit / summary band uses ensureSpace
+//   to break to a new page if it doesn't fit above the reserved area.
+//   addFootersToAllPages walks every page at the end so the confidentiality
+//   line + page number land on every sheet, not just the first.
+//
 // Open periods (no close snapshot) and closed periods (snapshot present)
 // both render the same way here — the generators always compute against
 // the data they're handed. Closed-period reports already use snapshot
@@ -46,6 +55,18 @@ const LIGHT_BG    = [241, 243, 245];
 const PAGE_WIDTH    = 210;
 const PAGE_MARGIN   = 14;
 const USABLE_WIDTH  = PAGE_WIDTH - PAGE_MARGIN * 2; // 182
+
+// Footer occupies the bottom FOOTER_RESERVED mm of every page (line at
+// pageHeight − 16, text at pageHeight − 10). Content must stay above this
+// band, with a small visual gap, so we reserve a few extra mm above the
+// line for breathing room.
+const FOOTER_RESERVED = 24;
+// When ensureSpace pushes content to a new page, this is where the new
+// page's content starts. No banner is redrawn on overflow pages — only
+// page 1 carries the green title bar.
+const NEW_PAGE_TOP    = PAGE_MARGIN + 6;
+// Height of the Net Profit / totals summary band (rounded rect + label).
+const SUMMARY_BAND_H  = 18;
 
 // jsPDF.text throws "Invalid arguments passed to jsPDF.text" when handed
 // null, undefined, NaN, or a raw number. Coerce here at the boundary.
@@ -159,18 +180,46 @@ function addHeader(doc, title, period) {
   return 44;
 }
 
+// Single-page footer renderer. addFootersToAllPages walks the doc at the
+// end of each generator so this runs on every page, not just page 1.
 function addFooter(doc, pageNum) {
   const pageHeight = doc.internal.pageSize.height;
   doc.setDrawColor(206, 212, 218);
   doc.line(PAGE_MARGIN, pageHeight - 16, PAGE_WIDTH - PAGE_MARGIN, pageHeight - 16);
   doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
   doc.setTextColor(...TEXT_MED);
   doc.text(safeText('SelRic SA — Confidential'), PAGE_MARGIN, pageHeight - 10);
   doc.text(safeText(`Page ${pageNum}`), PAGE_WIDTH - PAGE_MARGIN, pageHeight - 10, { align: 'right' });
 }
 
+function addFootersToAllPages(doc) {
+  const count = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= count; i++) {
+    doc.setPage(i);
+    addFooter(doc, i);
+  }
+  // Land back on the last page so any incidental post-call drawing doesn't
+  // hop pages unexpectedly.
+  doc.setPage(count);
+}
+
+// Page-break guard. If drawing something `neededHeight` tall at `y` would
+// intrude into the bottom FOOTER_RESERVED band, push to a new page and
+// return the new top-of-content y. Otherwise return y unchanged.
+function ensureSpace(doc, y, neededHeight) {
+  const pageHeight = doc.internal.pageSize.height;
+  if (y + neededHeight > pageHeight - FOOTER_RESERVED) {
+    doc.addPage();
+    return NEW_PAGE_TOP;
+  }
+  return y;
+}
+
 // Shared autoTable settings. Two columns whose explicit widths sum to
 // exactly USABLE_WIDTH so the table can never overflow the page.
+// margin.bottom keeps autoTable from drawing into the reserved footer zone
+// — it paginates instead, and addFootersToAllPages stamps each new page.
 const ACCOUNT_COL_WIDTH = 132;
 const AMOUNT_COL_WIDTH  = USABLE_WIDTH - ACCOUNT_COL_WIDTH; // 50
 
@@ -188,7 +237,7 @@ const TABLE_BASE = {
     fontStyle: 'bold',
     fontSize: 8,
   },
-  margin: { left: PAGE_MARGIN, right: PAGE_MARGIN },
+  margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, bottom: FOOTER_RESERVED },
   tableWidth: USABLE_WIDTH,
   columnStyles: {
     0: { cellWidth: ACCOUNT_COL_WIDTH },
@@ -198,8 +247,14 @@ const TABLE_BASE = {
 
 // Render one section (Revenue, Expenses, Assets, etc.) and return the y
 // position immediately below the section so the caller can stack the next
-// one underneath.
+// one underneath. The section title (the bold "Revenue" / "Assets" label)
+// gets its own ensureSpace check — if there's no room for even the title
+// plus one row of table, the title and table go on a fresh page together.
 function renderSection(doc, y, title, rows, total, totalLabel) {
+  // Title (6mm) + header row (~7mm) + at least one body row (~6mm) = ~19mm.
+  // autoTable will continue paginating any further overflow.
+  y = ensureSpace(doc, y, 19);
+
   doc.setFontSize(13);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...BRAND_DARK);
@@ -225,6 +280,26 @@ function renderSection(doc, y, title, rows, total, totalLabel) {
   return (doc.lastAutoTable?.finalY ?? y) + 10;
 }
 
+// Draw the Net Profit / totals summary band at y. Page-breaks first if
+// it wouldn't fit cleanly above the footer.
+function renderSummaryBand(doc, y, label, amount, positive) {
+  // Band itself is SUMMARY_BAND_H tall; pad an extra 4mm above the footer
+  // reserve so there's clear visual separation between band and the
+  // confidentiality line.
+  y = ensureSpace(doc, y, SUMMARY_BAND_H + 4);
+
+  doc.setFillColor(...(positive ? [217, 237, 227] : [255, 230, 230]));
+  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, SUMMARY_BAND_H, 3, 3, 'F');
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...(positive ? BRAND_DARK : [224, 49, 49]));
+  doc.text(safeText(label),                       PAGE_MARGIN + 6,              y + 12);
+  doc.text(safeText(formatCurrency(amount)),      PAGE_WIDTH - PAGE_MARGIN - 6, y + 12, { align: 'right' });
+
+  return y + SUMMARY_BAND_H + 4;
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 export function generatePnLPdf(input, periodArg) {
@@ -236,16 +311,9 @@ export function generatePnLPdf(input, periodArg) {
   y = renderSection(doc, y, 'Expenses', data.expenses, data.totalExpenses, 'Total Expenses');
 
   const netProfit = data.totalRevenue - data.totalExpenses;
-  const positive  = netProfit >= 0;
-  doc.setFillColor(...(positive ? [217, 237, 227] : [255, 230, 230]));
-  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 18, 3, 3, 'F');
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...(positive ? BRAND_DARK : [224, 49, 49]));
-  doc.text(safeText('Net Profit'),               PAGE_MARGIN + 6, y + 12);
-  doc.text(safeText(formatCurrency(netProfit)),  PAGE_WIDTH - PAGE_MARGIN - 6, y + 12, { align: 'right' });
+  renderSummaryBand(doc, y, 'Net Profit', netProfit, netProfit >= 0);
 
-  addFooter(doc, 1);
+  addFootersToAllPages(doc);
   return doc;
 }
 
@@ -258,7 +326,7 @@ export function generateBalanceSheetPdf(input, periodArg) {
   y = renderSection(doc, y, 'Liabilities', data.liabilities, data.totalLiabilities, 'Total Liabilities');
   y = renderSection(doc, y, 'Equity',      data.equity,      data.totalEquity,      'Total Equity');
 
-  addFooter(doc, 1);
+  addFootersToAllPages(doc);
   return doc;
 }
 
