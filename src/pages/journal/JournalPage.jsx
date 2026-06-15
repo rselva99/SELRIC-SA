@@ -17,6 +17,7 @@ import {
   Ban, Loader2,
 } from 'lucide-react';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
+import AmazonReclassModal from '../../components/AmazonReclassModal';
 
 const RULE_TYPES = {
   net_to_zero:   'Net to Zero',
@@ -81,6 +82,7 @@ export default function JournalPage() {
   const [generating, setGenerating]           = useState(false);
   const [approvingGen, setApprovingGen]       = useState(false);
   const [showPayrollModal, setShowPayrollModal] = useState(false);
+  const [showAmazonReclassModal, setShowAmazonReclassModal] = useState(false);
 
   const [entries, setEntries]               = useState([]);
   const [entryLines, setEntryLines]         = useState({});  // {entryId: [lines]}
@@ -662,9 +664,14 @@ export default function JournalPage() {
           <h1 className="page-title">Journal</h1>
           <p className="text-surface-500 text-sm mt-0.5">Quick entries, double-entry journal, and recurring rules</p>
         </div>
-        <button onClick={() => setShowPayrollModal(true)} className="btn-secondary flex items-center gap-2 text-sm">
-          <Wallet size={14} /> Payroll Entry
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowAmazonReclassModal(true)} className="btn-secondary flex items-center gap-2 text-sm">
+            <Repeat size={14} /> Amazon Reclass
+          </button>
+          <button onClick={() => setShowPayrollModal(true)} className="btn-secondary flex items-center gap-2 text-sm">
+            <Wallet size={14} /> Payroll Entry
+          </button>
+        </div>
       </div>
 
       {/* Mode tabs */}
@@ -1238,6 +1245,12 @@ export default function JournalPage() {
         period={lockedPeriod}
         onClose={() => { setLockedPeriod(null); setLockedRetry(null); }}
         onRetry={lockedRetry}
+      />
+
+      <AmazonReclassModal
+        open={showAmazonReclassModal}
+        onClose={() => setShowAmazonReclassModal(false)}
+        onPosted={() => { loadEntries(); }}
       />
     </div>
   );
