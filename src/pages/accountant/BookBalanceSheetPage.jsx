@@ -567,6 +567,7 @@ export default function BookBalanceSheetPage() {
         transactions,
         assets,
         assetMappingsByLineId,
+        categories,   // enables the P&L net-income reconciliation gap
         capturedAtIso: nowIso,
         lockedByName,
       });
@@ -647,6 +648,7 @@ export default function BookBalanceSheetPage() {
           transactions,
           assets,
           assetMappingsByLineId,
+          categories,   // enables the P&L net-income reconciliation gap
         });
       }
       const pdf = generateBookBalanceSheetPdf(

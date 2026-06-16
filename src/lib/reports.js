@@ -765,30 +765,99 @@ function renderGroupTotalBand(doc, y, label, amount) {
   return y + 16;
 }
 
+// CPA tax-recon formatting for NET (INCOME)/LOSS:
+//   negative value → income, shown in parens: ($X)
+//   positive value → loss, shown plain: $X
+function fmtIncomeLoss(amount) {
+  const n = Number(amount) || 0;
+  if (n < 0) return `(${formatCurrency(Math.abs(n))})`;
+  return formatCurrency(n);
+}
+
+// Two layouts: the new CPA tax-recon (totals carries totalLiabEquity +
+// netIncomeLoss + reconciliationGap) and the legacy Assets − (L+E) check
+// (totals carries totalLiabPlusEquity + balanceCheck only). Locked-year
+// snapshots written before the tax-recon rewrite still render via the
+// legacy branch.
 function renderFinalSummary(doc, y, totals) {
   if (!totals) return y;
+  const isTaxRecon = Object.prototype.hasOwnProperty.call(totals, 'netIncomeLoss');
+  return isTaxRecon
+    ? renderTaxReconSummary(doc, y, totals)
+    : renderLegacyBalanceSummary(doc, y, totals);
+}
 
-  // Total L + E
-  y = ensureSpace(doc, y, 16);
-  doc.setFillColor(...LIGHT_BG);
-  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 12, 2, 2, 'F');
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...BRAND_DARK);
-  doc.text(safeText('TOTAL LIABILITIES + EQUITY'), PAGE_MARGIN + 4, y + 8);
-  doc.text(safeText(formatCurrency(totals.totalLiabPlusEquity)), PAGE_WIDTH - PAGE_MARGIN - 4, y + 8, { align: 'right' });
-  y += 16;
+function renderTaxReconSummary(doc, y, totals) {
+  // 1. TOTAL LIABILITIES & EQUITY (signed — credit balances are negative)
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES & EQUITY', formatCurrency(totals.totalLiabEquity), LIGHT_BG, BRAND_DARK);
 
-  // Balance Check
+  // 2. NET (INCOME)/LOSS plug — formatted CPA-style (parens = income)
+  y = drawSummaryBand(doc, y, 'NET (INCOME)/LOSS', fmtIncomeLoss(totals.netIncomeLoss), LIGHT_BG, BRAND_DARK);
+
+  // 3. Tax-recon tie: A + (L+E) + NetIncomeLoss = 0 by construction. Always
+  //    green; we still print the literal sum so a future divergence (e.g.,
+  //    rounding regression) is visible at a glance.
+  const tie = Math.round(((Number(totals.totalAssets) || 0)
+                          + (Number(totals.totalLiabEquity) || 0)
+                          + (Number(totals.netIncomeLoss) || 0)) * 100) / 100;
+  y = drawSummaryBand(
+    doc, y,
+    'TAX-RECON BALANCE: TIES (sums to 0)',
+    `A + (L+E) + Net (Income)/Loss = ${formatCurrency(tie)}`,
+    [217, 237, 227], BRAND_DARK, 10,
+  );
+
+  // 4. Plug vs P&L net income — the real error detector.
+  const actual = totals.actualNetIncome;
+  const gap    = totals.reconciliationGap;
+  if (actual == null || gap == null) {
+    y = drawSummaryBand(
+      doc, y,
+      'PLUG vs P&L NET INCOME',
+      'not linked — manual verify',
+      [255, 244, 214],            // amber fill
+      [146, 64, 14], 10,           // amber-900 text
+    );
+  } else {
+    const ok = Math.abs(Number(gap) || 0) < 0.005;
+    y = drawSummaryBand(
+      doc, y,
+      ok ? 'PLUG vs P&L NET INCOME  ✓' : 'PLUG vs P&L NET INCOME — gap',
+      `plug ${fmtIncomeLoss(totals.netIncomeLoss)} · P&L ${formatCurrency(actual)} · gap ${formatCurrency(gap)}`,
+      ok ? [217, 237, 227] : [255, 230, 230],
+      ok ? BRAND_DARK : [224, 49, 49],
+      10,
+    );
+  }
+  return y;
+}
+
+// Legacy Assets − (L+E) renderer — kept so locked snapshots written under
+// the old `totals` shape still render. New snapshots use the tax-recon path.
+function renderLegacyBalanceSummary(doc, y, totals) {
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES + EQUITY', formatCurrency(totals.totalLiabPlusEquity), LIGHT_BG, BRAND_DARK);
+
   const balanced = Math.abs(Number(totals.balanceCheck) || 0) < 0.005;
+  return drawSummaryBand(
+    doc, y,
+    balanced ? 'BALANCE CHECK  ✓' : 'BALANCE CHECK — OUT OF BALANCE',
+    `Assets − (L + E) = ${formatCurrency(totals.balanceCheck)}`,
+    balanced ? [217, 237, 227] : [255, 230, 230],
+    balanced ? BRAND_DARK : [224, 49, 49],
+    10,
+  );
+}
+
+// Shared band drawer for renderFinalSummary. Returns the new y cursor.
+function drawSummaryBand(doc, y, leftLabel, rightLabel, fill, textColor, fontSize = 11) {
   y = ensureSpace(doc, y, 16);
-  doc.setFillColor(...(balanced ? [217, 237, 227] : [255, 230, 230]));
+  doc.setFillColor(...fill);
   doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 12, 2, 2, 'F');
-  doc.setFontSize(10);
+  doc.setFontSize(fontSize);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...(balanced ? BRAND_DARK : [224, 49, 49]));
-  doc.text(safeText(balanced ? 'BALANCE CHECK  ✓' : 'BALANCE CHECK — OUT OF BALANCE'), PAGE_MARGIN + 4, y + 8);
-  doc.text(safeText(`Assets − (L + E) = ${formatCurrency(totals.balanceCheck)}`), PAGE_WIDTH - PAGE_MARGIN - 4, y + 8, { align: 'right' });
+  doc.setTextColor(...textColor);
+  doc.text(safeText(leftLabel),  PAGE_MARGIN + 4,             y + 8);
+  doc.text(safeText(rightLabel), PAGE_WIDTH - PAGE_MARGIN - 4, y + 8, { align: 'right' });
   return y + 16;
 }
 

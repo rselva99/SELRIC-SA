@@ -151,7 +151,7 @@ export const SEED_LINE_TITLES = {
 // contra lines in parentheses and SUBTRACTING them from their parent
 // group's total. The contra flag in BOOK_BS_STRUCTURE drives both pieces.
 
-import { debitOf, creditOf } from './finance';
+import { debitOf, creditOf, aggregateForPnL } from './finance';
 
 export function lineActivityIsDebitNatural(section) {
   if (!section) return true;
@@ -453,26 +453,46 @@ export function computeLineEndingSummary(line, mappings, adjustments, transactio
 //                    isMapping, mappings: [{name, activity}],
 //                    adjustments: [{amount, note}],
 //                  }],
-//                  subtotal                          // Σ line endings (positive)
+//                  subtotal                          // Σ line endings (signed)
 //                }],
-//     totals: { totalAssets, totalLiabilities, totalEquity,
-//               totalLiabPlusEquity, balanceCheck }
+//     totals: {
+//       totalAssets,            // Σ asset-group subtotals (positive)
+//       totalLiabEquity,        // Σ liability + equity subtotals (stored negative)
+//       netIncomeLoss,          // -(totalAssets + totalLiabEquity) — the plug
+//       actualNetIncome,        // P&L net income for the year, or null
+//       reconciliationGap,      // netIncomeLoss - actualNetIncome (null if no P&L)
+//       // back-compat fields (deprecated; old locked snapshots also carry these):
+//       totalLiabilities, totalEquity, totalLiabPlusEquity, balanceCheck,
+//     }
 //   }
 //
-// Sign convention for totals: every line's ending balance is stored SIGNED —
-// contra sections (L09B, L12B, M206A) carry their reductions as negative
-// values. The totaler therefore sums every section's subtotal AS-IS; it does
-// NOT flip the sign for contras. The `contra` flag drives display only
-// (parentheses around the line and subtotal via fmtContraOrNot in reports.js).
-// A double-flip — storing negatives AND negating contras here — would turn
-// accumulated depreciation into an addition to total assets.
+// Sign convention — CPA tax-reconciliation format:
+//   • Assets are stored POSITIVE.
+//   • Liability + Equity subtotals are stored NEGATIVE (credit balances on a
+//     tax-return-style balance sheet are shown signed-negative).
+//   • Contra sections (L09B, L12B, M206A): the `contra` flag drives DISPLAY
+//     only (parentheses + label). For the math, sum the subtotal AS-IS —
+//     L09B/L12B happen to be stored negative; M206A may be stored positive
+//     within the negative-equity bucket. No sign flips here.
+//
+// Tax-recon identity:
+//   totalAssets + totalLiabEquity + netIncomeLoss = 0   (ties by construction)
+// The genuine error check is reconciliationGap — the difference between the
+// plug we computed and the actual P&L net income for the year. Renderer
+// (renderFinalSummary) shows both lines side by side.
+//
+// actualNetIncome: when the caller passes `categories`, aggregateForPnL runs
+// over the same transactions list to produce totalRevenue − totalExpenses.
+// When categories are absent (legacy callers, or when the chart isn't
+// available), actualNetIncome stays null and the PDF prints a "not linked"
+// caption on the reconciliation line.
 //
 // Each line's "ending" is preferred from line.ending_balance_confirmed
 // when present, otherwise the live-computed value. This is intentional:
 // the lock flow only allows locking when every line is confirmed, so the
 // snapshot reads its frozen endings from the confirmed field; the draft
 // PDF path tolerates unconfirmed lines and uses computed.
-export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustmentsByLineId, transactions, assets, assetMappingsByLineId, capturedAtIso, lockedByName }) {
+export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustmentsByLineId, transactions, assets, assetMappingsByLineId, categories, capturedAtIso, lockedByName }) {
   const sectionMap = new Map();
   for (const s of BOOK_BS_STRUCTURE) {
     sectionMap.set(s.code, {
@@ -527,7 +547,7 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
   let totalLiabilities  = 0;
   let totalEquity       = 0;
   for (const sec of sectionMap.values()) {
-    // Contra subtotals are stored signed-negative; sum as-is, no flip.
+    // Sum every subtotal AS-IS — CPA tax-recon storage carries the sign.
     const signed = sec.subtotal;
     if (sec.group === 'asset')     totalAssets      += signed;
     if (sec.group === 'liability') totalLiabilities += signed;
@@ -536,15 +556,47 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
   totalAssets      = Math.round(totalAssets * 100) / 100;
   totalLiabilities = Math.round(totalLiabilities * 100) / 100;
   totalEquity      = Math.round(totalEquity * 100) / 100;
-  const totalLiabPlusEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
-  const balanceCheck        = Math.round((totalAssets - totalLiabPlusEquity) * 100) / 100;
+  const totalLiabEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
+  // Tax-recon plug: A + (L+E) + NetIncomeLoss = 0  ⇒  NetIncomeLoss = -(A + L+E).
+  const netIncomeLoss   = Math.round(-(totalAssets + totalLiabEquity) * 100) / 100;
+
+  // Reconciliation gap: compare the plug to the actual P&L net income for the
+  // year. Needs the chart of accounts to classify revenue/expense — if the
+  // caller didn't pass categories, leave both null and the renderer paints a
+  // "not linked" badge instead of a numeric gap.
+  let actualNetIncome   = null;
+  let reconciliationGap = null;
+  if (Array.isArray(categories) && Array.isArray(transactions)) {
+    const pnl = aggregateForPnL(transactions, categories);
+    actualNetIncome   = Math.round(((Number(pnl.totalRevenue) || 0) - (Number(pnl.totalExpenses) || 0)) * 100) / 100;
+    // Sign convention: netIncomeLoss is BS-style (income negative);
+    // actualNetIncome is P&L-style (income positive). Their SUM is 0 when
+    // the BS plug agrees with the P&L — any non-zero residual is the gap.
+    reconciliationGap = Math.round((netIncomeLoss + actualNetIncome) * 100) / 100;
+  }
+
+  // Back-compat: keep totalLiabPlusEquity + balanceCheck on the totals object
+  // so locked-year snapshots written under the old shape continue to render
+  // (renderFinalSummary tolerates both). balanceCheck retains its prior
+  // meaning (A − (L+E)) for that fallback path; the new code uses
+  // netIncomeLoss + reconciliationGap instead.
+  const totalLiabPlusEquity = totalLiabEquity;
+  const balanceCheck        = Math.round((totalAssets - totalLiabEquity) * 100) / 100;
 
   return {
     year,
     captured_at: capturedAtIso || new Date().toISOString(),
     locked_by_name: lockedByName || null,
     sections: [...sectionMap.values()],
-    totals: { totalAssets, totalLiabilities, totalEquity, totalLiabPlusEquity, balanceCheck },
+    totals: {
+      totalAssets,
+      totalLiabEquity,
+      netIncomeLoss,
+      actualNetIncome,
+      reconciliationGap,
+      // back-compat fields (do not remove until every locked snapshot is re-locked)
+      totalLiabilities, totalEquity, totalLiabPlusEquity, balanceCheck,
+    },
   };
 }
 
