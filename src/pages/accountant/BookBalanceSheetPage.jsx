@@ -35,6 +35,7 @@ import {
   BOOK_BS_STRUCTURE,
   SEED_LINE_TITLES,
   buildSeedLinesForYear,
+  buildBookBSSnapshot,
   bookSectionByCode,
   bookGroupLabel,
   bookGroupOrder,
@@ -42,15 +43,25 @@ import {
   computeMappingActivity,
   computeLineEnding,
   computeLineEndingSummary,
+  // Stage 4.5 — asset register
+  isAssetRegisterCostSection,
+  isAssetRegisterContraSection,
+  CONTRA_TO_COST_SECTION,
+  resolveAssetScope,
+  pointInTimeGrossCost,
+  assetActivityForYear,
+  assetsInScopeWithContribution,
+  slAccumDepForAssetIds,
 } from '../../lib/bookBalanceSheet';
+import { generateBookBalanceSheetPdf } from '../../lib/reports';
 import { formatCurrency } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 import toast from 'react-hot-toast';
 import {
-  BookOpen, Plus, ChevronLeft, ChevronDown, ChevronRight, Trash2, Info, Lock,
+  BookOpen, Plus, ChevronLeft, ChevronDown, ChevronRight, Trash2, Info, Lock, Unlock,
   AlertCircle, AlertTriangle, CheckCircle2, X, Save, Edit3, Layers, PenSquare,
-  Columns,
+  Columns, Download, ShieldCheck, Boxes, Copy,
 } from 'lucide-react';
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -78,6 +89,8 @@ export default function BookBalanceSheetPage() {
   const [transactions, setTransactions]         = useState([]);
   const [mappingsByLineId, setMappingsByLineId] = useState({});
   const [adjustmentsByLineId, setAdjustmentsByLineId] = useState({});
+  const [assetMappingsByLineId, setAssetMappingsByLineId] = useState({});
+  const [assets, setAssets]                     = useState([]);
   // Set of current-year line ids whose prior-year sibling existed but was
   // never confirmed; surfaces a warning chip on the row.
   const [rolledFromUnconfirmed, setRolledFromUnconfirmed] = useState(new Set());
@@ -87,6 +100,11 @@ export default function BookBalanceSheetPage() {
   const [compareYears, setCompareYears]   = useState([]);     // years checked for comparison
   const [compareData, setCompareData]     = useState(null);   // {linesByYear, mByLine, aByLine, txnsByYear}
   const [compareLoading, setCompareLoading] = useState(false);
+
+  // ── Lock / PDF state ────────────────────────────────────────────────────
+  const [locking, setLocking]               = useState(false);
+  const [unlocking, setUnlocking]           = useState(false);
+  const [downloading, setDownloading]       = useState(false);
 
   // ── Loaders ─────────────────────────────────────────────────────────────
   const loadYears = useCallback(async () => {
@@ -131,7 +149,8 @@ export default function BookBalanceSheetPage() {
   const loadYearData = useCallback(async (year) => {
     if (year == null) {
       setLines([]); setTransactions([]); setMappingsByLineId({});
-      setAdjustmentsByLineId({}); setRolledFromUnconfirmed(new Set());
+      setAdjustmentsByLineId({}); setAssetMappingsByLineId({}); setAssets([]);
+      setRolledFromUnconfirmed(new Set());
       return;
     }
     setLinesLoading(true);
@@ -143,6 +162,7 @@ export default function BookBalanceSheetPage() {
         { data: lineRows, error: lineErr },
         { data: txnRows,  error: txnErr  },
         { data: priorYearMeta, error: pyErr },
+        { data: assetRows, error: assetErr },
       ] = await Promise.all([
         supabase.from('book_bs_lines').select('*')
           .eq('year', year)
@@ -154,26 +174,33 @@ export default function BookBalanceSheetPage() {
           .eq('voided', false),
         supabase.from('book_bs_lines').select('year')
           .lt('year', year).order('year', { ascending: false }).limit(1),
+        supabase.from('assets').select('id, name, asset_class, asset_type, in_service_date, life_years, cost, status, retired_date'),
       ]);
-      if (lineErr) throw lineErr;
-      if (txnErr)  throw txnErr;
-      if (pyErr)   throw pyErr;
+      if (lineErr)  throw lineErr;
+      if (txnErr)   throw txnErr;
+      if (pyErr)    throw pyErr;
+      if (assetErr) throw assetErr;
       const lineList = lineRows || [];
       setLines(lineList);
       setTransactions(txnRows || []);
+      setAssets(assetRows || []);
 
       const lineIds = lineList.map(l => l.id);
       let mappings = [];
       let adjustments = [];
+      let assetMappings = [];
       if (lineIds.length) {
-        const [mRes, aRes] = await Promise.all([
+        const [mRes, aRes, amRes] = await Promise.all([
           supabase.from('book_bs_line_mappings').select('*').in('line_id', lineIds),
           supabase.from('book_bs_line_adjustments').select('*').in('line_id', lineIds).order('created_at', { ascending: true }),
+          supabase.from('book_bs_line_asset_mappings').select('*').in('line_id', lineIds).order('created_at', { ascending: true }),
         ]);
-        if (mRes.error) throw mRes.error;
-        if (aRes.error) throw aRes.error;
-        mappings    = mRes.data || [];
-        adjustments = aRes.data || [];
+        if (mRes.error)  throw mRes.error;
+        if (aRes.error)  throw aRes.error;
+        if (amRes.error) throw amRes.error;
+        mappings      = mRes.data  || [];
+        adjustments   = aRes.data  || [];
+        assetMappings = amRes.data || [];
       }
       const mByLine = {};
       for (const m of mappings) { (mByLine[m.line_id] = mByLine[m.line_id] || []).push(m); }
@@ -181,6 +208,9 @@ export default function BookBalanceSheetPage() {
       const aByLine = {};
       for (const a of adjustments) { (aByLine[a.line_id] = aByLine[a.line_id] || []).push(a); }
       setAdjustmentsByLineId(aByLine);
+      const amByLine = {};
+      for (const m of assetMappings) { (amByLine[m.line_id] = amByLine[m.line_id] || []).push(m); }
+      setAssetMappingsByLineId(amByLine);
 
       // Roll-forward warning: prior year's lines, keyed by (section, title).
       // A current line is marked rolled-from-unconfirmed when its prior-
@@ -209,7 +239,8 @@ export default function BookBalanceSheetPage() {
       console.error('book-bs: load year data failed', err);
       toast.error(err.message || 'Failed to load year');
       setLines([]); setTransactions([]); setMappingsByLineId({});
-      setAdjustmentsByLineId({}); setRolledFromUnconfirmed(new Set());
+      setAdjustmentsByLineId({}); setAssetMappingsByLineId({}); setAssets([]);
+      setRolledFromUnconfirmed(new Set());
     } finally {
       setLinesLoading(false);
     }
@@ -230,27 +261,34 @@ export default function BookBalanceSheetPage() {
       const [
         { data: lineRows, error: lineErr },
         { data: txnRows,  error: txnErr  },
+        { data: assetRows, error: assetErr },
       ] = await Promise.all([
         supabase.from('book_bs_lines').select('*').in('year', yearsToShow),
         supabase.from('transactions')
           .select('id, date, category, amount, type, posted')
           .gte('date', `${minY}-01-01`).lte('date', `${maxY}-12-31`)
           .eq('voided', false),
+        supabase.from('assets').select('id, name, asset_class, asset_type, in_service_date, life_years, cost, status, retired_date'),
       ]);
-      if (lineErr) throw lineErr;
-      if (txnErr)  throw txnErr;
+      if (lineErr)  throw lineErr;
+      if (txnErr)   throw txnErr;
+      if (assetErr) throw assetErr;
       const lineIds = (lineRows || []).map(l => l.id);
       let mappings = [];
       let adjustments = [];
+      let assetMappings = [];
       if (lineIds.length) {
-        const [mRes, aRes] = await Promise.all([
+        const [mRes, aRes, amRes] = await Promise.all([
           supabase.from('book_bs_line_mappings').select('*').in('line_id', lineIds),
           supabase.from('book_bs_line_adjustments').select('*').in('line_id', lineIds),
+          supabase.from('book_bs_line_asset_mappings').select('*').in('line_id', lineIds),
         ]);
-        if (mRes.error) throw mRes.error;
-        if (aRes.error) throw aRes.error;
-        mappings    = mRes.data || [];
-        adjustments = aRes.data || [];
+        if (mRes.error)  throw mRes.error;
+        if (aRes.error)  throw aRes.error;
+        if (amRes.error) throw amRes.error;
+        mappings      = mRes.data  || [];
+        adjustments   = aRes.data  || [];
+        assetMappings = amRes.data || [];
       }
 
       const linesByYear = {};
@@ -261,6 +299,8 @@ export default function BookBalanceSheetPage() {
       for (const m of mappings) { (mByLine[m.line_id] = mByLine[m.line_id] || []).push(m); }
       const aByLine = {};
       for (const a of adjustments) { (aByLine[a.line_id] = aByLine[a.line_id] || []).push(a); }
+      const amByLine = {};
+      for (const m of assetMappings) { (amByLine[m.line_id] = amByLine[m.line_id] || []).push(m); }
       const txnsByYear = {};
       for (const t of txnRows || []) {
         const y = parseInt((t.date || '').slice(0, 4), 10);
@@ -268,7 +308,7 @@ export default function BookBalanceSheetPage() {
           (txnsByYear[y] = txnsByYear[y] || []).push(t);
         }
       }
-      setCompareData({ linesByYear, mByLine, aByLine, txnsByYear });
+      setCompareData({ linesByYear, mByLine, aByLine, amByLine, txnsByYear, assets: assetRows || [] });
     } catch (err) {
       console.error('book-bs: load compare data failed', err);
       toast.error(err.message || 'Failed to load compare data');
@@ -389,6 +429,36 @@ export default function BookBalanceSheetPage() {
           if (mErr) throw mErr;
         }
 
+        // Asset register mappings roll forward identically — copy each
+        // (scope, asset_class, asset_id, exclude, note) onto the new line.
+        const { data: priorAssetMappings, error: amErr } = await supabase
+          .from('book_bs_line_asset_mappings')
+          .select('line_id, scope, asset_class, asset_id, exclude, note')
+          .in('line_id', priorLineList.map(l => l.id));
+        if (amErr) throw amErr;
+        const newAssetMappingRows = [];
+        for (const pl of priorLineList) {
+          const newLineId = newLineByKey.get(`${pl.section_code}::${(pl.title || '').toLowerCase()}`);
+          if (!newLineId) continue;
+          const ams = (priorAssetMappings || []).filter(m => m.line_id === pl.id);
+          for (const m of ams) {
+            newAssetMappingRows.push({
+              line_id:     newLineId,
+              scope:       m.scope,
+              asset_class: m.scope === 'class' ? m.asset_class : null,
+              asset_id:    m.scope === 'asset' ? m.asset_id    : null,
+              exclude:     !!m.exclude,
+              note:        m.note || null,
+            });
+          }
+        }
+        if (newAssetMappingRows.length) {
+          const { error: amInsErr } = await supabase
+            .from('book_bs_line_asset_mappings')
+            .insert(newAssetMappingRows);
+          if (amInsErr) throw amInsErr;
+        }
+
         const unconfirmedCount = priorLineList.filter(l => l.ending_balance_confirmed == null).length;
         if (unconfirmedCount > 0) {
           toast(`Rolled forward ${priorLineList.length} lines from ${priorYear} · ${unconfirmedCount} prior were unconfirmed → defaulted to $0 (warning chips shown)`, { icon: '⚠️', duration: 6000 });
@@ -429,18 +499,172 @@ export default function BookBalanceSheetPage() {
   }
 
   async function reloadLine(lineId) {
-    const [{ data: lineRow, error: e1 }, { data: m, error: e2 }, { data: a, error: e3 }] = await Promise.all([
+    const [
+      { data: lineRow, error: e1 },
+      { data: m,       error: e2 },
+      { data: a,       error: e3 },
+      { data: am,      error: e4 },
+    ] = await Promise.all([
       supabase.from('book_bs_lines').select('*').eq('id', lineId).single(),
       supabase.from('book_bs_line_mappings').select('*').eq('line_id', lineId),
       supabase.from('book_bs_line_adjustments').select('*').eq('line_id', lineId).order('created_at', { ascending: true }),
+      supabase.from('book_bs_line_asset_mappings').select('*').eq('line_id', lineId).order('created_at', { ascending: true }),
     ]);
-    if (e1 || e2 || e3) {
-      console.warn('book-bs: line reload partially failed', e1, e2, e3);
+    if (e1 || e2 || e3 || e4) {
+      console.warn('book-bs: line reload partially failed', e1, e2, e3, e4);
       return;
     }
     setLines(prev => prev.map(l => l.id === lineId ? lineRow : l));
     setMappingsByLineId(prev => ({ ...prev, [lineId]: m || [] }));
     setAdjustmentsByLineId(prev => ({ ...prev, [lineId]: a || [] }));
+    setAssetMappingsByLineId(prev => ({ ...prev, [lineId]: am || [] }));
+  }
+
+  // ── Lock / Unlock / Download handlers ───────────────────────────────────
+  //
+  // Lock freezes the year's rendered statement into book_bs_statements as a
+  // snapshot JSONB. UI-level guard then disables every input across the
+  // editor so a locked year can't be silently mutated. Unlock is admin-only
+  // (UI gated; the table itself is admin-only via RLS).
+  async function handleLockYear() {
+    if (selectedYear == null) return;
+    // Sanity guard — every line must be confirmed.
+    const unconfirmed = lines.filter(l => l.confirmed_at == null);
+    if (unconfirmed.length > 0) {
+      toast.error(`${unconfirmed.length} line${unconfirmed.length === 1 ? '' : 's'} still unconfirmed — confirm every line before locking.`);
+      return;
+    }
+    if (lines.length === 0) {
+      toast.error('Year has no lines to lock.');
+      return;
+    }
+    if (!confirm(
+      `Lock the ${selectedYear} book balance sheet?\n\n`
+      + 'Every line edit, mapping change, and adjustment is blocked until '
+      + 'you unlock. The rendered statement is snapshotted now and will '
+      + 'reproduce identically when re-downloaded.'
+    )) return;
+
+    setLocking(true);
+    try {
+      // Best-effort name lookup for the OFFICIAL band.
+      let lockedByName = null;
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user?.id)
+          .single();
+        lockedByName = data?.full_name || null;
+      } catch { /* ignore — name is optional */ }
+
+      const nowIso = new Date().toISOString();
+      const snapshot = buildBookBSSnapshot({
+        year: selectedYear,
+        lines,
+        mappingsByLineId,
+        adjustmentsByLineId,
+        transactions,
+        assets,
+        assetMappingsByLineId,
+        capturedAtIso: nowIso,
+        lockedByName,
+      });
+
+      const { error } = await supabase.from('book_bs_statements').upsert({
+        year:      selectedYear,
+        status:    'locked',
+        locked_by: user?.id || null,
+        locked_at: nowIso,
+        snapshot,
+        updated_at: nowIso,
+      }, { onConflict: 'year' });
+      if (error) throw error;
+      toast.success(`${selectedYear} locked`);
+      await loadYears();
+    } catch (err) {
+      console.error('book-bs: lock failed', err);
+      toast.error(err.message || 'Failed to lock year');
+    } finally {
+      setLocking(false);
+    }
+  }
+
+  async function handleUnlockYear() {
+    if (selectedYear == null) return;
+    const yr = selectedYear;
+    if (!confirm(
+      `Unlock the ${yr} book balance sheet?\n\n`
+      + 'Lines become editable again. The current snapshot stays in '
+      + 'book_bs_statements until you re-lock, so a re-download right after '
+      + 'unlock still reproduces the previous official PDF.'
+    )) return;
+
+    setUnlocking(true);
+    try {
+      const { error } = await supabase.from('book_bs_statements')
+        .update({
+          status:     'draft',
+          locked_by:  null,
+          locked_at:  null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('year', yr);
+      if (error) throw error;
+      toast.success(`${yr} unlocked`);
+      await loadYears();
+    } catch (err) {
+      console.error('book-bs: unlock failed', err);
+      toast.error(err.message || 'Failed to unlock year');
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
+  // Build the PDF input — uses the saved snapshot when the year is locked
+  // (reproducible official document), otherwise rebuilds from current live
+  // state for a DRAFT preview.
+  async function handleDownloadPdf({ supportingDetail = true } = {}) {
+    if (selectedYear == null) return;
+    setDownloading(true);
+    try {
+      const stmt = statements[selectedYear];
+      const locked = stmt?.status === 'locked';
+      let snapshot;
+      let lockedMeta = null;
+      if (locked && stmt?.snapshot) {
+        snapshot = stmt.snapshot;
+        lockedMeta = {
+          at:      stmt.locked_at,
+          by_name: snapshot.locked_by_name || null,
+        };
+      } else {
+        snapshot = buildBookBSSnapshot({
+          year: selectedYear,
+          lines,
+          mappingsByLineId,
+          adjustmentsByLineId,
+          transactions,
+          assets,
+          assetMappingsByLineId,
+        });
+      }
+      const pdf = generateBookBalanceSheetPdf(
+        { year: selectedYear, snapshot, locked: lockedMeta },
+        String(selectedYear),
+        { supportingDetail },
+      );
+      const filename = locked
+        ? `Book_Balance_Sheet_${selectedYear}.pdf`
+        : `Book_Balance_Sheet_${selectedYear}_DRAFT.pdf`;
+      pdf.save(filename);
+      toast.success(`Downloaded ${filename}`);
+    } catch (err) {
+      console.error('book-bs: pdf failed', err);
+      toast.error(err.message || 'Failed to generate PDF');
+    } finally {
+      setDownloading(false);
+    }
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────
@@ -475,6 +699,27 @@ export default function BookBalanceSheetPage() {
 
   const sortedYearsAsc = useMemo(() => [...years].sort((a, b) => a - b), [years]);
 
+  // L09B / L12B straight-line accumulated-D&A reference (informational only).
+  // Derived from the UNION of asset scopes mapped to each contra section's
+  // corresponding cost section (L09A → L09B, L12A → L12B), respecting the
+  // per-line exclude rules. This number NEVER feeds the line's compute —
+  // it's a read-only chip the LineEditor renders next to the manual input.
+  const slReferenceBySection = useMemo(() => {
+    if (selectedYear == null || !(assets || []).length) return {};
+    const out = {};
+    for (const [contraCode, costCode] of Object.entries(CONTRA_TO_COST_SECTION)) {
+      const costLines = lines.filter(l => l.section_code === costCode);
+      const unionIds = new Set();
+      for (const l of costLines) {
+        const ams = assetMappingsByLineId[l.id] || [];
+        const scope = resolveAssetScope(assets, ams);
+        for (const id of scope) unionIds.add(id);
+      }
+      out[contraCode] = slAccumDepForAssetIds(assets, unionIds, selectedYear);
+    }
+    return out;
+  }, [assets, lines, assetMappingsByLineId, selectedYear]);
+
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="animate-fade-in space-y-6">
@@ -489,7 +734,7 @@ export default function BookBalanceSheetPage() {
             Book Balance Sheet Builder
           </h1>
           <p className="text-surface-500 text-sm mt-0.5">
-            Stage 3 — per-line editor, "+ Add Year" roll-forward, multi-year compare. Lock + PDF land in Stage 4.
+            Stage 4 — per-line editor, "+ Add Year" roll-forward, multi-year compare, Lock Statement, and the official book-structured PDF.
           </p>
         </div>
         <button
@@ -506,12 +751,11 @@ export default function BookBalanceSheetPage() {
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
         <Info size={14} className="text-amber-700 mt-0.5 flex-shrink-0" />
         <div>
-          <div className="font-semibold mb-0.5">Stage 3 of 4 (5)</div>
-          Adding a year now <span className="font-semibold">rolls forward</span> the previous year's lines, mappings, and
-          beginning balances (from confirmed endings). Unconfirmed prior lines default to $0 with a
-          <span className="text-amber-700 font-semibold"> WARNING</span> chip. The
-          <span className="font-semibold"> Compare Years</span> tab shows years side-by-side with YoY deltas (read-only).
-          Stage 4 will add year-level locking and the official PDF.
+          <div className="font-semibold mb-0.5">Stage 4 of 4 (5)</div>
+          Per-line editor, "+ Add Year" roll-forward, multi-year compare, and now <span className="font-semibold">Lock Statement</span>
+          {' '}+ the book-structured PDF (with optional supporting-detail appendix). Locked years are
+          read-only until you click Unlock; downloads of a locked year reproduce the frozen snapshot
+          identically. The per-transaction picker (Stage 5) is still deferred.
         </div>
       </div>
 
@@ -551,10 +795,14 @@ export default function BookBalanceSheetPage() {
           handleDeleteYear={handleDeleteYear}
           deletingYear={deletingYear}
           linesLoading={linesLoading}
+          lines={lines}
           sectionsForRender={sectionsForRender}
           linesBySection={linesBySection}
           mappingsByLineId={mappingsByLineId}
           adjustmentsByLineId={adjustmentsByLineId}
+          assetMappingsByLineId={assetMappingsByLineId}
+          assets={assets}
+          slReferenceBySection={slReferenceBySection}
           rolledFromUnconfirmed={rolledFromUnconfirmed}
           transactions={transactions}
           allCategories={allCategories}
@@ -562,6 +810,12 @@ export default function BookBalanceSheetPage() {
           reloadLine={reloadLine}
           expandedLineId={expandedLineId}
           setExpandedLineId={setExpandedLineId}
+          handleLockYear={handleLockYear}
+          handleUnlockYear={handleUnlockYear}
+          handleDownloadPdf={handleDownloadPdf}
+          locking={locking}
+          unlocking={unlocking}
+          downloading={downloading}
         />
       ) : (
         <CompareView
@@ -583,10 +837,23 @@ export default function BookBalanceSheetPage() {
 
 function EditView({
   yearsLoading, years, statements, selectedYear, setSelectedYear, handleAddYear,
-  stmt, lockedAt, handleDeleteYear, deletingYear, linesLoading, sectionsForRender,
-  linesBySection, mappingsByLineId, adjustmentsByLineId, rolledFromUnconfirmed,
-  transactions, allCategories, user, reloadLine, expandedLineId, setExpandedLineId,
+  stmt, lockedAt, handleDeleteYear, deletingYear, linesLoading, lines,
+  sectionsForRender, linesBySection, mappingsByLineId, adjustmentsByLineId,
+  assetMappingsByLineId, assets, slReferenceBySection,
+  rolledFromUnconfirmed, transactions, allCategories, user, reloadLine,
+  expandedLineId, setExpandedLineId,
+  handleLockYear, handleUnlockYear, handleDownloadPdf,
+  locking, unlocking, downloading,
 }) {
+  const locked          = stmt?.status === 'locked';
+  const totalLines      = lines.length;
+  const confirmedCount  = lines.filter(l => l.confirmed_at != null).length;
+  const allConfirmed    = totalLines > 0 && confirmedCount === totalLines;
+  const lockHint        = !allConfirmed
+    ? (totalLines === 0
+        ? 'Year has no lines — add some via "+ Add Year".'
+        : `${confirmedCount}/${totalLines} lines confirmed — confirm every line before locking.`)
+    : null;
   return (
     <>
       {/* Year tabs */}
@@ -641,31 +908,87 @@ function EditView({
           <div className="card p-4 flex items-center justify-between flex-wrap gap-3">
             <div>
               <div className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Working on</div>
-              <div className="font-display text-2xl text-surface-900 mt-0.5">{selectedYear}</div>
-              {stmt && (
-                <div className="mt-1 inline-flex items-center gap-1 text-[11px]">
-                  {stmt.status === 'locked' ? (
-                    <>
-                      <Lock size={11} className="text-amber-700" />
-                      <span className="text-amber-800 font-semibold">Locked</span>
-                      {lockedAt && <span className="text-amber-700">· {lockedAt}</span>}
-                    </>
-                  ) : (
-                    <span className="text-surface-500">Status: draft</span>
-                  )}
-                </div>
-              )}
+              <div className="font-display text-2xl text-surface-900 mt-0.5 flex items-center gap-2">
+                {selectedYear}
+                {totalLines > 0 && (
+                  <span className="text-[11px] text-surface-500 font-mono font-normal">
+                    · {confirmedCount}/{totalLines} confirmed
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 inline-flex items-center gap-1 text-[11px]">
+                {locked ? (
+                  <>
+                    <Lock size={11} className="text-amber-700" />
+                    <span className="text-amber-800 font-semibold">Locked</span>
+                    {lockedAt && <span className="text-amber-700">· {lockedAt}</span>}
+                    {stmt?.snapshot?.locked_by_name && (
+                      <span className="text-amber-700">· by {stmt.snapshot.locked_by_name}</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-surface-500">Status: draft</span>
+                )}
+              </div>
             </div>
-            <button
-              onClick={handleDeleteYear}
-              disabled={deletingYear}
-              title="Removes lines + statement so you can re-seed"
-              className="btn-ghost text-xs inline-flex items-center gap-1.5 text-red-600 hover:text-red-700 disabled:opacity-50"
-            >
-              {deletingYear ? <Spinner size="sm" /> : <Trash2 size={12} />}
-              Delete year
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => handleDownloadPdf({ supportingDetail: true })}
+                disabled={downloading || totalLines === 0}
+                title={totalLines === 0 ? 'No lines yet' : (locked ? 'Re-download the locked snapshot' : 'Download DRAFT (live computed values)')}
+                className="btn-secondary text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {downloading ? <Spinner size="sm" /> : <Download size={12} />}
+                Download PDF
+              </button>
+
+              {locked ? (
+                <button
+                  onClick={handleUnlockYear}
+                  disabled={unlocking}
+                  className="btn-secondary text-xs inline-flex items-center gap-1.5 text-amber-800 border-amber-200 hover:border-amber-400 disabled:opacity-50"
+                >
+                  {unlocking ? <Spinner size="sm" /> : <Unlock size={12} />}
+                  Unlock
+                </button>
+              ) : (
+                <button
+                  onClick={handleLockYear}
+                  disabled={locking || !allConfirmed}
+                  title={lockHint || 'Lock the year — freezes the rendered statement'}
+                  className="btn-primary text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {locking ? <Spinner size="sm" className="text-white" /> : <ShieldCheck size={12} />}
+                  Lock Statement
+                </button>
+              )}
+
+              <button
+                onClick={handleDeleteYear}
+                disabled={deletingYear || locked}
+                title={locked ? 'Unlock first' : 'Removes lines + statement so you can re-seed'}
+                className="btn-ghost text-xs inline-flex items-center gap-1.5 text-red-600 hover:text-red-700 disabled:opacity-50"
+              >
+                {deletingYear ? <Spinner size="sm" /> : <Trash2 size={12} />}
+                Delete year
+              </button>
+            </div>
           </div>
+
+          {!locked && lockHint && (
+            <div className="rounded-lg border border-surface-200 bg-surface-50 p-3 text-xs text-surface-600 flex items-start gap-2">
+              <ShieldCheck size={14} className="text-surface-400 mt-0.5 flex-shrink-0" />
+              <div>{lockHint}</div>
+            </div>
+          )}
+          {locked && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <Lock size={14} className="text-amber-700 mt-0.5 flex-shrink-0" />
+              <div>
+                Year is locked. Every line is read-only. Click <span className="font-semibold">Unlock</span> to reopen for editing.
+              </div>
+            </div>
+          )}
 
           {/* Sections + lines */}
           {linesLoading ? (
@@ -713,12 +1036,17 @@ function EditView({
                               section={section}
                               mappings={mappingsByLineId[line.id] || []}
                               adjustments={adjustmentsByLineId[line.id] || []}
+                              assetMappings={assetMappingsByLineId[line.id] || []}
+                              assets={assets || []}
+                              year={selectedYear}
+                              slReferenceForSection={slReferenceBySection?.[section.code] || null}
                               transactions={transactions}
                               expanded={expandedLineId === line.id}
                               onToggle={() => setExpandedLineId(expandedLineId === line.id ? null : line.id)}
                               allCategories={allCategories}
                               user={user}
                               rolledFromUnconfirmed={rolledFromUnconfirmed.has(line.id)}
+                              locked={locked}
                               onSaved={async () => { await reloadLine(line.id); }}
                             />
                           ))}
@@ -734,9 +1062,9 @@ function EditView({
           <div className="rounded-lg border border-surface-200 bg-surface-50 p-3 text-xs text-surface-500 flex items-start gap-2">
             <AlertCircle size={14} className="text-surface-400 mt-0.5 flex-shrink-0" />
             <div>
-              <span className="font-semibold text-surface-700">Stage 4 will add:</span>{' '}
-              year-level Lock Statement (snapshots the whole year as an official document) and the
-              book-structured PDF export with supporting detail.
+              <span className="font-semibold text-surface-700">Stage 5 (deferred):</span>{' '}
+              per-transaction picker per line — pick or exclude specific journal entries beyond
+              whole-account category mapping. Reserved in the schema (book_bs_line_txns).
             </div>
           </div>
         </div>
@@ -785,6 +1113,7 @@ function CompareView({ years, compareYears, setCompareYears, compareData, compar
       }
     }
 
+    const { amByLine = {}, assets: cmpAssets = [] } = compareData;
     const rows = [];
     for (const info of byKey.values()) {
       const cells = compareYears.map(y => {
@@ -792,14 +1121,19 @@ function CompareView({ years, compareYears, setCompareYears, compareData, compar
         if (!line) return { year: y, missing: true };
         const mappings    = mByLine[line.id] || [];
         const adjustments = aByLine[line.id] || [];
+        const ams         = amByLine[line.id] || [];
         const txns        = txnsByYear[y] || [];
-        const summary = computeLineEndingSummary(line, mappings, adjustments, txns, info.section);
+        const summary = computeLineEndingSummary(line, mappings, adjustments, txns, info.section, {
+          assets: cmpAssets,
+          assetMappingsByLineId: { [line.id]: ams },
+          year: y,
+        });
         return {
           year: y,
           missing: false,
           line,
           ...summary,
-          isMapping: mappings.length > 0,
+          isMapping: mappings.length > 0 || ams.length > 0,
         };
       });
       rows.push({ ...info, cells });
@@ -1035,13 +1369,18 @@ function RolledUnconfirmedChip() {
   );
 }
 
-function BookBSLineRow({ line, section, mappings, adjustments, transactions, expanded, onToggle, allCategories, user, rolledFromUnconfirmed, onSaved }) {
-  const isMapping = mappings.length > 0;
+function BookBSLineRow({ line, section, mappings, adjustments, assetMappings, assets, year, slReferenceForSection, transactions, expanded, onToggle, allCategories, user, rolledFromUnconfirmed, locked, onSaved }) {
+  const isMapping = mappings.length > 0 || (assetMappings && assetMappings.length > 0);
 
-  const activitySum = useMemo(
+  const activityFromCoa = useMemo(
     () => mappings.reduce((s, m) => s + computeMappingActivity(transactions, m.category_name, section), 0),
     [mappings, transactions, section]
   );
+  const activityFromRegister = useMemo(() => {
+    if (!isAssetRegisterCostSection(section?.code)) return 0;
+    return assetActivityForYear(assets || [], assetMappings || [], year);
+  }, [assets, assetMappings, year, section]);
+  const activitySum = Math.round((activityFromCoa + activityFromRegister) * 100) / 100;
   const adjustmentsSum = useMemo(
     () => adjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0),
     [adjustments]
@@ -1091,11 +1430,16 @@ function BookBSLineRow({ line, section, mappings, adjustments, transactions, exp
               section={section}
               initialMappings={mappings}
               initialAdjustments={adjustments}
+              initialAssetMappings={assetMappings || []}
+              assets={assets || []}
+              year={year}
+              slReferenceForSection={slReferenceForSection}
               transactions={transactions}
               allCategories={allCategories}
               user={user}
               confirmedAt={confirmedAt}
               rolledFromUnconfirmed={rolledFromUnconfirmed}
+              locked={locked}
               onSaved={async () => { await onSaved(); }}
               onCancel={onToggle}
             />
@@ -1106,23 +1450,41 @@ function BookBSLineRow({ line, section, mappings, adjustments, transactions, exp
   );
 }
 
-function LineEditor({ line, section, initialMappings, initialAdjustments, transactions, allCategories, user, confirmedAt, rolledFromUnconfirmed, onSaved, onCancel }) {
+function LineEditor({ line, section, initialMappings, initialAdjustments, initialAssetMappings, assets, year, slReferenceForSection, transactions, allCategories, user, confirmedAt, rolledFromUnconfirmed, locked, onSaved, onCancel }) {
   const [beginning, setBeginning] = useState(String(line.beginning_balance ?? 0));
   const [mappings, setMappings]   = useState(initialMappings.map(m => ({ category_id: m.category_id, category_name: m.category_name })));
   const [adjustments, setAdjustments] = useState(
     initialAdjustments.map(a => ({ id: a.id, amount: a.amount, note: a.note, created_at: a.created_at }))
   );
+  // Asset mappings carry the id when persisted; new rows have id=undefined.
+  const [assetMappings, setAssetMappings] = useState(
+    (initialAssetMappings || []).map(m => ({
+      id: m.id,
+      scope: m.scope,
+      asset_class: m.asset_class || null,
+      asset_id: m.asset_id || null,
+      exclude: !!m.exclude,
+      note: m.note || null,
+    }))
+  );
 
   const [newMappingCategoryId, setNewMappingCategoryId] = useState('');
   const [newAdjAmount, setNewAdjAmount] = useState('');
   const [newAdjNote, setNewAdjNote]     = useState('');
-  const [saving, setSaving]             = useState(false);
+  // Asset-mapping add row state
+  const [newAssetScope, setNewAssetScope]       = useState('class'); // 'class' | 'asset'
+  const [newAssetClass, setNewAssetClass]       = useState('');
+  const [newAssetId, setNewAssetId]             = useState('');
+  const [newAssetExclude, setNewAssetExclude]   = useState(false);
+  const [saving, setSaving]                     = useState(false);
 
   useEffect(() => {
     setBeginning(String(line.beginning_balance ?? 0));
   }, [line.id, line.beginning_balance]);
 
-  const isMappingDriven = mappings.length > 0;
+  const isCostAssetSection   = isAssetRegisterCostSection(section?.code);
+  const isContraAssetSection = isAssetRegisterContraSection(section?.code);
+  const isMappingDriven      = mappings.length > 0 || assetMappings.length > 0;
 
   const activityByMapping = useMemo(() => {
     return mappings.map(m => ({
@@ -1131,10 +1493,40 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
     }));
   }, [mappings, transactions, section]);
 
-  const activitySum    = activityByMapping.reduce((s, m) => s + m.activity, 0);
+  const activityFromCoa      = activityByMapping.reduce((s, m) => s + m.activity, 0);
+  const activityFromRegister = useMemo(() => {
+    if (!isCostAssetSection) return 0;
+    return assetActivityForYear(assets || [], assetMappings, year);
+  }, [assets, assetMappings, year, isCostAssetSection]);
+  const activitySum    = Math.round((activityFromCoa + activityFromRegister) * 100) / 100;
   const adjustmentsSum = adjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0);
   const beginningNum   = Number(beginning) || 0;
   const computedEnd    = computeLineEnding(beginningNum, activitySum, adjustmentsSum);
+
+  // Dry-run tie-out (asset register only, exact within $0.01).
+  const registerEoyTotal = useMemo(() => {
+    if (!isCostAssetSection) return 0;
+    return pointInTimeGrossCost(assets || [], assetMappings, year);
+  }, [assets, assetMappings, year, isCostAssetSection]);
+  const tieOutLhs  = Math.round((beginningNum + activityFromRegister) * 100) / 100;
+  const tieOutDiff = Math.round((tieOutLhs - registerEoyTotal) * 100) / 100;
+  const tieOutOk   = Math.abs(tieOutDiff) < 0.01;
+  const scopedAssets = useMemo(() => {
+    if (!isCostAssetSection) return [];
+    return assetsInScopeWithContribution(assets || [], assetMappings, year);
+  }, [assets, assetMappings, year, isCostAssetSection]);
+
+  // Asset list grouped + sorted for the dropdowns.
+  const assetClassOptions = useMemo(() => {
+    const set = new Set((assets || []).map(a => a.asset_class).filter(Boolean));
+    return [...set].sort();
+  }, [assets]);
+  const assetOptions = useMemo(() => {
+    return (assets || []).slice().sort((a, b) =>
+      (a.asset_class || '').localeCompare(b.asset_class || '') ||
+      (a.name || '').localeCompare(b.name || '')
+    );
+  }, [assets]);
 
   const naturalSideLabel = lineActivityIsDebitNatural(section)
     ? 'Activity = Σ debits − Σ credits'
@@ -1178,7 +1570,53 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
     setAdjustments(prev => prev.filter((_, i) => i !== idx));
   }
 
+  // ── Asset register mapping ops (local state) ─────────────────────────
+  function addAssetMapping() {
+    if (newAssetScope === 'class') {
+      if (!newAssetClass) { toast.error('Pick an asset class'); return; }
+      // Dedup-by-direction guard (partial unique index blocks at DB; we surface a friendly error here).
+      if (assetMappings.some(m => m.scope === 'class' && m.asset_class === newAssetClass && !!m.exclude === !!newAssetExclude)) {
+        toast.error('That class is already mapped to this line with the same direction');
+        return;
+      }
+      setAssetMappings(prev => [...prev, {
+        id: undefined,
+        scope: 'class',
+        asset_class: newAssetClass,
+        asset_id: null,
+        exclude: !!newAssetExclude,
+        note: null,
+      }]);
+    } else {
+      if (!newAssetId) { toast.error('Pick an asset'); return; }
+      if (assetMappings.some(m => m.scope === 'asset' && m.asset_id === newAssetId && !!m.exclude === !!newAssetExclude)) {
+        toast.error('That asset is already mapped to this line with the same direction');
+        return;
+      }
+      setAssetMappings(prev => [...prev, {
+        id: undefined,
+        scope: 'asset',
+        asset_class: null,
+        asset_id: newAssetId,
+        exclude: !!newAssetExclude,
+        note: null,
+      }]);
+    }
+    setNewAssetClass('');
+    setNewAssetId('');
+    setNewAssetExclude(false);
+  }
+
+  function removeAssetMapping(idx) {
+    setAssetMappings(prev => prev.filter((_, i) => i !== idx));
+  }
+
   async function save(confirmIt) {
+    if (locked) {
+      // Defensive — the UI also hides the buttons.
+      toast.error('Year is locked. Unlock from the year toolbar to edit.');
+      return;
+    }
     setSaving(true);
     try {
       const lineUpdate = {
@@ -1229,6 +1667,29 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
         if (error) throw error;
       }
 
+      // Asset mappings: diff against initialAssetMappings. New rows (no id) →
+      // insert. Removed rows (had id, missing now) → delete.
+      const origAmIds  = new Set((initialAssetMappings || []).map(m => m.id));
+      const keptAmIds  = new Set(assetMappings.filter(m => m.id).map(m => m.id));
+      const newAmRows  = assetMappings.filter(m => !m.id);
+      const removedAm  = [...origAmIds].filter(id => !keptAmIds.has(id));
+      if (newAmRows.length) {
+        const payload = newAmRows.map(m => ({
+          line_id:     line.id,
+          scope:       m.scope,
+          asset_class: m.scope === 'class' ? m.asset_class : null,
+          asset_id:    m.scope === 'asset' ? m.asset_id    : null,
+          exclude:     !!m.exclude,
+          note:        m.note || null,
+        }));
+        const { error } = await supabase.from('book_bs_line_asset_mappings').insert(payload);
+        if (error) throw error;
+      }
+      if (removedAm.length) {
+        const { error } = await supabase.from('book_bs_line_asset_mappings').delete().in('id', removedAm);
+        if (error) throw error;
+      }
+
       toast.success(confirmIt ? `Confirmed ${line.title}` : `Saved ${line.title}`);
       await onSaved();
     } catch (err) {
@@ -1266,6 +1727,15 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
         </div>
       )}
 
+      {locked && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900 flex items-start gap-2">
+          <Lock size={12} className="text-amber-700 mt-0.5 flex-shrink-0" />
+          <div>
+            Year is locked — every field below is read-only. Use the year toolbar's <span className="font-semibold">Unlock</span> button to reopen for edits.
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
         <div>
           <label className="block text-[10px] uppercase tracking-wider text-surface-500 font-semibold mb-1">
@@ -1278,6 +1748,7 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
             onChange={(e) => setBeginning(e.target.value)}
             className="input-field text-sm"
             placeholder="0.00"
+            disabled={locked}
           />
         </div>
       </div>
@@ -1303,14 +1774,16 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
                   <span className="font-mono text-xs text-surface-700">
                     {m.activity >= 0 ? '+' : ''}{formatCurrency(m.activity)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => removeMapping(m.category_id)}
-                    className="text-surface-400 hover:text-red-600 p-1"
-                    title="Remove mapping"
-                  >
-                    <X size={14} />
-                  </button>
+                  {!locked && (
+                    <button
+                      type="button"
+                      onClick={() => removeMapping(m.category_id)}
+                      className="text-surface-400 hover:text-red-600 p-1"
+                      title="Remove mapping"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -1319,29 +1792,275 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
           <div className="text-xs text-surface-400 italic">No mappings yet — pick one below if this line should pull from the ledger.</div>
         )}
 
-        <div className="flex items-center gap-2">
-          <select
-            value={newMappingCategoryId}
-            onChange={(e) => setNewMappingCategoryId(e.target.value)}
-            className="input-field text-xs flex-1 max-w-md"
-          >
-            <option value="">— add a CoA category —</option>
-            {allCategories.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.name} {c.type ? `· ${c.type}` : ''}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={addMapping}
-            disabled={!newMappingCategoryId}
-            className="btn-secondary text-xs inline-flex items-center gap-1 disabled:opacity-50"
-          >
-            <Plus size={12} /> Map
-          </button>
-        </div>
+        {!locked && (
+          <div className="flex items-center gap-2">
+            <select
+              value={newMappingCategoryId}
+              onChange={(e) => setNewMappingCategoryId(e.target.value)}
+              className="input-field text-xs flex-1 max-w-md"
+            >
+              <option value="">— add a CoA category —</option>
+              {allCategories.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.type ? `· ${c.type}` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={addMapping}
+              disabled={!newMappingCategoryId}
+              className="btn-secondary text-xs inline-flex items-center gap-1 disabled:opacity-50"
+            >
+              <Plus size={12} /> Map
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* ── Asset register mappings (L09A / L12A only) ────────────────── */}
+      {isCostAssetSection && (
+        <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wider text-surface-600 font-semibold inline-flex items-center gap-1.5">
+            <Boxes size={12} /> Asset register mappings
+            <span className="text-surface-400 font-normal normal-case tracking-normal">
+              · gross cost flows from the /assets fixed-asset register
+            </span>
+          </div>
+
+          {assetMappings.length > 0 ? (
+            <div className="space-y-1">
+              {assetMappings.map((m, idx) => {
+                const display = (() => {
+                  if (m.scope === 'class') {
+                    let contrib = 0;
+                    let count   = 0;
+                    for (const a of assets || []) {
+                      if (a.asset_class !== m.asset_class) continue;
+                      count += 1;
+                      const c = Number(a.cost) || 0;
+                      const inEoy  = (a.in_service_date <= `${year}-12-31`) && (!a.retired_date || a.retired_date > `${year}-12-31`);
+                      const inPrev = (a.in_service_date <= `${year - 1}-12-31`) && (!a.retired_date || a.retired_date > `${year - 1}-12-31`);
+                      contrib += (inEoy ? c : 0) - (inPrev ? c : 0);
+                    }
+                    if (m.exclude) contrib = -contrib;
+                    return {
+                      label: m.asset_class,
+                      subtitle: `class · ${count} asset${count === 1 ? '' : 's'}`,
+                      contribution: Math.round(contrib * 100) / 100,
+                    };
+                  }
+                  const a = (assets || []).find(x => x.id === m.asset_id);
+                  if (!a) return { label: '?', subtitle: '(deleted asset)', contribution: 0 };
+                  const c = Number(a.cost) || 0;
+                  const inEoy  = (a.in_service_date <= `${year}-12-31`) && (!a.retired_date || a.retired_date > `${year}-12-31`);
+                  const inPrev = (a.in_service_date <= `${year - 1}-12-31`) && (!a.retired_date || a.retired_date > `${year - 1}-12-31`);
+                  let contrib = (inEoy ? c : 0) - (inPrev ? c : 0);
+                  if (m.exclude) contrib = -contrib;
+                  return {
+                    label: a.name,
+                    subtitle: `asset · ${a.asset_class || ''}`,
+                    contribution: Math.round(contrib * 100) / 100,
+                  };
+                })();
+                const tone = m.exclude
+                  ? 'border-red-200 bg-red-50/50'
+                  : 'border-surface-100 bg-surface-50';
+                return (
+                  <div key={`am-${idx}`} className={`flex items-center justify-between gap-3 px-3 py-1.5 rounded-md border ${tone}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      {m.exclude && (
+                        <span className="inline-flex items-center text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">exclude</span>
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate">{display.label}</div>
+                        <div className="text-[10px] text-surface-500 truncate">{display.subtitle}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <span className="font-mono text-xs text-surface-700">
+                        {display.contribution >= 0 ? '+' : ''}{formatCurrency(display.contribution)}
+                      </span>
+                      {!locked && (
+                        <button
+                          type="button"
+                          onClick={() => removeAssetMapping(idx)}
+                          className="text-surface-400 hover:text-red-600 p-1"
+                          title="Remove asset mapping"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-xs text-surface-400 italic">No asset register mappings yet — this line is purely CoA + manual.</div>
+          )}
+
+          {!locked && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex bg-surface-100 rounded-md p-0.5">
+                {['class', 'asset'].map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setNewAssetScope(opt)}
+                    className={`px-2.5 py-1 text-[11px] rounded font-medium ${newAssetScope === opt ? 'bg-white shadow-sm text-surface-900' : 'text-surface-500'}`}
+                  >
+                    {opt === 'class' ? 'By class' : 'By asset'}
+                  </button>
+                ))}
+              </div>
+              {newAssetScope === 'class' ? (
+                <select
+                  value={newAssetClass}
+                  onChange={(e) => setNewAssetClass(e.target.value)}
+                  className="input-field text-xs flex-1 max-w-md"
+                >
+                  <option value="">— pick an asset class —</option>
+                  {assetClassOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              ) : (
+                <select
+                  value={newAssetId}
+                  onChange={(e) => setNewAssetId(e.target.value)}
+                  className="input-field text-xs flex-1 max-w-md"
+                >
+                  <option value="">— pick an asset —</option>
+                  {assetOptions.map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} · {a.asset_class || ''} · {formatCurrency(a.cost)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-surface-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newAssetExclude}
+                  onChange={(e) => setNewAssetExclude(e.target.checked)}
+                />
+                Exclude
+              </label>
+              <button
+                type="button"
+                onClick={addAssetMapping}
+                disabled={newAssetScope === 'class' ? !newAssetClass : !newAssetId}
+                className="btn-secondary text-xs inline-flex items-center gap-1 disabled:opacity-50"
+              >
+                <Plus size={12} /> Map
+              </button>
+            </div>
+          )}
+
+          {/* Dry-run tie-out — only when register mappings exist */}
+          {assetMappings.length > 0 && (
+            <div className={`rounded-lg border p-3 mt-2 ${tieOutOk ? 'border-green-200 bg-green-50/40' : 'border-red-200 bg-red-50/40'}`}>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-[11px] uppercase tracking-wider font-semibold text-surface-700 inline-flex items-center gap-1.5">
+                  Register tie-out (live)
+                  {tieOutOk
+                    ? <CheckCircle2 size={12} className="text-green-700" />
+                    : <X size={12} className="text-red-700" />}
+                </div>
+                <div className="text-[11px] text-surface-500">
+                  Adjustments are excluded from this check — they live on top of the register.
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2 text-xs">
+                <div>
+                  <div className="uppercase tracking-wider text-surface-500 text-[10px] font-semibold">Beginning + register activity</div>
+                  <div className="font-mono">{formatCurrency(tieOutLhs)}</div>
+                </div>
+                <div>
+                  <div className="uppercase tracking-wider text-surface-500 text-[10px] font-semibold">Register total · 12/31/{year}</div>
+                  <div className="font-mono">{formatCurrency(registerEoyTotal)}</div>
+                </div>
+                <div>
+                  <div className="uppercase tracking-wider text-surface-500 text-[10px] font-semibold">Diff (tolerance $0.01)</div>
+                  <div className={`font-mono font-semibold ${tieOutOk ? 'text-green-700' : 'text-red-700'}`}>
+                    {tieOutDiff >= 0 ? '+' : ''}{formatCurrency(tieOutDiff)}
+                    <span className="text-[10px] uppercase tracking-wider ml-2">{tieOutOk ? 'ties out' : 'off — investigate'}</span>
+                  </div>
+                </div>
+              </div>
+              {scopedAssets.length > 0 && (
+                <div className="mt-3 overflow-x-auto">
+                  <div className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold mb-1">
+                    Assets in scope ({scopedAssets.length})
+                  </div>
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-left text-surface-500">
+                        <th className="pr-3 py-1">Asset</th>
+                        <th className="pr-3 py-1">Class</th>
+                        <th className="pr-3 py-1">In-service</th>
+                        <th className="pr-3 py-1">Retired</th>
+                        <th className="pr-3 py-1 text-right">Cost</th>
+                        <th className="pr-3 py-1 text-right">Contribution</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scopedAssets.map(a => (
+                        <tr key={a.id} className="border-t border-surface-100">
+                          <td className="pr-3 py-1">{a.name}</td>
+                          <td className="pr-3 py-1 text-surface-500">{a.asset_class || '—'}</td>
+                          <td className="pr-3 py-1 font-mono">{a.in_service_date || '—'}</td>
+                          <td className="pr-3 py-1 font-mono">{a.retired_date || '—'}</td>
+                          <td className="pr-3 py-1 text-right font-mono">{formatCurrency(a.cost)}</td>
+                          <td className={`pr-3 py-1 text-right font-mono ${a.contribution > 0 ? 'text-green-700' : a.contribution < 0 ? 'text-red-700' : 'text-surface-500'}`}>
+                            {a.contribution >= 0 ? '+' : ''}{formatCurrency(a.contribution)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── L09B / L12B straight-line accumulated-D&A reference ─────────── */}
+      {isContraAssetSection && slReferenceForSection && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="space-y-0.5 min-w-0">
+              <div className="font-semibold text-amber-900 inline-flex items-center gap-1.5">
+                <Info size={12} /> Book straight-line reference only — enter your CPA's tax figure here.
+              </div>
+              <div className="text-[11px] text-amber-800">
+                Derived from {CONTRA_TO_COST_SECTION[section.code]}'s mapped assets
+                {' '}({slReferenceForSection.assetCount} asset{slReferenceForSection.assetCount === 1 ? '' : 's'}
+                {slReferenceForSection.classes.length > 0 ? ` · classes: ${slReferenceForSection.classes.join(', ')}` : ''}).
+                Does NOT populate or affect this line.
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="font-mono font-semibold text-amber-900">
+                {formatCurrency(slReferenceForSection.total)} <span className="text-[10px] font-normal">as of 12/31/{year}</span>
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(String(slReferenceForSection.total.toFixed(2)));
+                    toast.success('Copied');
+                  } catch { toast.error('Copy failed'); }
+                }}
+                className="btn-ghost text-[11px] inline-flex items-center gap-1 text-amber-800 hover:text-amber-900"
+                title="Copy reference figure to clipboard"
+              >
+                <Copy size={11} /> Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2">
         <div className="text-xs uppercase tracking-wider text-surface-600 font-semibold inline-flex items-center gap-1.5">
@@ -1359,14 +2078,16 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
                   {Number(a.amount) >= 0 ? '+' : ''}{formatCurrency(a.amount)}
                 </span>
                 <span className="text-xs text-surface-700 flex-1">{a.note}</span>
-                <button
-                  type="button"
-                  onClick={() => removeAdjustment(idx)}
-                  className="text-surface-400 hover:text-red-600 p-1"
-                  title="Remove adjustment"
-                >
-                  <X size={14} />
-                </button>
+                {!locked && (
+                  <button
+                    type="button"
+                    onClick={() => removeAdjustment(idx)}
+                    className="text-surface-400 hover:text-red-600 p-1"
+                    title="Remove adjustment"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -1374,30 +2095,32 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
           <div className="text-xs text-surface-400 italic">No adjustments yet.</div>
         )}
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="number"
-            step="0.01"
-            value={newAdjAmount}
-            onChange={(e) => setNewAdjAmount(e.target.value)}
-            className="input-field text-xs w-28"
-            placeholder="0.00"
-          />
-          <input
-            type="text"
-            value={newAdjNote}
-            onChange={(e) => setNewAdjNote(e.target.value)}
-            className="input-field text-xs flex-1 max-w-md"
-            placeholder="Note (required)"
-          />
-          <button
-            type="button"
-            onClick={addAdjustment}
-            className="btn-secondary text-xs inline-flex items-center gap-1"
-          >
-            <Plus size={12} /> Add
-          </button>
-        </div>
+        {!locked && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="number"
+              step="0.01"
+              value={newAdjAmount}
+              onChange={(e) => setNewAdjAmount(e.target.value)}
+              className="input-field text-xs w-28"
+              placeholder="0.00"
+            />
+            <input
+              type="text"
+              value={newAdjNote}
+              onChange={(e) => setNewAdjNote(e.target.value)}
+              className="input-field text-xs flex-1 max-w-md"
+              placeholder="Note (required)"
+            />
+            <button
+              type="button"
+              onClick={addAdjustment}
+              className="btn-secondary text-xs inline-flex items-center gap-1"
+            >
+              <Plus size={12} /> Add
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg bg-surface-50 border border-surface-100 p-3 text-xs">
@@ -1408,11 +2131,18 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
           </div>
           <div>
             <div className="uppercase tracking-wider text-surface-500 text-[10px] font-semibold">
-              Activity ({mappings.length} map{mappings.length === 1 ? '' : 's'})
+              Activity ({mappings.length} CoA · {assetMappings.length} register)
             </div>
             <div className={`font-mono ${activitySum < 0 ? 'text-red-700' : 'text-surface-700'}`}>
               {activitySum >= 0 ? '+' : ''}{formatCurrency(activitySum)}
             </div>
+            {isCostAssetSection && (mappings.length > 0 || assetMappings.length > 0) && (
+              <div className="text-[10px] text-surface-500 mt-0.5 font-mono">
+                CoA {activityFromCoa >= 0 ? '+' : ''}{formatCurrency(activityFromCoa)}
+                {' · '}
+                Reg {activityFromRegister >= 0 ? '+' : ''}{formatCurrency(activityFromRegister)}
+              </div>
+            )}
           </div>
           <div>
             <div className="uppercase tracking-wider text-surface-500 text-[10px] font-semibold">
@@ -1436,26 +2166,30 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, transa
 
       <div className="flex items-center justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} disabled={saving} className="btn-ghost text-xs">
-          Cancel
+          {locked ? 'Close' : 'Cancel'}
         </button>
-        <button
-          type="button"
-          onClick={() => save(false)}
-          disabled={saving}
-          className="btn-secondary text-xs inline-flex items-center gap-1 disabled:opacity-50"
-        >
-          {saving ? <Spinner size="sm" /> : <Save size={12} />}
-          Save Draft
-        </button>
-        <button
-          type="button"
-          onClick={() => save(true)}
-          disabled={saving}
-          className="btn-primary text-xs inline-flex items-center gap-1 disabled:opacity-50"
-        >
-          {saving ? <Spinner size="sm" className="text-white" /> : <CheckCircle2 size={12} />}
-          Confirm
-        </button>
+        {!locked && (
+          <>
+            <button
+              type="button"
+              onClick={() => save(false)}
+              disabled={saving}
+              className="btn-secondary text-xs inline-flex items-center gap-1 disabled:opacity-50"
+            >
+              {saving ? <Spinner size="sm" /> : <Save size={12} />}
+              Save Draft
+            </button>
+            <button
+              type="button"
+              onClick={() => save(true)}
+              disabled={saving}
+              className="btn-primary text-xs inline-flex items-center gap-1 disabled:opacity-50"
+            >
+              {saving ? <Spinner size="sm" className="text-white" /> : <CheckCircle2 size={12} />}
+              Confirm
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

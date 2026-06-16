@@ -185,15 +185,246 @@ export function computeLineEnding(beginning, activitySum, adjustmentsSum) {
   return Math.round((b + a + x) * 100) / 100;
 }
 
+// ── Asset-register integration (Stage 4.5) ────────────────────────────────
+//
+// Only the L09A and L12A "cost" sections can pull from the fixed-asset
+// register. L09B / L12B (contra) lines never pull — they show an
+// informational straight-line accumulated-D&A figure derived from the union
+// of L09A / L12A's mapped scopes, and that's it.
+
+export const ASSET_REGISTER_COST_SECTIONS   = new Set(['L09A', 'L12A']);
+export const ASSET_REGISTER_CONTRA_SECTIONS = new Set(['L09B', 'L12B']);
+export const CONTRA_TO_COST_SECTION = { L09B: 'L09A', L12B: 'L12A' };
+
+export function isAssetRegisterCostSection(code)   { return ASSET_REGISTER_COST_SECTIONS.has(code); }
+export function isAssetRegisterContraSection(code) { return ASSET_REGISTER_CONTRA_SECTIONS.has(code); }
+
+function endOfYearDate(year) { return `${year}-12-31`; }
+
+// True when the asset belongs on the EOY-of-year balance sheet:
+//   • in_service_date is on or before EOY(year)
+//   • not retired on or before EOY(year)   (retired_date > EOY ⇒ still included)
+export function assetIncludedAtEoy(asset, year) {
+  if (!asset?.in_service_date) return false;
+  const eoy = endOfYearDate(year);
+  if (asset.in_service_date > eoy) return false;
+  if (asset.retired_date && asset.retired_date <= eoy) return false;
+  return true;
+}
+
+// Resolve a line's asset-mapping rows into a concrete Set<asset.id>.
+// Rules:
+//   scope='class', exclude=false → add every asset with that asset_class
+//   scope='asset', exclude=false → add that one asset
+//   exclude=true  variants        → remove from the included set
+// Composition: includes minus excludes. A row only matters at compose time —
+// the order user added them in is irrelevant.
+export function resolveAssetScope(assets, mappings) {
+  const includes = new Set();
+  const excludes = new Set();
+  for (const m of mappings || []) {
+    if (m.scope === 'class' && m.asset_class) {
+      for (const a of assets || []) {
+        if (a.asset_class !== m.asset_class) continue;
+        (m.exclude ? excludes : includes).add(a.id);
+      }
+    } else if (m.scope === 'asset' && m.asset_id) {
+      (m.exclude ? excludes : includes).add(m.asset_id);
+    }
+  }
+  for (const id of excludes) includes.delete(id);
+  return includes;
+}
+
+// Gross cost as of EOY(year) for the resolved scope.
+export function pointInTimeGrossCost(assets, mappings, year) {
+  const scope = resolveAssetScope(assets, mappings);
+  let total = 0;
+  for (const a of assets || []) {
+    if (!scope.has(a.id)) continue;
+    if (!assetIncludedAtEoy(a, year)) continue;
+    total += Number(a.cost) || 0;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Activity for the year = EOY(year) gross cost − EOY(year-1) gross cost,
+// restricted to in-scope assets. Handles add / retire / both-in-year /
+// nothing-changed cases per Phase 1 plan.
+export function assetActivityForYear(assets, mappings, year) {
+  const scope = resolveAssetScope(assets, mappings);
+  let curr = 0;
+  let prev = 0;
+  for (const a of assets || []) {
+    if (!scope.has(a.id)) continue;
+    const c = Number(a.cost) || 0;
+    if (assetIncludedAtEoy(a, year))     curr += c;
+    if (assetIncludedAtEoy(a, year - 1)) prev += c;
+  }
+  return Math.round((curr - prev) * 100) / 100;
+}
+
+// Asset-by-asset detail for the dry-run tie-out card. Only returns assets
+// in the resolved scope (so the user sees exactly what the line sums).
+export function assetsInScopeWithContribution(assets, mappings, year) {
+  const scope = resolveAssetScope(assets, mappings);
+  const rows = [];
+  for (const a of assets || []) {
+    if (!scope.has(a.id)) continue;
+    const c = Number(a.cost) || 0;
+    const inCurr = assetIncludedAtEoy(a, year);
+    const inPrev = assetIncludedAtEoy(a, year - 1);
+    const contribution = (inCurr ? c : 0) - (inPrev ? c : 0);
+    rows.push({
+      id: a.id,
+      name: a.name,
+      asset_class: a.asset_class,
+      in_service_date: a.in_service_date,
+      retired_date: a.retired_date || null,
+      cost: c,
+      in_at_eoy: inCurr,
+      in_at_prev_eoy: inPrev,
+      contribution: Math.round(contribution * 100) / 100,
+    });
+  }
+  rows.sort((a, b) =>
+    (a.asset_class || '').localeCompare(b.asset_class || '') ||
+    (a.name || '').localeCompare(b.name || '')
+  );
+  return rows;
+}
+
+// Number of months from startDate through endDate (inclusive at both ends).
+function monthsBetweenInclusive(startDate, endDate) {
+  if (!startDate || !endDate) return 0;
+  const a = new Date(startDate);
+  const b = new Date(endDate);
+  if (b < a) return 0;
+  return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + 1;
+}
+
+// Per-asset straight-line accumulated D&A as of EOY(year). Matches the
+// existing AssetsPage formula (monthly = cost / (life*12)) but capped by
+// retirement date and cost. Returns 0 for an asset not yet in service.
+function slAccumDepForAsset(asset, year) {
+  const cost = Number(asset?.cost) || 0;
+  const life = Number(asset?.life_years) || 0;
+  if (cost <= 0 || life <= 0) return 0;
+  if (!asset.in_service_date) return 0;
+  const eoy = endOfYearDate(year);
+  if (asset.in_service_date > eoy) return 0;
+  const endRaw = (asset.retired_date && asset.retired_date < eoy) ? asset.retired_date : eoy;
+  const monthsActive = monthsBetweenInclusive(asset.in_service_date, endRaw);
+  const totalMonths = life * 12;
+  const capped = Math.min(monthsActive, totalMonths);
+  const monthly = cost / totalMonths;
+  return Math.min(monthly * capped, cost);
+}
+
+// Straight-line accumulated D&A across an arbitrary asset-id set. Used by
+// the page to compute the L09B / L12B informational chip from the UNION of
+// all L09A / L12A line scopes.
+export function slAccumDepForAssetIds(assets, assetIdSet, year) {
+  let total = 0;
+  let count = 0;
+  const classes = new Set();
+  for (const a of assets || []) {
+    if (!assetIdSet?.has?.(a.id)) continue;
+    count += 1;
+    if (a.asset_class) classes.add(a.asset_class);
+    total += slAccumDepForAsset(a, year);
+  }
+  return {
+    total: Math.round(total * 100) / 100,
+    assetCount: count,
+    classes: [...classes].sort(),
+  };
+}
+
+// Convenience wrapper that goes mappings → scope → SL accum dep. Useful
+// per-line at the cost section level if ever needed.
+export function slAccumDepForScope(assets, mappings, year) {
+  return slAccumDepForAssetIds(assets, resolveAssetScope(assets, mappings), year);
+}
+
+// Snapshot helper: per asset-mapping row, hydrate a display payload that
+// goes into the locked-year snapshot. Captures the contribution AT LOCK
+// TIME so the PDF reproduces identically even if the register is edited
+// later. Not exported — used only by buildBookBSSnapshot below.
+function describeAssetMappingForSnapshot(assets, mapping, year) {
+  if (!mapping) return null;
+  if (mapping.scope === 'class') {
+    let contribution = 0;
+    let assetCount = 0;
+    for (const a of assets || []) {
+      if (a.asset_class !== mapping.asset_class) continue;
+      assetCount += 1;
+      const c = Number(a.cost) || 0;
+      if (assetIncludedAtEoy(a, year))     contribution += c;
+      if (assetIncludedAtEoy(a, year - 1)) contribution -= c;
+    }
+    if (mapping.exclude) contribution = -contribution;
+    return {
+      scope: 'class',
+      asset_class: mapping.asset_class,
+      asset_id: null,
+      exclude: !!mapping.exclude,
+      display_name: mapping.asset_class,
+      asset_count: assetCount,
+      contribution: Math.round(contribution * 100) / 100,
+    };
+  }
+  // asset scope
+  const a = (assets || []).find(x => x.id === mapping.asset_id);
+  if (!a) {
+    return {
+      scope: 'asset',
+      asset_class: null,
+      asset_id: mapping.asset_id,
+      exclude: !!mapping.exclude,
+      display_name: '?',
+      asset_count: 0,
+      contribution: 0,
+    };
+  }
+  const c = Number(a.cost) || 0;
+  let contribution = (assetIncludedAtEoy(a, year) ? c : 0) - (assetIncludedAtEoy(a, year - 1) ? c : 0);
+  if (mapping.exclude) contribution = -contribution;
+  return {
+    scope: 'asset',
+    asset_class: a.asset_class || null,
+    asset_id: a.id,
+    exclude: !!mapping.exclude,
+    display_name: a.name,
+    asset_count: 1,
+    contribution: Math.round(contribution * 100) / 100,
+  };
+}
+
 // Combine a line's pieces into a single { computed, confirmed, end, source }
 // summary. `end` is the best-available figure: the confirmed snapshot when
 // present, else the live-computed value. `source` says which one we used.
 // Used by the Compare view to render each (line, year) cell consistently.
-export function computeLineEndingSummary(line, mappings, adjustments, transactions, section) {
-  const activitySum = (mappings || []).reduce(
+//
+// assetData (optional) wires in the fixed-asset register's net-additions
+// activity for the line's year. Only applies to L09A / L12A; ignored on
+// every other section. Shape:
+//   { assets: [...], assetMappingsByLineId: {lineId: [mapping rows]}, year }
+export function computeLineEndingSummary(line, mappings, adjustments, transactions, section, assetData) {
+  const activityFromCoa = (mappings || []).reduce(
     (s, m) => s + computeMappingActivity(transactions, m.category_name, section),
     0
   );
+  let activityFromAssetRegister = 0;
+  if (assetData && isAssetRegisterCostSection(section?.code)) {
+    const assetMappings = assetData.assetMappingsByLineId?.[line?.id] || [];
+    activityFromAssetRegister = assetActivityForYear(
+      assetData.assets || [],
+      assetMappings,
+      assetData.year,
+    );
+  }
+  const activitySum = Math.round((activityFromCoa + activityFromAssetRegister) * 100) / 100;
   const adjustmentsSum = (adjustments || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
   const computed = computeLineEnding(line?.beginning_balance, activitySum, adjustmentsSum);
   const confirmed = line?.ending_balance_confirmed;
@@ -202,9 +433,113 @@ export function computeLineEndingSummary(line, mappings, adjustments, transactio
     computed,
     confirmed: confirmed != null ? Number(confirmed) : null,
     activitySum,
+    activityFromCoa: Math.round(activityFromCoa * 100) / 100,
+    activityFromAssetRegister,
     adjustmentsSum,
     end: Math.round(end * 100) / 100,
     source: confirmed != null ? 'confirmed' : 'computed',
+  };
+}
+
+// Build the immutable snapshot payload that backs both the draft PDF and
+// the locked-year persistence. Shape:
+//
+//   {
+//     year,
+//     captured_at,                                  // ISO timestamp
+//     sections: [{ code, title, group, contra,
+//                  lines: [{
+//                    title, beginning, activitySum, adjustmentsSum, ending,
+//                    isMapping, mappings: [{name, activity}],
+//                    adjustments: [{amount, note}],
+//                  }],
+//                  subtotal                          // Σ line endings (positive)
+//                }],
+//     totals: { totalAssets, totalLiabilities, totalEquity,
+//               totalLiabPlusEquity, balanceCheck }
+//   }
+//
+// totalAssets / totalEquity already account for contra sections (subtracted).
+// totalLiabilities currently has no contras in the structure so it's a
+// plain sum, but the same logic applies if one is added later.
+//
+// Each line's "ending" is preferred from line.ending_balance_confirmed
+// when present, otherwise the live-computed value. This is intentional:
+// the lock flow only allows locking when every line is confirmed, so the
+// snapshot reads its frozen endings from the confirmed field; the draft
+// PDF path tolerates unconfirmed lines and uses computed.
+export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustmentsByLineId, transactions, assets, assetMappingsByLineId, capturedAtIso, lockedByName }) {
+  const sectionMap = new Map();
+  for (const s of BOOK_BS_STRUCTURE) {
+    sectionMap.set(s.code, {
+      code: s.code,
+      title: s.title,
+      group: s.group,
+      contra: !!s.contra,
+      lines: [],
+      subtotal: 0,
+    });
+  }
+
+  for (const line of lines || []) {
+    const sec = sectionMap.get(line.section_code);
+    if (!sec) continue;
+    const sectionDescriptor = bookSectionByCode(line.section_code);
+    const ms   = mappingsByLineId?.[line.id]   || [];
+    const adjs = adjustmentsByLineId?.[line.id] || [];
+    const ams  = assetMappingsByLineId?.[line.id] || [];
+    const summary = computeLineEndingSummary(line, ms, adjs, transactions || [], sectionDescriptor, {
+      assets: assets || [],
+      assetMappingsByLineId,
+      year,
+    });
+    const ending = summary.end;
+    const assetMappingsSnap = ams
+      .map(m => describeAssetMappingForSnapshot(assets || [], m, year))
+      .filter(Boolean);
+    sec.lines.push({
+      title:                     line.title,
+      beginning:                 Math.round((Number(line.beginning_balance) || 0) * 100) / 100,
+      activitySum:               summary.activitySum,
+      activityFromCoa:           summary.activityFromCoa || 0,
+      activityFromAssetRegister: summary.activityFromAssetRegister || 0,
+      adjustmentsSum:            summary.adjustmentsSum,
+      ending,
+      isMapping:                 ms.length > 0 || ams.length > 0,
+      mappings: ms.map(m => ({
+        name:     m.category_name,
+        activity: computeMappingActivity(transactions || [], m.category_name, sectionDescriptor),
+      })),
+      assetMappings: assetMappingsSnap,
+      adjustments: adjs.map(a => ({
+        amount: Math.round((Number(a.amount) || 0) * 100) / 100,
+        note:   a.note,
+      })),
+    });
+    sec.subtotal = Math.round((sec.subtotal + ending) * 100) / 100;
+  }
+
+  let totalAssets       = 0;
+  let totalLiabilities  = 0;
+  let totalEquity       = 0;
+  for (const sec of sectionMap.values()) {
+    const signed = sec.contra ? -sec.subtotal : sec.subtotal;
+    if (sec.group === 'asset')     totalAssets      += signed;
+    if (sec.group === 'liability') totalLiabilities += signed;
+    if (sec.group === 'equity')    totalEquity      += signed;
+  }
+  totalAssets      = Math.round(totalAssets * 100) / 100;
+  totalLiabilities = Math.round(totalLiabilities * 100) / 100;
+  totalEquity      = Math.round(totalEquity * 100) / 100;
+  const totalLiabPlusEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
+  const balanceCheck        = Math.round((totalAssets - totalLiabPlusEquity) * 100) / 100;
+
+  return {
+    year,
+    captured_at: capturedAtIso || new Date().toISOString(),
+    locked_by_name: lockedByName || null,
+    sections: [...sectionMap.values()],
+    totals: { totalAssets, totalLiabilities, totalEquity, totalLiabPlusEquity, balanceCheck },
   };
 }
 

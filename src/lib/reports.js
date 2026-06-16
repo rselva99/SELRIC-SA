@@ -619,6 +619,278 @@ export function generateIncomeStatementPdf(input, periodArg, opts = {}) {
   return generatePnLPdf(input, periodArg, opts);
 }
 
+// ── Book-Structured Balance Sheet ────────────────────────────────────────
+//
+// Reuses the same engine as the other reports — addHeader, addFooter,
+// addFootersToAllPages, ensureSpace, TABLE_BASE — and the FOOTER_RESERVED
+// page-break guard. Input shape (built by lib/bookBalanceSheet.js
+// buildBookBSSnapshot or read from book_bs_statements.snapshot):
+//
+//   {
+//     year,                                          // integer or string
+//     snapshot: { sections, totals, captured_at, locked_by_name? },
+//     locked:    { at, by_name } | null,             // present when official
+//   }
+//
+//   opts = { supportingDetail: true | false }
+//
+// Section + line layout:
+//   • Group header  (ASSETS / LIABILITIES / EQUITY)
+//   • Section header (L01 · Cash)
+//   • Two-column line table: Line | Ending balance
+//     Contra-section lines and the contra subtotal render in (parentheses).
+//   • Group total band (TOTAL ASSETS …)
+// After all groups:
+//   • Total Liabilities + Equity band
+//   • Balance Check line — green ✓ when |Assets − (L+E)| < 0.005, else red.
+// Optional Supporting Detail appendix:
+//   • Per line: Beginning / Activity per mapping (with sum) / Adjustments
+//     (with notes) / Ending. Ending rendered in (parens) for contra lines.
+
+const BOOK_GROUPS = [
+  { key: 'asset',     label: 'ASSETS' },
+  { key: 'liability', label: 'LIABILITIES' },
+  { key: 'equity',    label: 'EQUITY' },
+];
+
+function fmtSigned(amount) {
+  const n = Number(amount) || 0;
+  return (n >= 0 ? '+' : '') + formatCurrency(n);
+}
+
+function fmtContraOrNot(amount, isContra) {
+  if (isContra) return `(${formatCurrency(Math.abs(Number(amount) || 0))})`;
+  return formatCurrency(amount);
+}
+
+function renderOfficialBand(doc, y, locked) {
+  y = ensureSpace(doc, y, SUMMARY_BAND_H + 4);
+  doc.setFillColor(217, 237, 227);
+  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, SUMMARY_BAND_H, 3, 3, 'F');
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('OFFICIAL'), PAGE_MARGIN + 6, y + 8);
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  const at = locked?.at ? new Date(locked.at).toLocaleString() : '';
+  const by = locked?.by_name ? ` by ${locked.by_name}` : '';
+  doc.text(safeText(`Locked ${at}${by}`), PAGE_WIDTH - PAGE_MARGIN - 6, y + 12, { align: 'right' });
+  return y + SUMMARY_BAND_H + 4;
+}
+
+function renderDraftBanner(doc, y) {
+  y = ensureSpace(doc, y, 10);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText('DRAFT — not yet locked. Confirm every line and Lock Statement to make this official.'), PAGE_MARGIN, y + 4);
+  return y + 8;
+}
+
+function renderBookSection(doc, y, section) {
+  if (!section?.lines?.length) return y;
+  y = ensureSpace(doc, y, 19);
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText(`${section.code} · ${section.title}${section.contra ? ' (contra)' : ''}`), PAGE_MARGIN, y);
+  y += 5;
+
+  const body = section.lines.map(line => [
+    safeText(line.title),
+    safeText(fmtContraOrNot(line.ending, section.contra)),
+  ]);
+  body.push([
+    { content: safeText(`Subtotal — ${section.code}`),                                 styles: { fontStyle: 'bold' } },
+    { content: safeText(fmtContraOrNot(section.subtotal, section.contra)),             styles: { fontStyle: 'bold' } },
+  ]);
+
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: [['Line', 'Ending balance']],
+    body,
+  });
+
+  return (doc.lastAutoTable?.finalY ?? y) + 4;
+}
+
+function renderGroupTotalBand(doc, y, label, amount) {
+  y = ensureSpace(doc, y, 16);
+  doc.setFillColor(...LIGHT_BG);
+  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 12, 2, 2, 'F');
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText(`TOTAL ${label}`), PAGE_MARGIN + 4, y + 8);
+  doc.text(safeText(formatCurrency(amount)), PAGE_WIDTH - PAGE_MARGIN - 4, y + 8, { align: 'right' });
+  return y + 16;
+}
+
+function renderFinalSummary(doc, y, totals) {
+  if (!totals) return y;
+
+  // Total L + E
+  y = ensureSpace(doc, y, 16);
+  doc.setFillColor(...LIGHT_BG);
+  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 12, 2, 2, 'F');
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('TOTAL LIABILITIES + EQUITY'), PAGE_MARGIN + 4, y + 8);
+  doc.text(safeText(formatCurrency(totals.totalLiabPlusEquity)), PAGE_WIDTH - PAGE_MARGIN - 4, y + 8, { align: 'right' });
+  y += 16;
+
+  // Balance Check
+  const balanced = Math.abs(Number(totals.balanceCheck) || 0) < 0.005;
+  y = ensureSpace(doc, y, 16);
+  doc.setFillColor(...(balanced ? [217, 237, 227] : [255, 230, 230]));
+  doc.roundedRect(PAGE_MARGIN, y, USABLE_WIDTH, 12, 2, 2, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...(balanced ? BRAND_DARK : [224, 49, 49]));
+  doc.text(safeText(balanced ? 'BALANCE CHECK  ✓' : 'BALANCE CHECK — OUT OF BALANCE'), PAGE_MARGIN + 4, y + 8);
+  doc.text(safeText(`Assets − (L + E) = ${formatCurrency(totals.balanceCheck)}`), PAGE_WIDTH - PAGE_MARGIN - 4, y + 8, { align: 'right' });
+  return y + 16;
+}
+
+// Per-line breakdown for the Supporting Detail appendix. Single small table
+// with body rows: Beginning, one Activity row per mapping (no mappings →
+// one zero-row), one Adjustment row per adjustment, Ending (bold).
+function renderBookSupportingLine(doc, y, line, section) {
+  y = ensureSpace(doc, y, 24);
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...TEXT_DARK);
+  doc.text(safeText(line.title), PAGE_MARGIN, y);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText(line.isMapping ? 'Mapping-driven' : 'Manual-only'),
+    PAGE_WIDTH - PAGE_MARGIN, y, { align: 'right' });
+  y += 3;
+
+  const body = [];
+  body.push([safeText('Beginning balance'), safeText(formatCurrency(line.beginning))]);
+  const hasCoa    = Array.isArray(line.mappings)      && line.mappings.length      > 0;
+  const hasAssets = Array.isArray(line.assetMappings) && line.assetMappings.length > 0;
+  if (!hasCoa && !hasAssets) {
+    body.push([safeText('Activity (no mappings — manual-only)'), safeText(formatCurrency(0))]);
+  } else {
+    if (hasCoa) {
+      for (const m of line.mappings) {
+        body.push([safeText(`Activity · CoA: ${m.name}`), safeText(fmtSigned(m.activity))]);
+      }
+    }
+    if (hasAssets) {
+      for (const m of line.assetMappings) {
+        const flag = m.exclude ? ' [exclude]' : '';
+        const label = m.scope === 'class'
+          ? `Activity · Register: ${m.asset_class || m.display_name} (class · ${m.asset_count} asset${m.asset_count === 1 ? '' : 's'})${flag}`
+          : `Activity · Register: ${m.display_name}${m.asset_class ? ` (${m.asset_class})` : ''}${flag}`;
+        body.push([safeText(label), safeText(fmtSigned(m.contribution))]);
+      }
+    }
+  }
+  if (!line.adjustments || line.adjustments.length === 0) {
+    body.push([safeText('Adjustments (none)'), safeText(formatCurrency(0))]);
+  } else {
+    for (const a of line.adjustments) {
+      body.push([safeText(`Adjustment · ${a.note}`), safeText(fmtSigned(a.amount))]);
+    }
+  }
+  body.push([
+    { content: safeText('Ending balance'),                                  styles: { fontStyle: 'bold' } },
+    { content: safeText(fmtContraOrNot(line.ending, section.contra)),        styles: { fontStyle: 'bold' } },
+  ]);
+
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: undefined,
+    body,
+  });
+  return (doc.lastAutoTable?.finalY ?? y) + 4;
+}
+
+function renderBookSupportingDetail(doc, y, snapshot) {
+  y = ensureSpace(doc, y, 14);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('Supporting Detail'), PAGE_MARGIN, y);
+  y += 4;
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText('Every ending balance traces back to: beginning + activity per mapped category + manual adjustments.'),
+    PAGE_MARGIN, y);
+  y += 6;
+
+  for (const section of safeArray(snapshot?.sections)) {
+    if (!section.lines?.length) continue;
+    y = ensureSpace(doc, y, 12);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...BRAND_DARK);
+    doc.text(safeText(`${section.code} · ${section.title}${section.contra ? ' (contra)' : ''}`), PAGE_MARGIN, y);
+    y += 4;
+    for (const line of section.lines) {
+      y = renderBookSupportingLine(doc, y, line, section);
+    }
+    y += 2;
+  }
+  return y;
+}
+
+export function generateBookBalanceSheetPdf(input, periodArg, opts = {}) {
+  const year     = safeText(input?.year ?? periodArg, '');
+  const snapshot = input?.snapshot || {};
+  const locked   = input?.locked   || null;
+
+  const doc = new jsPDF();
+  let y = addHeader(doc, 'Balance Sheet', year);
+
+  y = locked ? renderOfficialBand(doc, y, locked) : renderDraftBanner(doc, y);
+
+  // Group → sections → lines → group total
+  for (const g of BOOK_GROUPS) {
+    const sectionsInGroup = safeArray(snapshot?.sections).filter(s => s.group === g.key);
+    if (!sectionsInGroup.length) continue;
+
+    y = ensureSpace(doc, y, 12);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...BRAND_DARK);
+    doc.text(safeText(g.label), PAGE_MARGIN, y);
+    y += 5;
+
+    for (const sec of sectionsInGroup) {
+      y = renderBookSection(doc, y, sec);
+    }
+
+    let groupTotal = 0;
+    if (g.key === 'asset')     groupTotal = Number(snapshot?.totals?.totalAssets)      || 0;
+    if (g.key === 'liability') groupTotal = Number(snapshot?.totals?.totalLiabilities) || 0;
+    if (g.key === 'equity')    groupTotal = Number(snapshot?.totals?.totalEquity)      || 0;
+    y = renderGroupTotalBand(doc, y, g.label, groupTotal);
+  }
+
+  y = renderFinalSummary(doc, y, snapshot?.totals);
+
+  if (opts?.supportingDetail) {
+    y = renderBookSupportingDetail(doc, y, snapshot);
+  }
+
+  addFootersToAllPages(doc);
+  return doc;
+}
+
 // Trial Balance — its own generator. Always raw input + categories.
 //   opts.includeUnposted (default true) is forwarded to aggregateTrialBalance.
 //   opts.supportingDetail (default false) renders the per-account txn appendix.
