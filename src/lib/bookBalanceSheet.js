@@ -459,9 +459,13 @@ export function computeLineEndingSummary(line, mappings, adjustments, transactio
 //               totalLiabPlusEquity, balanceCheck }
 //   }
 //
-// totalAssets / totalEquity already account for contra sections (subtracted).
-// totalLiabilities currently has no contras in the structure so it's a
-// plain sum, but the same logic applies if one is added later.
+// Sign convention for totals: every line's ending balance is stored SIGNED —
+// contra sections (L09B, L12B, M206A) carry their reductions as negative
+// values. The totaler therefore sums every section's subtotal AS-IS; it does
+// NOT flip the sign for contras. The `contra` flag drives display only
+// (parentheses around the line and subtotal via fmtContraOrNot in reports.js).
+// A double-flip — storing negatives AND negating contras here — would turn
+// accumulated depreciation into an addition to total assets.
 //
 // Each line's "ending" is preferred from line.ending_balance_confirmed
 // when present, otherwise the live-computed value. This is intentional:
@@ -523,7 +527,8 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
   let totalLiabilities  = 0;
   let totalEquity       = 0;
   for (const sec of sectionMap.values()) {
-    const signed = sec.contra ? -sec.subtotal : sec.subtotal;
+    // Contra subtotals are stored signed-negative; sum as-is, no flip.
+    const signed = sec.subtotal;
     if (sec.group === 'asset')     totalAssets      += signed;
     if (sec.group === 'liability') totalLiabilities += signed;
     if (sec.group === 'equity')    totalEquity      += signed;
