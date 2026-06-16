@@ -17,6 +17,8 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+const FETCH_BATCH = 1000;            // Supabase per-request row limit
+
 export default function ReportsPage() {
   const { categories } = useData();
 
@@ -30,10 +32,9 @@ export default function ReportsPage() {
   const [sourceDocsShowAll, setSourceDocsShowAll] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     let start, end;
     if (isFullYear) {
-      // Full-year scope: Jan 1 → Dec 31 of selectedYear. Same query shape;
-      // aggregateForPnL sums whatever it's handed.
       start = `${selectedYear}-01-01`;
       end   = `${selectedYear}-12-31`;
     } else {
@@ -41,8 +42,28 @@ export default function ReportsPage() {
       start    = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
       end      = `${selectedYear}-${String(m).padStart(2, '0')}-${new Date(selectedYear, m, 0).getDate()}`;
     }
-    supabase.from('transactions').select('*').gte('date', start).lte('date', end).eq('voided', false)
-      .then(({ data }) => setTransactions(data || []));
+    // Supabase caps a single request at 1000 rows. Page through with .range()
+    // so the Full-Year scope (which can exceed the cap) returns the complete
+    // set. Monthly scopes are usually well under 1000 but the same loop is
+    // harmless and keeps both branches consistent.
+    (async () => {
+      const out = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .gte('date', start).lte('date', end).eq('voided', false)
+          .order('date', { ascending: true })
+          .range(from, from + FETCH_BATCH - 1);
+        if (error || !data) break;
+        out.push(...data);
+        if (data.length < FETCH_BATCH) break;
+        from += FETCH_BATCH;
+      }
+      if (!cancelled) setTransactions(out);
+    })();
+    return () => { cancelled = true; };
   }, [selectedMonth, selectedYear, isFullYear]);
 
   // Source documents — every bank statement plus its PDF-pull totals.
