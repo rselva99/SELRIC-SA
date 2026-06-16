@@ -22,6 +22,7 @@ export default function ReportsPage() {
 
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+  const [isFullYear, setIsFullYear]       = useState(false);   // Full-Year scope
   const [selectedYear, setSelectedYear]   = useState(now.getFullYear());
   const [transactions, setTransactions]   = useState([]);
   const [sourceDocs, setSourceDocs]       = useState([]);
@@ -29,12 +30,20 @@ export default function ReportsPage() {
   const [sourceDocsShowAll, setSourceDocsShowAll] = useState(false);
 
   useEffect(() => {
-    const m     = selectedMonth + 1;
-    const start = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
-    const end   = `${selectedYear}-${String(m).padStart(2, '0')}-${new Date(selectedYear, m, 0).getDate()}`;
+    let start, end;
+    if (isFullYear) {
+      // Full-year scope: Jan 1 → Dec 31 of selectedYear. Same query shape;
+      // aggregateForPnL sums whatever it's handed.
+      start = `${selectedYear}-01-01`;
+      end   = `${selectedYear}-12-31`;
+    } else {
+      const m  = selectedMonth + 1;
+      start    = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
+      end      = `${selectedYear}-${String(m).padStart(2, '0')}-${new Date(selectedYear, m, 0).getDate()}`;
+    }
     supabase.from('transactions').select('*').gte('date', start).lte('date', end).eq('voided', false)
       .then(({ data }) => setTransactions(data || []));
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, isFullYear]);
 
   // Source documents — every bank statement plus its PDF-pull totals.
   // Single fetch on mount; the section is informational so we don't
@@ -63,18 +72,23 @@ export default function ReportsPage() {
     };
   }, [periodTxns, categories]);
 
-  const periodLabel = `${MONTHS[selectedMonth]} ${selectedYear}`;
+  const periodLabel = isFullYear
+    ? `Full Year ${selectedYear}`
+    : `${MONTHS[selectedMonth]} ${selectedYear}`;
 
   // Source documents filter: statements whose [period_start, period_end]
-  // range overlaps the selected month. NULL-period statements only appear
-  // in the All-statements view.
+  // range overlaps the selected month (or the whole year in Full Year mode).
+  // NULL-period statements only appear in the All-statements view.
   const periodBounds = useMemo(() => {
+    if (isFullYear) {
+      return { start: `${selectedYear}-01-01`, end: `${selectedYear}-12-31` };
+    }
     const m = selectedMonth + 1;
     const start = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
     const lastDay = new Date(selectedYear, m, 0).getDate();
     const end   = `${selectedYear}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
     return { start, end };
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, isFullYear]);
 
   const visibleSourceDocs = useMemo(() => {
     if (sourceDocsShowAll) return sourceDocs;
@@ -179,10 +193,20 @@ export default function ReportsPage() {
           <Calendar size={18} className="text-surface-400" />
           <span className="text-sm font-medium text-surface-600">Report Period:</span>
           <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+            value={isFullYear ? 'year' : String(selectedMonth)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === 'year') {
+                setIsFullYear(true);
+              } else {
+                setIsFullYear(false);
+                setSelectedMonth(parseInt(v));
+              }
+            }}
             className="input-field w-auto"
           >
+            <option value="year">Full Year</option>
+            <option disabled>──────────</option>
             {MONTHS.map((m, i) => (
               <option key={i} value={i}>{m}</option>
             ))}
