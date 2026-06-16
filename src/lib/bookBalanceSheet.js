@@ -185,6 +185,29 @@ export function computeLineEnding(beginning, activitySum, adjustmentsSum) {
   return Math.round((b + a + x) * 100) / 100;
 }
 
+// Combine a line's pieces into a single { computed, confirmed, end, source }
+// summary. `end` is the best-available figure: the confirmed snapshot when
+// present, else the live-computed value. `source` says which one we used.
+// Used by the Compare view to render each (line, year) cell consistently.
+export function computeLineEndingSummary(line, mappings, adjustments, transactions, section) {
+  const activitySum = (mappings || []).reduce(
+    (s, m) => s + computeMappingActivity(transactions, m.category_name, section),
+    0
+  );
+  const adjustmentsSum = (adjustments || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+  const computed = computeLineEnding(line?.beginning_balance, activitySum, adjustmentsSum);
+  const confirmed = line?.ending_balance_confirmed;
+  const end = confirmed != null ? Number(confirmed) : computed;
+  return {
+    computed,
+    confirmed: confirmed != null ? Number(confirmed) : null,
+    activitySum,
+    adjustmentsSum,
+    end: Math.round(end * 100) / 100,
+    source: confirmed != null ? 'confirmed' : 'computed',
+  };
+}
+
 // Build the full list of seeded rows for a new year. The "Add Year" flow
 // in BookBalanceSheetPage.jsx feeds this into a single Supabase insert.
 // display_order is set per section: 10, 20, 30… so the user can insert
