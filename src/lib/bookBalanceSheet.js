@@ -129,6 +129,62 @@ export const SEED_LINE_TITLES = {
   ],
 };
 
+// ── Activity sign + math ─────────────────────────────────────────────────
+//
+// Each line accumulates "activity" from its mapped CoA categories during
+// the year. The SIGN under which we add transaction debits and credits
+// depends on the line's effective natural side:
+//
+//   asset, non-contra           → debit-natural   (DR − CR)
+//   asset, contra (L09B, L12B)  → credit-natural  (CR − DR) so accumulated
+//                                  depreciation BUILDS as positive when the
+//                                  app books DR Depreciation Expense /
+//                                  CR Accumulated Depreciation
+//   liability                   → credit-natural  (CR − DR)
+//   equity, non-contra          → credit-natural  (CR − DR)
+//   equity, contra (M206A)      → debit-natural   (DR − CR) so member draws
+//                                  BUILD as positive (each draw is a DR to
+//                                  the member-draw account)
+//
+// This is the accounting-correct convention: every stored line balance ends
+// up POSITIVE, and the report renderer (Stage 4) is responsible for putting
+// contra lines in parentheses and SUBTRACTING them from their parent
+// group's total. The contra flag in BOOK_BS_STRUCTURE drives both pieces.
+
+import { debitOf, creditOf } from './finance';
+
+export function lineActivityIsDebitNatural(section) {
+  if (!section) return true;
+  const { group, contra } = section;
+  if (group === 'asset')     return !contra;    // non-contra asset = DR-CR; contra asset = CR-DR
+  if (group === 'liability') return !!contra;   // (no contra-liabilities currently; future-safe)
+  if (group === 'equity')    return !!contra;   // non-contra equity = CR-DR; contra equity = DR-CR
+  return true;
+}
+
+// Sum activity for one mapped category over the supplied txns, applying the
+// line's natural sign. The txns array should already be filtered to year +
+// voided=false at the call site.
+export function computeMappingActivity(txns, categoryName, section) {
+  if (!categoryName) return 0;
+  let debits = 0, credits = 0;
+  for (const t of txns || []) {
+    if (t?.category !== categoryName) continue;
+    debits  += debitOf(t);
+    credits += creditOf(t);
+  }
+  const raw = lineActivityIsDebitNatural(section) ? (debits - credits) : (credits - debits);
+  return Math.round(raw * 100) / 100;
+}
+
+// Compose a line's ending balance from its parts. Always rounded to cents.
+export function computeLineEnding(beginning, activitySum, adjustmentsSum) {
+  const b = Number(beginning) || 0;
+  const a = Number(activitySum) || 0;
+  const x = Number(adjustmentsSum) || 0;
+  return Math.round((b + a + x) * 100) / 100;
+}
+
 // Build the full list of seeded rows for a new year. The "Add Year" flow
 // in BookBalanceSheetPage.jsx feeds this into a single Supabase insert.
 // display_order is set per section: 10, 20, 30… so the user can insert
