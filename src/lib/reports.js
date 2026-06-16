@@ -126,17 +126,49 @@ function normalizePnLData(input, periodArg) {
   };
 }
 
+// Canonical opening-equity category name; matches openingBalances.js so the
+// raw-input path can split equity into Opening vs. Distributions reliably.
+const OPENING_EQUITY_CATEGORY = "Members' Equity - Opening";
+
 function normalizeBSData(input, periodArg) {
   const period = safeText(input?.period ?? periodArg);
   if (looksRaw(input)) {
     const agg = aggregateForBS(input.transactions, input.categories);
+    const pnl = aggregateForPnL(input.transactions, input.categories);
+    const netIncome = (Number(pnl.totalRevenue) || 0) - (Number(pnl.totalExpenses) || 0);
+
+    // aggregateForBS returns equity rows debit-natural: opening JE debits
+    // "Members' Equity - Opening" so it lands positive; member draws debit
+    // their equity category so they ALSO land positive. We surface Opening
+    // as its own line and lump every other equity row into Distributions —
+    // shown as negative on the report so the three lines arithmetic-add to
+    // Total Equity = Opening + NetIncome − Distributions.
+    let opening = 0;
+    let distributionsRaw = 0;
+    for (const row of safeArray(agg.equity)) {
+      const amt = Number(row?.amount) || 0;
+      if (row?.account === OPENING_EQUITY_CATEGORY) opening += amt;
+      else distributionsRaw += amt;
+    }
+
+    const yearMatch = String(period).match(/\d{4}/);
+    const netIncomeLabel = yearMatch ? `Net Income — ${yearMatch[0]}` : 'Net Income';
+
+    const equity = [
+      { account: "Members' Equity — Opening", amount: opening },
+      { account: netIncomeLabel,              amount: netIncome },
+      { account: 'Distributions',             amount: -distributionsRaw },
+    ];
+    const totalEquity = opening + netIncome - distributionsRaw;
+
     return {
       assets:           safeArray(agg.assets),
       liabilities:      safeArray(agg.liabilities),
-      equity:           safeArray(agg.equity),
+      equity,
+      equityRaw:        safeArray(agg.equity),  // pre-enrichment rows for supporting-detail join
       totalAssets:      Number(agg.totalAssets)      || 0,
       totalLiabilities: Number(agg.totalLiabilities) || 0,
-      totalEquity:      Number(agg.totalEquity)      || 0,
+      totalEquity,
       period,
     };
   }
@@ -144,6 +176,7 @@ function normalizeBSData(input, periodArg) {
     assets:           safeArray(input?.assets),
     liabilities:      safeArray(input?.liabilities),
     equity:           safeArray(input?.equity),
+    equityRaw:        safeArray(input?.equity),
     totalAssets:      Number(input?.totalAssets)      || 0,
     totalLiabilities: Number(input?.totalLiabilities) || 0,
     totalEquity:      Number(input?.totalEquity)      || 0,
@@ -604,7 +637,9 @@ export function generateBalanceSheetPdf(input, periodArg, opts = {}) {
       // Math.abs() of stated. expectedNet uses the natural side.
       { title: 'Assets',      accounts: buildDetailAccounts(data.assets,      input.transactions, 'DR') },
       { title: 'Liabilities', accounts: buildDetailAccounts(data.liabilities, input.transactions, 'CR') },
-      { title: 'Equity',      accounts: buildDetailAccounts(data.equity,      input.transactions, 'CR') },
+      // equityRaw is the per-category aggregate (pre-enrichment with synthetic
+      // Net Income / Distributions rows) — only it can be joined to txns.
+      { title: 'Equity',      accounts: buildDetailAccounts(data.equityRaw,   input.transactions, 'CR') },
     ];
     renderSupportingDetail(doc, y, sections);
   }
