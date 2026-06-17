@@ -171,16 +171,24 @@ export default function JournalPage() {
       const accountName = categoryNameById[simpleForm.account_id] || '';
       const categoryText = simpleForm.category || accountName || '';
 
-      await supabase.from('journal_entry_lines').insert({
+      // Phase 4 architectural fix: the simple flow used to produce single-leg
+      // JEs (e.g. JE-001 'Rent' was DR Rent $7,500 with no offsetting cash CR).
+      // Now it auto-writes BOTH the user's chosen leg AND an offsetting
+      // Cash & Bank leg, so every simple JE is balanced double-entry by
+      // construction. If the user explicitly picked Cash & Bank as the
+      // category, skip the auto leg (the user is making a cash-to-cash entry
+      // and supplied both sides themselves).
+      const CASH_CATEGORY = 'Cash & Bank';
+      const isCashAlready = categoryText === CASH_CATEGORY;
+      const linePayloads = [{
         journal_entry_id: entry.id,
         account_id: null,
         description: simpleForm.description,
         debit_amount:  simpleForm.type === 'debit'  ? amount : 0,
         credit_amount: simpleForm.type === 'credit' ? amount : 0,
         category: categoryText || null,
-      });
-
-      await supabase.from('transactions').insert({
+      }];
+      const txnPayloads = [{
         date: simpleForm.date,
         description: simpleForm.description,
         supplier: simpleForm.description,
@@ -191,7 +199,43 @@ export default function JournalPage() {
         bank_statement_id: null,
         journal_entry_id: entry.id,
         posted: true,
-      });
+      }];
+      if (!isCashAlready) {
+        linePayloads.push({
+          journal_entry_id: entry.id,
+          account_id: null,
+          description: `[Cash leg] ${simpleForm.description}`,
+          debit_amount:  simpleForm.type === 'credit' ? amount : 0,
+          credit_amount: simpleForm.type === 'debit'  ? amount : 0,
+          category: CASH_CATEGORY,
+        });
+        txnPayloads.push({
+          date: simpleForm.date,
+          description: `[Cash leg] ${simpleForm.description}`,
+          supplier: simpleForm.description,
+          amount,
+          type: simpleForm.type === 'debit' ? 'credit' : 'debit',
+          category: CASH_CATEGORY,
+          account_id: null,
+          reference: simpleForm.reference || '',
+          bank_statement_id: null,
+          journal_entry_id: entry.id,
+          posted: true,
+        });
+      }
+
+      // Defense-in-depth DR=CR check before insert. Should always pass given
+      // the construction above; throws loudly if it ever doesn't.
+      const lineDR = linePayloads.reduce((s, l) => s + (+l.debit_amount  || 0), 0);
+      const lineCR = linePayloads.reduce((s, l) => s + (+l.credit_amount || 0), 0);
+      if (Math.abs(lineDR - lineCR) >= 0.005) {
+        throw new Error(`Simple JE unbalanced: DR ${lineDR.toFixed(2)} vs CR ${lineCR.toFixed(2)}`);
+      }
+
+      const { error: linesErr } = await supabase.from('journal_entry_lines').insert(linePayloads);
+      if (linesErr) throw linesErr;
+      const { error: txnsErr } = await supabase.from('transactions').insert(txnPayloads);
+      if (txnsErr) throw txnsErr;
 
       toast.success(`Posted ${reference}`);
       setSimpleForm(blankSimpleForm());

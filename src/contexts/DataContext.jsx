@@ -164,6 +164,35 @@ export function DataProvider({ children }) {
 
   const postTransaction = useCallback(async (txnId, txnData) => {
     await updateTransaction(txnId, { posted: true });
+
+    // Phase 3 architectural fix: bank-imported transactions were historically
+    // single-entry — they hit a P&L category but never wrote the offsetting
+    // Cash & Bank leg, so the balance-sheet equation could never close. On
+    // post, mirror an offsetting Cash & Bank row so revenue/expense activity
+    // actually moves cash in the ledger. Idempotent via reference='CASH-LEG-<txnId>'.
+    const CASH_CATEGORY = 'Cash & Bank';
+    const isBankImport = !!txnData?.bank_statement_id;
+    const isCashAlready = txnData?.category === CASH_CATEGORY;
+    if (isBankImport && !isCashAlready && txnData?.amount && txnData?.type) {
+      const cashRef = `CASH-LEG-${txnId}`;
+      const { data: dup } = await supabase
+        .from('transactions').select('id').eq('reference', cashRef).limit(1);
+      if (!dup || dup.length === 0) {
+        await supabase.from('transactions').insert({
+          date: txnData.date,
+          description: `[Cash leg] ${txnData.description || ''}`,
+          supplier: txnData.supplier || txnData.description || '',
+          amount: txnData.amount,
+          type: txnData.type === 'debit' ? 'credit' : 'debit',
+          category: CASH_CATEGORY,
+          account_id: null,
+          reference: cashRef,
+          bank_statement_id: txnData.bank_statement_id,
+          posted: true,
+        });
+      }
+    }
+
     const supplier = txnData?.description || txnData?.supplier;
     if (supplier && txnData?.category) return learnSupplierCategory(supplier, txnData.category);
     return propagateCategories();

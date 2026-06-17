@@ -791,10 +791,17 @@ function renderTaxReconSummary(doc, y, totals) {
   // 1. TOTAL LIABILITIES & EQUITY (signed — credit balances are negative)
   y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES & EQUITY', formatCurrency(totals.totalLiabEquity), LIGHT_BG, BRAND_DARK);
 
-  // 2. NET (INCOME)/LOSS plug — formatted CPA-style (parens = income)
-  y = drawSummaryBand(doc, y, 'NET (INCOME)/LOSS', fmtIncomeLoss(totals.netIncomeLoss), LIGHT_BG, BRAND_DARK);
+  // 2. STRUCTURAL GAP — UNBOOKED ACTIVITY.
+  //    This was historically labeled "NET (INCOME)/LOSS" which was misleading:
+  //    in a fully-booked double-entry ledger this plug equals -NetIncome, but
+  //    in this codebase the in-period activity is mostly single-entry
+  //    (bank-imported P&L rows without offsetting cash legs). So the value
+  //    here is the unbalanced residual the BS needs to plug — NOT a real
+  //    net-income measurement. The actual P&L number is shown two bands
+  //    below as a separate REFERENCE.
+  y = drawSummaryBand(doc, y, 'STRUCTURAL GAP — UNBOOKED ACTIVITY', fmtIncomeLoss(totals.netIncomeLoss), LIGHT_BG, BRAND_DARK);
 
-  // 3. Tax-recon tie: A + (L+E) + NetIncomeLoss = 0 by construction. Always
+  // 3. Tax-recon tie: A + (L+E) + StructuralGap = 0 by construction. Always
   //    green; we still print the literal sum so a future divergence (e.g.,
   //    rounding regression) is visible at a glance.
   const tie = Math.round(((Number(totals.totalAssets) || 0)
@@ -803,32 +810,48 @@ function renderTaxReconSummary(doc, y, totals) {
   y = drawSummaryBand(
     doc, y,
     'TAX-RECON BALANCE: TIES (sums to 0)',
-    `A + (L+E) + Net (Income)/Loss = ${formatCurrency(tie)}`,
+    `A + (L+E) + Structural Gap = ${formatCurrency(tie)}`,
     [217, 237, 227], BRAND_DARK, 10,
   );
 
-  // 4. Plug vs P&L net income — the real error detector.
+  // 4. P&L NET INCOME (reference) — live recompute from transactions via
+  //    aggregateForPnL when categories are passed at snapshot time. Always
+  //    informational, never a plug — it is the truth source, not a derived
+  //    value. If unavailable, surfaces a "not linked" amber chip.
   const actual = totals.actualNetIncome;
   const gap    = totals.reconciliationGap;
-  if (actual == null || gap == null) {
+  if (actual == null) {
     y = drawSummaryBand(
       doc, y,
-      'PLUG vs P&L NET INCOME',
-      'not linked — manual verify',
-      [255, 244, 214],            // amber fill
-      [146, 64, 14], 10,           // amber-900 text
+      'P&L NET INCOME (reference)',
+      'not linked — pass categories at snapshot time to enable',
+      [255, 244, 214], [146, 64, 14], 10,
     );
   } else {
-    const ok = Math.abs(Number(gap) || 0) < 0.005;
     y = drawSummaryBand(
       doc, y,
-      ok ? 'PLUG vs P&L NET INCOME  ✓' : 'PLUG vs P&L NET INCOME — gap',
-      `plug ${fmtIncomeLoss(totals.netIncomeLoss)} · P&L ${formatCurrency(actual)} · gap ${formatCurrency(gap)}`,
-      ok ? [217, 237, 227] : [255, 230, 230],
-      ok ? BRAND_DARK : [224, 49, 49],
-      10,
+      'P&L NET INCOME (reference)',
+      formatCurrency(actual),
+      LIGHT_BG, BRAND_DARK, 11,
     );
   }
+
+  // 5. Structural gap vs the P&L truth. If single-entry bank data has been
+  //    repaired upstream, |gap| should shrink toward zero. Large gap = the
+  //    accounting equation is leaking from the bank-import single-entry path.
+  if (actual == null || gap == null) {
+    // already showed amber chip above; skip the comparison band
+    return y;
+  }
+  const ok = Math.abs(Number(gap) || 0) < 0.005;
+  y = drawSummaryBand(
+    doc, y,
+    ok ? 'STRUCTURAL GAP vs P&L NET INCOME  ✓' : 'STRUCTURAL GAP vs P&L NET INCOME — drift',
+    `gap ${fmtIncomeLoss(totals.netIncomeLoss)} vs P&L ${formatCurrency(actual)} · diff ${formatCurrency(gap)}`,
+    ok ? [217, 237, 227] : [255, 230, 230],
+    ok ? BRAND_DARK : [224, 49, 49],
+    10,
+  );
   return y;
 }
 

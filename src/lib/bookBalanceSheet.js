@@ -481,11 +481,15 @@ export function computeLineEndingSummary(line, mappings, adjustments, transactio
 // plug we computed and the actual P&L net income for the year. Renderer
 // (renderFinalSummary) shows both lines side by side.
 //
-// actualNetIncome: when the caller passes `categories`, aggregateForPnL runs
-// over the same transactions list to produce totalRevenue − totalExpenses.
+// actualNetIncome: ALWAYS a live recompute from the transactions+categories
+// passed to this call. Never read from a cache or stored value. aggregateForPnL
+// runs over the same transactions list to produce totalRevenue − totalExpenses.
 // When categories are absent (legacy callers, or when the chart isn't
 // available), actualNetIncome stays null and the PDF prints a "not linked"
-// caption on the reconciliation line.
+// caption on the reconciliation line. Locked-year snapshots persist whatever
+// `actualNetIncome` was at lock time — callers wanting a live P&L number on
+// re-render should pass current categories+transactions to rebuild the
+// snapshot rather than reading the stored one.
 //
 // Each line's "ending" is preferred from line.ending_balance_confirmed
 // when present, otherwise the live-computed value. This is intentional:
