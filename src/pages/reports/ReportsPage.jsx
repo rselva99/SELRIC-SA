@@ -1,20 +1,25 @@
 import { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
-import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf } from '../../lib/reports';
+import { generatePnLPdf, generateBalanceSheetPdf, generateIncomeStatementPdf, generateAuditorPackagePdf } from '../../lib/reports';
 import { aggregateForPnL } from '../../lib/finance';
+import { buildBookBSSnapshot } from '../../lib/bookBalanceSheet';
 import { formatCurrency, formatDate, formatStatementPeriod } from '../../lib/utils';
 import { fetchAllStatementsWithTotals } from '../../lib/statementTotals';
 import { FileText } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
-  Download, Eye, BarChart3, Scale, TrendingUp, Calendar,
+  Download, Eye, BarChart3, Scale, TrendingUp, Calendar, FileCheck2,
 } from 'lucide-react';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
+];
+const MONTHS_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 
 const FETCH_BATCH = 1000;            // Supabase per-request row limit
@@ -135,6 +140,99 @@ export default function ReportsPage() {
     if (type === 'pnl') return generatePnLPdf(data);
     if (type === 'balance') return generateBalanceSheetPdf(data);
     return generateIncomeStatementPdf(data);
+  }
+
+  // Build the Book BS snapshot for the auditor-package year PDF. Mirrors the
+  // BookBalanceSheetPage.handleDownloadPdf flow: prefers the stored snapshot
+  // when the year is locked, otherwise rebuilds live from current book_bs_*
+  // tables. Returns null when no book_bs_lines exist for the year.
+  async function fetchBookBSSnapshot(year, transactions) {
+    const { data: stmt } = await supabase
+      .from('book_bs_statements')
+      .select('*')
+      .eq('year', year)
+      .maybeSingle();
+    if (stmt?.status === 'locked' && stmt?.snapshot) return stmt.snapshot;
+
+    const { data: lines } = await supabase.from('book_bs_lines').select('*').eq('year', year);
+    if (!lines || !lines.length) return null;
+    const lineIds = lines.map(l => l.id);
+    const [
+      { data: mappings },
+      { data: adjustments },
+      { data: assetMappings },
+      { data: assets },
+    ] = await Promise.all([
+      supabase.from('book_bs_line_mappings').select('*').in('line_id', lineIds),
+      supabase.from('book_bs_line_adjustments').select('*').in('line_id', lineIds),
+      supabase.from('book_bs_line_asset_mappings').select('*').in('line_id', lineIds),
+      supabase.from('assets').select('id, name, asset_class, asset_type, in_service_date, life_years, cost, status, retired_date'),
+    ]);
+    const groupBy = (rows) => {
+      const out = {};
+      for (const r of rows || []) (out[r.line_id] = out[r.line_id] || []).push(r);
+      return out;
+    };
+    return buildBookBSSnapshot({
+      year,
+      lines,
+      mappingsByLineId:      groupBy(mappings),
+      adjustmentsByLineId:   groupBy(adjustments),
+      transactions,
+      assets:                assets || [],
+      assetMappingsByLineId: groupBy(assetMappings),
+      categories,
+    });
+  }
+
+  async function buildAuditorPdf() {
+    // Posted-only basis (matches the audit-trail spec). voided already filtered
+    // out at fetch time, so a single .posted check covers it.
+    const postedOnly = periodTxns.filter(t => t?.posted);
+    const scope = isFullYear ? 'year' : 'month';
+    const bookBSSnapshot = scope === 'year'
+      ? await fetchBookBSSnapshot(selectedYear, postedOnly)
+      : null;
+    return generateAuditorPackagePdf({
+      scope,
+      year:           selectedYear,
+      month:          isFullYear ? null : selectedMonth,
+      periodLabel,
+      transactions:   postedOnly,
+      categories,
+      bookBSSnapshot,
+    });
+  }
+
+  async function handleAuditorDownload() {
+    setGenerating('auditor-dl');
+    try {
+      const pdf = await buildAuditorPdf();
+      const filename = isFullYear
+        ? `Auditor_Package_FY${selectedYear}.pdf`
+        : `Auditor_Package_${MONTHS_SHORT[selectedMonth]}${selectedYear}.pdf`;
+      pdf.save(filename);
+      toast.success('Auditor package downloaded');
+    } catch (err) {
+      console.error('auditor pdf failed', err);
+      toast.error('Failed to generate auditor package');
+    } finally {
+      setGenerating('');
+    }
+  }
+
+  async function handleAuditorPreview() {
+    setGenerating('auditor-view');
+    try {
+      const pdf = await buildAuditorPdf();
+      const blobUrl = pdf.output('bloburl');
+      window.open(blobUrl, '_blank');
+    } catch (err) {
+      console.error('auditor pdf preview failed', err);
+      toast.error('Failed to generate auditor package preview');
+    } finally {
+      setGenerating('');
+    }
   }
 
   // Download filenames intentionally carry the report name, not a brand
@@ -299,6 +397,44 @@ export default function ReportsPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Print for Auditor — composite package using the page's period selector.
+          Full-Year scope → Cover + P&L + Book BS + Trial Balance.
+          Month scope    → Cover + P&L + Trial Balance (Book BS is year-grained). */}
+      <div className="card p-5 mb-6 border-amber-200 bg-amber-50/40">
+        <div className="flex items-start gap-3 mb-3">
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-100 text-amber-700">
+            <FileCheck2 size={20} />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-display text-lg">Print for Auditor</h3>
+            <p className="text-xs text-surface-500 mt-0.5">
+              Single PDF: Cover + P&amp;L{isFullYear ? ' + Balance Sheet' : ''} + Trial Balance.{' '}
+              <span className="text-surface-600 font-medium">Posted-only basis.</span>{' '}
+              Uses the period selected above ({periodLabel}).
+              {!isFullYear && <> Switch to <span className="font-mono">Full Year</span> for the year-end package with Balance Sheet.</>}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={handleAuditorDownload}
+            disabled={generating === 'auditor-dl' || generating === 'auditor-view'}
+            className="btn-primary flex-1 flex items-center justify-center gap-2 text-sm"
+          >
+            {generating === 'auditor-dl' ? <Spinner size="sm" className="text-white" /> : <Download size={14} />}
+            Download Auditor Package
+          </button>
+          <button
+            onClick={handleAuditorPreview}
+            disabled={generating === 'auditor-dl' || generating === 'auditor-view'}
+            className="btn-secondary flex items-center justify-center gap-2 text-sm px-3"
+            title="Preview in browser"
+          >
+            {generating === 'auditor-view' ? <Spinner size="sm" /> : <Eye size={14} />}
+          </button>
+        </div>
       </div>
 
       {/* Source Documents — bank statements with PDF-pull totals */}

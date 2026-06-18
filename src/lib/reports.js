@@ -597,9 +597,14 @@ function detailDataAvailable(input) {
   return Array.isArray(input?.transactions) && Array.isArray(input?.categories);
 }
 
+// `opts.doc`: if a pre-existing jsPDF instance is passed, this generator
+// renders into it (the caller is responsible for stamping footers at the end).
+// Without `opts.doc`, behavior is identical to before — new doc, footers
+// stamped, returned to caller. Used by `generateAuditorPackagePdf` to
+// compose multiple reports into a single PDF.
 export function generatePnLPdf(input, periodArg, opts = {}) {
   const data = normalizePnLData(input, periodArg);
-  const doc  = new jsPDF();
+  const doc  = opts?.doc || new jsPDF();
   let y = addHeader(doc, 'Profit & Loss Statement', data.period);
 
   y = renderSection(doc, y, 'Revenue',  data.revenue,  data.totalRevenue,  'Total Revenue');
@@ -616,13 +621,14 @@ export function generatePnLPdf(input, periodArg, opts = {}) {
     renderSupportingDetail(doc, cursor + 2, sections);
   }
 
-  addFootersToAllPages(doc);
+  if (!opts?.doc) addFootersToAllPages(doc);
   return doc;
 }
 
+// `opts.doc`: see generatePnLPdf header comment.
 export function generateBalanceSheetPdf(input, periodArg, opts = {}) {
   const data = normalizeBSData(input, periodArg);
-  const doc  = new jsPDF();
+  const doc  = opts?.doc || new jsPDF();
   let y = addHeader(doc, 'Balance Sheet', data.period);
 
   y = renderSection(doc, y, 'Assets',      data.assets,      data.totalAssets,      'Total Assets');
@@ -644,7 +650,7 @@ export function generateBalanceSheetPdf(input, periodArg, opts = {}) {
     renderSupportingDetail(doc, y, sections);
   }
 
-  addFootersToAllPages(doc);
+  if (!opts?.doc) addFootersToAllPages(doc);
   return doc;
 }
 
@@ -975,12 +981,13 @@ function renderBookSupportingDetail(doc, y, snapshot) {
   return y;
 }
 
+// `opts.doc`: see generatePnLPdf header comment.
 export function generateBookBalanceSheetPdf(input, periodArg, opts = {}) {
   const year     = safeText(input?.year ?? periodArg, '');
   const snapshot = input?.snapshot || {};
   const locked   = input?.locked   || null;
 
-  const doc = new jsPDF();
+  const doc = opts?.doc || new jsPDF();
   let y = addHeader(doc, 'Balance Sheet', year);
 
   y = locked ? renderOfficialBand(doc, y, locked) : renderDraftBanner(doc, y);
@@ -1014,13 +1021,14 @@ export function generateBookBalanceSheetPdf(input, periodArg, opts = {}) {
     y = renderBookSupportingDetail(doc, y, snapshot);
   }
 
-  addFootersToAllPages(doc);
+  if (!opts?.doc) addFootersToAllPages(doc);
   return doc;
 }
 
 // Trial Balance — its own generator. Always raw input + categories.
 //   opts.includeUnposted (default true) is forwarded to aggregateTrialBalance.
 //   opts.supportingDetail (default false) renders the per-account txn appendix.
+//   opts.doc: see generatePnLPdf header comment.
 export function generateTrialBalancePdf(input, periodArg, opts = {}) {
   const includeUnposted = opts?.includeUnposted !== false;
   const supportingDetail = !!opts?.supportingDetail;
@@ -1030,7 +1038,7 @@ export function generateTrialBalancePdf(input, periodArg, opts = {}) {
   const cats = safeArray(input?.categories);
   const tb   = aggregateTrialBalance(txns, cats, { includeUnposted });
 
-  const doc = new jsPDF();
+  const doc = opts?.doc || new jsPDF();
   let y = addHeader(doc, 'Trial Balance', period);
 
   // Group by type, then render each section.
@@ -1101,6 +1109,113 @@ export function generateTrialBalancePdf(input, periodArg, opts = {}) {
     renderSupportingDetail(doc, y, sections);
   }
 
+  if (!opts?.doc) addFootersToAllPages(doc);
+  return doc;
+}
+
+// ── Print for Auditor package ────────────────────────────────────────────────
+//
+// Composes Cover + P&L + (Book BS for year scope) + Trial Balance into one
+// jsPDF instance. Footers are stamped once at the end so page numbers are
+// continuous across all sections. Each constituent report renders into the
+// shared doc via its `opts.doc` channel; none of them stamp their own
+// footers (the `!opts.doc` guard above ensures that).
+//
+// Input shape:
+//   {
+//     scope:           'year' | 'month',
+//     year:            Number,           // e.g. 2024
+//     month:           Number | null,    // 0-11, only meaningful for 'month'
+//     periodLabel:     String,           // human-readable, e.g. "Full Year 2024" or "January 2024"
+//     transactions:    Array,            // POSTED-ONLY, pre-filtered by date range
+//     categories:      Array,
+//     bookBSSnapshot:  Object | null,    // required for scope='year', ignored otherwise
+//   }
+
+function renderCoverPage(doc, { scope, year, periodLabel }) {
+  const pageHeight = doc.internal.pageSize.height;
+  addHeader(doc, 'Auditor Package', periodLabel);
+
+  // Centred title block
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('Audit Reporting Package'), PAGE_WIDTH / 2, 90, { align: 'center' });
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...TEXT_DARK);
+  doc.text(safeText(periodLabel || ''), PAGE_WIDTH / 2, 104, { align: 'center' });
+
+  let generatedAt = '';
+  try { generatedAt = `Generated: ${format(new Date(), 'dd MMM yyyy HH:mm')}`; } catch { generatedAt = 'Generated: —'; }
+  doc.setFontSize(10);
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText(generatedAt), PAGE_WIDTH / 2, 116, { align: 'center' });
+
+  // Contents list
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...BRAND_DARK);
+  doc.text(safeText('Contents'), PAGE_MARGIN, 150);
+
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...TEXT_DARK);
+  let y = 160;
+  doc.text(safeText('• Profit & Loss Statement'), PAGE_MARGIN + 6, y); y += 8;
+  if (scope === 'year') {
+    doc.text(safeText('• Balance Sheet (Book BS — book_bs_lines)'), PAGE_MARGIN + 6, y); y += 8;
+  }
+  doc.text(safeText('• Trial Balance'), PAGE_MARGIN + 6, y); y += 8;
+
+  // Basis note
+  doc.setFontSize(9);
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText('Basis: posted-only transactions; voided rows excluded.'), PAGE_MARGIN, y + 10);
+  if (scope === 'year') {
+    doc.text(safeText('Balance Sheet sourced from Book BS Builder (book_bs_lines + adjustments).'), PAGE_MARGIN, y + 16);
+  }
+
+  // "For Auditor Use Only" footer
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(...TEXT_MED);
+  doc.text(safeText('For Auditor Use Only'), PAGE_WIDTH / 2, pageHeight - 30, { align: 'center' });
+}
+
+export function generateAuditorPackagePdf(input, opts = {}) {
+  const scope          = input?.scope === 'month' ? 'month' : 'year';
+  const year           = input?.year;
+  const periodLabel    = safeText(input?.periodLabel, '');
+  const transactions   = safeArray(input?.transactions);
+  const categories     = safeArray(input?.categories);
+  const bookBSSnapshot = input?.bookBSSnapshot || null;
+
+  const doc = new jsPDF();
+
+  // 1. Cover
+  renderCoverPage(doc, { scope, year, periodLabel });
+
+  // 2. P&L
+  doc.addPage();
+  generatePnLPdf({ transactions, categories, period: periodLabel }, undefined, { doc });
+
+  // 3. Balance Sheet (year scope only — Book BS Builder is year-grained)
+  if (scope === 'year' && bookBSSnapshot) {
+    doc.addPage();
+    generateBookBalanceSheetPdf({ year, snapshot: bookBSSnapshot, locked: null }, String(year), { doc });
+  }
+
+  // 4. Trial Balance (posted-only basis per opts.includeUnposted = false)
+  doc.addPage();
+  generateTrialBalancePdf(
+    { transactions, categories, period: periodLabel },
+    undefined,
+    { doc, includeUnposted: false },
+  );
+
+  // Single footer pass — continuous page numbers across every section.
   addFootersToAllPages(doc);
   return doc;
 }
