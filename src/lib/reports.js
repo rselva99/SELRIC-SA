@@ -861,18 +861,31 @@ function renderTaxReconSummary(doc, y, totals) {
   return y;
 }
 
-// Legacy Assets − (L+E) renderer — kept so locked snapshots written under
-// the old `totals` shape still render. New snapshots use the tax-recon path.
+// Legacy "Assets / Liabilities / Equity / Balance Check" renderer. Kept so
+// locked snapshots written under the old totals shape still render.
+//
+// Convention: TOTAL LIABILITIES + EQUITY shows the magnitude sum (positive),
+// and BALANCE CHECK reports the signed gap on Assets − |Liabilities| − |Equity|.
+// "TIES" when |gap| < $1; "OUT OF BALANCE by <signed gap>" otherwise.
 function renderLegacyBalanceSummary(doc, y, totals) {
   y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES + EQUITY', formatCurrency(totals.totalLiabPlusEquity), LIGHT_BG, BRAND_DARK);
 
-  const balanced = Math.abs(Number(totals.balanceCheck) || 0) < 0.005;
+  const gap = Number(totals.balanceCheck) || 0;
+  const ties = Math.abs(gap) < 1.0;
+  if (ties) {
+    return drawSummaryBand(
+      doc, y,
+      'BALANCE CHECK — TIES',
+      'Assets = Liabilities + Equity',
+      [217, 237, 227], BRAND_DARK, 10,
+    );
+  }
   return drawSummaryBand(
     doc, y,
-    balanced ? 'BALANCE CHECK  ✓' : 'BALANCE CHECK — OUT OF BALANCE',
-    `Assets − (L + E) = ${formatCurrency(totals.balanceCheck)}`,
-    balanced ? [217, 237, 227] : [255, 230, 230],
-    balanced ? BRAND_DARK : [224, 49, 49],
+    `BALANCE CHECK — OUT OF BALANCE by ${formatCurrency(gap)}`,
+    `Assets − Liabilities − Equity = ${formatCurrency(gap)}`,
+    [255, 230, 230],
+    [224, 49, 49],
     10,
   );
 }
@@ -981,11 +994,58 @@ function renderBookSupportingDetail(doc, y, snapshot) {
   return y;
 }
 
+// Recompute totals at render time from `snapshot.sections`, applying the
+// current contra rule (contras always reduce by their magnitude). This
+// overrides any pre-baked `snapshot.totals.*` left behind by a locked
+// snapshot written before the contra-sign fix landed. Per-section subtotals
+// are correct (they're derived from per-line endings at build time); only
+// the rolled-up group totals were wrong in the old code.
+function recomputeBookTotalsFromSections(sections, storedTotals) {
+  let totalAssets = 0, totalLiabilities = 0, totalEquity = 0;
+  for (const sec of safeArray(sections)) {
+    const sub = Number(sec?.subtotal) || 0;
+    const contribution = sec?.contra ? -Math.abs(sub) : sub;
+    if (sec?.group === 'asset')     totalAssets      += contribution;
+    if (sec?.group === 'liability') totalLiabilities += contribution;
+    if (sec?.group === 'equity')    totalEquity      += contribution;
+  }
+  totalAssets      = Math.round(totalAssets * 100) / 100;
+  totalLiabilities = Math.round(totalLiabilities * 100) / 100;
+  totalEquity      = Math.round(totalEquity * 100) / 100;
+  const totalLiabEquity     = Math.round((totalLiabilities + totalEquity) * 100) / 100;
+  const liabMagnitude       = Math.abs(totalLiabilities);
+  const equityMagnitude     = Math.abs(totalEquity);
+  const totalLiabPlusEquity = Math.round((liabMagnitude + equityMagnitude) * 100) / 100;
+  const balanceCheck        = Math.round((totalAssets - liabMagnitude - equityMagnitude) * 100) / 100;
+
+  // Preserve dispatch path: snapshots locked under the tax-recon shape carry
+  // `netIncomeLoss`; legacy ones don't. renderFinalSummary keys on its
+  // presence to pick its layout.
+  const wasTaxRecon = !!storedTotals && Object.prototype.hasOwnProperty.call(storedTotals, 'netIncomeLoss');
+  const result = {
+    totalAssets,
+    totalLiabilities,
+    totalEquity,
+    totalLiabEquity,
+    totalLiabPlusEquity,
+    balanceCheck,
+    actualNetIncome:   storedTotals?.actualNetIncome   ?? null,
+    reconciliationGap: storedTotals?.reconciliationGap ?? null,
+  };
+  if (wasTaxRecon) {
+    result.netIncomeLoss = Math.round(-(totalAssets + totalLiabEquity) * 100) / 100;
+  }
+  return result;
+}
+
 // `opts.doc`: see generatePnLPdf header comment.
 export function generateBookBalanceSheetPdf(input, periodArg, opts = {}) {
   const year     = safeText(input?.year ?? periodArg, '');
   const snapshot = input?.snapshot || {};
   const locked   = input?.locked   || null;
+
+  // Always recompute totals from sections at render time. See helper docstring.
+  const totals = recomputeBookTotalsFromSections(snapshot?.sections, snapshot?.totals);
 
   const doc = opts?.doc || new jsPDF();
   let y = addHeader(doc, 'Balance Sheet', year);
@@ -1008,14 +1068,18 @@ export function generateBookBalanceSheetPdf(input, periodArg, opts = {}) {
       y = renderBookSection(doc, y, sec);
     }
 
+    // Per-group totals: ASSETS shown signed (naturally positive on a healthy
+    // BS); LIABILITIES and EQUITY shown as magnitude — standard CPA BS
+    // presentation — so the L+E summary and balance check use a consistent
+    // positive-magnitude convention.
     let groupTotal = 0;
-    if (g.key === 'asset')     groupTotal = Number(snapshot?.totals?.totalAssets)      || 0;
-    if (g.key === 'liability') groupTotal = Number(snapshot?.totals?.totalLiabilities) || 0;
-    if (g.key === 'equity')    groupTotal = Number(snapshot?.totals?.totalEquity)      || 0;
+    if (g.key === 'asset')     groupTotal = totals.totalAssets;
+    if (g.key === 'liability') groupTotal = Math.abs(totals.totalLiabilities);
+    if (g.key === 'equity')    groupTotal = Math.abs(totals.totalEquity);
     y = renderGroupTotalBand(doc, y, g.label, groupTotal);
   }
 
-  y = renderFinalSummary(doc, y, snapshot?.totals);
+  y = renderFinalSummary(doc, y, totals);
 
   if (opts?.supportingDetail) {
     y = renderBookSupportingDetail(doc, y, snapshot);

@@ -551,17 +551,22 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
   let totalLiabilities  = 0;
   let totalEquity       = 0;
   for (const sec of sectionMap.values()) {
-    // Sum every subtotal AS-IS — CPA tax-recon storage carries the sign.
-    const signed = sec.subtotal;
-    if (sec.group === 'asset')     totalAssets      += signed;
-    if (sec.group === 'liability') totalLiabilities += signed;
-    if (sec.group === 'equity')    totalEquity      += signed;
+    // A contra section always REDUCES its parent group's total. The stored
+    // sign of contra subtotals is inconsistent across this codebase:
+    // L09B/L12B (accumulated depreciation) are stored signed-negative, while
+    // M206A (distributions / member draws) is stored signed-positive. To
+    // get a sign-correct contribution regardless of the stored sign, fold
+    // each contra to its negative magnitude. Non-contras pass through signed.
+    const contribution = sec.contra ? -Math.abs(sec.subtotal) : sec.subtotal;
+    if (sec.group === 'asset')     totalAssets      += contribution;
+    if (sec.group === 'liability') totalLiabilities += contribution;
+    if (sec.group === 'equity')    totalEquity      += contribution;
   }
   totalAssets      = Math.round(totalAssets * 100) / 100;
   totalLiabilities = Math.round(totalLiabilities * 100) / 100;
   totalEquity      = Math.round(totalEquity * 100) / 100;
   const totalLiabEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
-  // Tax-recon plug: A + (L+E) + NetIncomeLoss = 0  ⇒  NetIncomeLoss = -(A + L+E).
+  // Tax-recon plug: A + (signed L+E) + NetIncomeLoss = 0  ⇒  NetIncomeLoss = -(A + L+E).
   const netIncomeLoss   = Math.round(-(totalAssets + totalLiabEquity) * 100) / 100;
 
   // Reconciliation gap: compare the plug to the actual P&L net income for the
@@ -579,13 +584,17 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
     reconciliationGap = Math.round((netIncomeLoss + actualNetIncome) * 100) / 100;
   }
 
-  // Back-compat: keep totalLiabPlusEquity + balanceCheck on the totals object
-  // so locked-year snapshots written under the old shape continue to render
-  // (renderFinalSummary tolerates both). balanceCheck retains its prior
-  // meaning (A − (L+E)) for that fallback path; the new code uses
-  // netIncomeLoss + reconciliationGap instead.
-  const totalLiabPlusEquity = totalLiabEquity;
-  const balanceCheck        = Math.round((totalAssets - totalLiabEquity) * 100) / 100;
+  // Legacy back-compat fields used by the simpler "Assets / Liab / Equity /
+  // Balance Check" presentation. The balance check must be on a single sign
+  // convention; we normalize to MAGNITUDE since liabilities are typically
+  // stored signed-negative and equity signed-positive in this codebase, so
+  // the raw signed sum mixes conventions and yields a meaningless gap.
+  //   totalLiabPlusEquity = |L| + |E|
+  //   balanceCheck        = A − |L| − |E|  (positive ⇒ asset excess; negative ⇒ short)
+  const liabMagnitude       = Math.abs(totalLiabilities);
+  const equityMagnitude     = Math.abs(totalEquity);
+  const totalLiabPlusEquity = Math.round((liabMagnitude + equityMagnitude) * 100) / 100;
+  const balanceCheck        = Math.round((totalAssets - liabMagnitude - equityMagnitude) * 100) / 100;
 
   return {
     year,
