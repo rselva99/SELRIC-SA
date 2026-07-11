@@ -19,6 +19,7 @@ import {
   projectedTotalAcrossPeriods,
   DEPRECIATION_START_PERIOD,
 } from '../../lib/depreciation';
+import { listCpaLocks, isCpaLocked, cpaLockNote } from '../../lib/cpaLocks';
 import Modal from '../../components/ui/Modal';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
@@ -550,10 +551,39 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
     [assets, willPostPeriods]
   );
 
+  // CPA-lock preflight. Any year in the target range with a lock (for
+  // either kind) blocks the whole run — the generator refuses to touch
+  // a locked (year, kind), and running would still leave earlier
+  // periods posted, so we surface the block up front.
+  const [cpaLocks, setCpaLocks] = useState([]);
+  const lockedYears = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const p of willPostPeriods) {
+      const y = parseInt(p.slice(0, 4), 10);
+      if (seen.has(y)) continue;
+      seen.add(y);
+      for (const kind of ['depreciation', 'amortization']) {
+        if (isCpaLocked(cpaLocks, y, kind)) {
+          out.push({ year: y, kind, note: cpaLockNote(cpaLocks, y, kind) });
+        }
+      }
+    }
+    return out;
+  }, [willPostPeriods, cpaLocks]);
+  const isBlocked = lockedYears.length > 0;
+  const lockedSummary = useMemo(() => {
+    if (!lockedYears.length) return '';
+    return lockedYears
+      .map(l => `${l.year} ${l.kind}${l.note ? ` — ${l.note}` : ''}`)
+      .join(' · ');
+  }, [lockedYears]);
+
   useEffect(() => {
     if (!open) return;
     setExisting(null);
     existingDepreciationPeriods(periods).then(setExisting).catch(() => setExisting(new Set()));
+    listCpaLocks().then(setCpaLocks).catch(() => setCpaLocks([]));
   }, [open, periods]);
 
   async function run() {
@@ -577,10 +607,23 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
     <Modal open={open} onClose={onClose} title="Generate Depreciation & Amortization">
       <div className="space-y-3 p-1">
         <p className="text-sm text-surface-600">
-          Posts one journal entry per month from {DEPRECIATION_START_PERIOD} through the period below.
-          Each JE debits <span className="font-mono">Depreciation &amp; Amortization</span> and credits <span className="font-mono">Accumulated D&amp;A</span>.
-          Months that already have a JE-DA are skipped unless you tick Replace.
+          Posts up to two journal entries per month from {DEPRECIATION_START_PERIOD} through the period below —
+          one for depreciation (DR <span className="font-mono">Depreciation Expense</span> / CR <span className="font-mono">Accumulated Depreciation</span>)
+          and one for amortization (DR <span className="font-mono">Amortization Expense</span> / CR <span className="font-mono">Accumulated Amortization</span>).
+          Months whose kind is already posted are skipped unless you tick Replace.
         </p>
+        {isBlocked && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="font-semibold">CPA-locked — cannot post</div>
+              <div className="mt-0.5">{lockedSummary}</div>
+              <div className="mt-1 text-amber-800">
+                Delete the matching row in <span className="font-mono">cpa_sourced_locks</span> to unlock, or narrow the "Through" month to a year without a lock.
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Through (month)">
@@ -604,7 +647,11 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
 
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={run} disabled={busy || monthly <= 0.005 || willPost === 0} className="btn-primary flex items-center gap-2">
+          <button
+            onClick={run}
+            disabled={busy || monthly <= 0.005 || willPost === 0 || isBlocked}
+            title={isBlocked ? `CPA-locked: ${lockedSummary}` : undefined}
+            className="btn-primary flex items-center gap-2">
             {busy && <Loader2 size={14} className="animate-spin" />}
             Post {willPost} {willPost === 1 ? 'month' : 'months'}
           </button>

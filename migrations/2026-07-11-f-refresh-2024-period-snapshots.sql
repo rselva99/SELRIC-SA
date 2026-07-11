@@ -1,0 +1,45 @@
+-- 2026-07-11 (f)  Refresh 2024 period_close snapshots.
+--
+-- WHY THIS FILE IS DOCUMENTATION-ONLY.
+-- ==================================
+-- The `period_close.snapshot` JSONB column is populated by JS code — see
+-- `src/lib/periodClose.js buildPeriodSnapshot(period, categories)` — which
+-- pulls the period's posted-and-non-void transactions and passes them
+-- through `aggregateForPnL` / `aggregateForBS` (in `src/lib/finance.js`).
+-- Reproducing that logic in pure SQL would duplicate ~150 lines of JS
+-- classification code for no benefit, so the snapshot refresh runs in JS
+-- via the executor script that ships each of these migrations.
+--
+-- WHAT ACTUALLY HAPPENS.
+-- ======================
+--   1. All 12 of 2024's period_close rows are reopened (status=open,
+--      closed_at=NULL, closed_by=NULL).
+--   2. `buildPeriodSnapshot` is called for each period and its return
+--      value is written to period_close.snapshot / snapshot_at.
+--   3. Each period is re-closed with its ORIGINAL closed_at + closed_by
+--      (the same Phase-1 timestamps used by the earlier CPA depreciation
+--      migration), so `period_close` remains byte-for-byte identical to
+--      Phase 1 EXCEPT for the snapshot payload and snapshot_at columns.
+--
+-- The Phase-1 timestamps restored in step 3:
+--   2024-01  closed 2026-06-15T20:16:32.539+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-02  closed 2026-06-15T20:16:44.721+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-03  closed 2026-06-15T20:16:59.384+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-04  closed 2026-06-15T20:17:08.35+00:00   by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-05  closed 2026-06-15T20:17:14.831+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-06  closed 2026-06-15T20:17:31.037+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-07  closed 2026-06-15T20:17:39.652+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-08  closed 2026-06-15T20:17:50.555+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-09  closed 2026-06-15T20:17:56.965+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-10  closed 2026-06-15T20:18:02.627+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-11  closed 2026-06-15T20:18:13.829+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--   2024-12  closed 2026-06-17T13:42:53.786+00:00  by 7fd50334-c616-4861-b73e-e3e16e1bbc17
+--
+-- HOW TO REPLAY THIS OUTSIDE THE EXECUTOR.
+-- ========================================
+-- If you need to re-refresh the snapshots later (e.g. after another data
+-- correction), open the Accountant page in the app and re-close each 2024
+-- period through the UI. Behind the scenes that runs the same
+-- `closePeriod` helper the executor uses.
+--
+-- No table structure is changed by this migration.
