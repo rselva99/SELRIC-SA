@@ -18,9 +18,14 @@
 //
 // CPA LOCK. Any (year, kind) row in public.cpa_sourced_locks blocks the
 // generator for that year+kind. Depreciation and amortization can be
-// locked independently. `generateDepreciationThrough` throws
-// `CpaLockedError` for the first locked period it encounters — no JE is
-// posted, no period is left half-modified. Unlocking is a manual admin
+// locked independently. `generateDepreciationThrough` SKIPS every
+// locked (year, kind) it encounters — never deletes, never posts — and
+// reports them in the result's `cpaSkipped` list. Unlocked periods in
+// the same call still run normally (so a mixed 2024-2025 range where
+// 2024 is locked will post 2025 while leaving 2024 untouched). When
+// the entire call would touch only locked periods (nothing posted or
+// replaced), it throws `CpaLockedError` so the caller surfaces a clear
+// error instead of a silent no-op. Unlocking is a manual admin
 // operation. See src/lib/cpaLocks.js.
 //
 // "Generate through [month]" catches every missing month from Jan 2024
@@ -257,23 +262,26 @@ async function postOneMonthKind({ period, amount, kind, userId }) {
 // month posts up to TWO JEs (one depreciation, one amortization) —
 // whichever kinds have a non-zero charge for that period.
 //
-// Preflight
-//   Fetches CPA locks once and, on the very first period + kind that
-//   would post, throws CpaLockedError if the year+kind is locked. Nothing
-//   is written when the throw fires. Callers should surface the error
-//   message to the user — the modal's try/catch already does this.
+// CPA-lock behaviour
+//   Fetches CPA locks once, then for every (period, kind) whose year is
+//   locked for that kind: records the pair in `cpaSkipped` and continues
+//   without touching the DB. Unlocked pairs in the same call still run
+//   normally. If the call finishes with NO postings AND NO replacements
+//   AND at least one CPA-locked skip, throws `CpaLockedError` so the
+//   caller surfaces the block instead of a silent no-op.
 //
 // Returns:
-//   { posted, skipped, replaced, total, byKind: { depreciation: {…}, amortization: {…} } }
+//   { posted, skipped, replaced, cpaSkipped, total, byKind }
 export async function generateDepreciationThrough({ endPeriod, assets, userId, replace = false }) {
   const periods  = monthsThrough(endPeriod);
   const existing = await existingDepreciationPeriods(periods);
   const locks    = await listCpaLocks();
 
-  const posted   = [];
-  const skipped  = [];
-  const replaced = [];
-  const byKind   = {
+  const posted     = [];
+  const skipped    = [];
+  const replaced   = [];
+  const cpaSkipped = [];
+  const byKind     = {
     [KIND_DEPRECIATION]: { posted: 0, total: 0 },
     [KIND_AMORTIZATION]: { posted: 0, total: 0 },
   };
@@ -283,13 +291,16 @@ export async function generateDepreciationThrough({ endPeriod, assets, userId, r
     const year = yearOfPeriod(period);
 
     for (const kind of ALL_KINDS) {
+      // CPA-lock guard — skip locked (year, kind) before any DB write.
+      // Applies regardless of the amount, so a locked kind is never
+      // touched even if the register would compute a non-zero charge.
+      if (isCpaLocked(locks, year, kind)) {
+        cpaSkipped.push({ period, kind, year, note: cpaLockNote(locks, year, kind) });
+        continue;
+      }
+
       const amount = monthlyForKind(assets, period, kind);
       if (amount <= 0.005) { continue; }
-
-      // CPA-lock preflight — before touching the DB.
-      if (isCpaLocked(locks, year, kind)) {
-        throw new CpaLockedError(year, kind, cpaLockNote(locks, year, kind));
-      }
 
       const isDep     = kind === KIND_DEPRECIATION;
       const reference = isDep ? depReference(period) : amortReference(period);
@@ -308,7 +319,24 @@ export async function generateDepreciationThrough({ endPeriod, assets, userId, r
     }
   }
 
-  return { posted, skipped, replaced, total, byKind };
+  // Throw only when the caller explicitly asked to REPLACE and every
+  // (year, kind) they targeted was locked. `replace=false` runs on a
+  // locked-only range stay silent (all-existing / all-locked have no
+  // useful work anyway); `replace=true` on a mixed range still posts
+  // the unlocked side and returns cpaSkipped for the locked side.
+  if (replace && posted.length === 0 && replaced.length === 0 && cpaSkipped.length > 0) {
+    const pairs = [];
+    const seen  = new Set();
+    for (const s of cpaSkipped) {
+      const key = `${s.year}|${s.kind}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push({ year: s.year, kind: s.kind });
+    }
+    throw new CpaLockedError(pairs);
+  }
+
+  return { posted, skipped, replaced, cpaSkipped, total, byKind };
 }
 
 async function refExistsAndNotVoided(reference) {

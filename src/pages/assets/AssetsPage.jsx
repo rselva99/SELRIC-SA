@@ -551,15 +551,17 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
     [assets, willPostPeriods]
   );
 
-  // CPA-lock preflight. Any year in the target range with a lock (for
-  // either kind) blocks the whole run — the generator refuses to touch
-  // a locked (year, kind), and running would still leave earlier
-  // periods posted, so we surface the block up front.
+  // CPA-lock preflight. Any year in the target range with a lock is
+  // surfaced immediately — the banner appears the moment the modal
+  // opens on a range that covers a lock, regardless of whether Replace
+  // is currently ticked. The lock is derived from the FULL periods
+  // list (not the post-filtered willPostPeriods), so the user sees the
+  // warning before they can even reach the checkbox.
   const [cpaLocks, setCpaLocks] = useState([]);
   const lockedYears = useMemo(() => {
     const out = [];
     const seen = new Set();
-    for (const p of willPostPeriods) {
+    for (const p of periods) {
       const y = parseInt(p.slice(0, 4), 10);
       if (seen.has(y)) continue;
       seen.add(y);
@@ -570,14 +572,29 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
       }
     }
     return out;
-  }, [willPostPeriods, cpaLocks]);
-  const isBlocked = lockedYears.length > 0;
+  }, [periods, cpaLocks]);
+  const hasLockInRange = lockedYears.length > 0;
+  // Replace is refused when any locked year sits inside the range —
+  // ticking would ask the generator to wipe CPA-sourced JEs. Ticking
+  // is prevented in the UI *and* enforced by depreciation.js.
+  const replaceDisabled = hasLockInRange;
+  // Post is blocked only when the user actually wants to replace on a
+  // locked range — a plain post (replace=false) that only touches
+  // unlocked or missing periods is still allowed.
+  const isBlocked = hasLockInRange && replace;
   const lockedSummary = useMemo(() => {
     if (!lockedYears.length) return '';
     return lockedYears
       .map(l => `${l.year} ${l.kind}${l.note ? ` — ${l.note}` : ''}`)
       .join(' · ');
   }, [lockedYears]);
+
+  // If the range slides off a locked year while Replace is ticked,
+  // un-tick automatically to keep the "you cannot replace here" state
+  // consistent.
+  useEffect(() => {
+    if (replaceDisabled && replace) setReplace(false);
+  }, [replaceDisabled, replace]);
 
   useEffect(() => {
     if (!open) return;
@@ -591,9 +608,10 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
     try {
       const res = await generateDepreciationThrough({ endPeriod, assets, userId, replace });
       const parts = [];
-      if (res.posted.length)   parts.push(`posted ${res.posted.length}`);
-      if (res.replaced.length) parts.push(`replaced ${res.replaced.length}`);
-      if (res.skipped.length)  parts.push(`skipped ${res.skipped.length}`);
+      if (res.posted.length)     parts.push(`posted ${res.posted.length}`);
+      if (res.replaced.length)   parts.push(`replaced ${res.replaced.length}`);
+      if (res.skipped.length)    parts.push(`skipped ${res.skipped.length}`);
+      if (res.cpaSkipped?.length) parts.push(`CPA-locked ${res.cpaSkipped.length}`);
       toast.success(`D&A · ${parts.join(' · ') || 'nothing to do'} · total ${formatCurrency(res.total)}`);
       onPosted?.();
     } catch (err) {
@@ -612,14 +630,15 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
           and one for amortization (DR <span className="font-mono">Amortization Expense</span> / CR <span className="font-mono">Accumulated Amortization</span>).
           Months whose kind is already posted are skipped unless you tick Replace.
         </p>
-        {isBlocked && (
+        {hasLockInRange && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
             <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
             <div>
-              <div className="font-semibold">CPA-locked — cannot post</div>
+              <div className="font-semibold">CPA-locked — replace disabled for these years</div>
               <div className="mt-0.5">{lockedSummary}</div>
               <div className="mt-1 text-amber-800">
-                Delete the matching row in <span className="font-mono">cpa_sourced_locks</span> to unlock, or narrow the "Through" month to a year without a lock.
+                Locked (year, kind) pairs are skipped by the generator so their CPA-sourced JEs stay intact.
+                Unlocked months in the same range still post. To unlock, delete the matching row in <span className="font-mono">cpa_sourced_locks</span>.
               </div>
             </div>
           </div>
@@ -640,8 +659,16 @@ function DepreciationModal({ open, onClose, assets, userId, onPosted, preset }) 
           <div className="flex justify-between font-semibold"><span>Will post now</span><span className="font-mono">{willPost} {willPost === 1 ? 'month' : 'months'} · {formatCurrency(projectedTotal)}</span></div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-surface-700 cursor-pointer">
-          <input type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)} />
+        <label
+          className={`flex items-center gap-2 text-sm ${replaceDisabled ? 'text-surface-400 cursor-not-allowed' : 'text-surface-700 cursor-pointer'}`}
+          title={replaceDisabled ? `Replace is disabled because the range covers CPA-locked year(s): ${lockedSummary}` : undefined}
+        >
+          <input
+            type="checkbox"
+            checked={replace}
+            disabled={replaceDisabled}
+            onChange={e => setReplace(e.target.checked)}
+          />
           Replace existing months (wipe + re-post — use after adding or retiring assets)
         </label>
 
