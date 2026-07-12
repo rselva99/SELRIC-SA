@@ -4,7 +4,8 @@ import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { extractBankStatementFromText, extractBankStatementFromImages, extractInvoice } from '../../lib/claude';
 import { validateExtractedStatement } from '../../lib/statementValidation';
-import { partitionNewRows } from '../../lib/statementDedupe';
+import { partitionByMultiplicity } from '../../lib/statementDedupe';
+import StatementReuploadConfirm from '../../components/StatementReuploadConfirm';
 import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES, formatStatementPeriod } from '../../lib/utils';
 import { isBalanceSheetType } from '../../lib/finance';
 import FileDropZone from '../../components/ui/FileDropZone';
@@ -211,6 +212,7 @@ export default function BookkeepingPage() {
   // so the async upload pipeline can `await` user input.
   const [anchorPrompt, setAnchorPrompt]         = useState(null);   // { id, fileName, resolve, reject }
   const [dateWarning,  setDateWarning]          = useState(null);   // { id, outOfRange, anchor, totalCount, resolve }
+  const [reuploadCtx,  setReuploadCtx]          = useState(null);   // { existingStmt, existingRows, file, extracted, path, resolve, existingCount, categorizedCount }
 
   useEffect(() => {
     supabase.from('profiles').select('id, full_name')
@@ -768,41 +770,112 @@ export default function BookkeepingPage() {
           const safeName = file.name.replace(/[^\w.\-]/g, '_');
           const uploadPath = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
           const uploadResult = await uploadFile('documents', uploadPath, file);
-          // Period range comes from the ANCHOR, not from the extracted txns.
-          // The anchor is the statement's own self-reported period (or the
-          // user's pick when the PDF/filename didn't say); the dates on
-          // individual transactions can drift if extraction was imperfect,
-          // but the anchor is the contract for "what period this statement
-          // covers" and it's what every downstream filter should respect.
-          const stmt = await addBankStatement({
-            file_name: file.name,
-            file_url: uploadResult?.path || '',
-            upload_date: new Date().toISOString(),
-            transaction_count: extracted.transactions?.length || 0,
-            statement_totals: extracted.statement_totals || null,
-            period_start: anchorPeriod?.start || null,
-            period_end:   anchorPeriod?.end   || null,
-          });
-          if (extracted.transactions?.length) {
+
+          // Reuse-or-create the bank_statements row for this period. The
+          // period key is derived from the anchor, which is the same key
+          // downstream period_close / P&L / trial balance code uses. Any
+          // existing row under the same key MUST be reused; a second row
+          // would leave categorized transactions tied to the old id
+          // shadowed by uncategorized freshly-extracted duplicates on the
+          // new id, silently doubling the month on the P&L.
+          const periodKey = (anchorPeriod?.start || '').slice(0, 7);
+          const { data: existingStmts, error: lookupErr } = await supabase
+            .from('bank_statements').select('*').eq('period', periodKey).limit(1);
+          if (lookupErr) throw lookupErr;
+          const existingStmt = existingStmts?.[0] || null;
+
+          if (existingStmt) {
+            // Existing statement — load its rows and ask the user to confirm
+            // a safe-dedupe re-upload before any DB write.
+            const { data: existingRowsRaw } = await supabase
+              .from('transactions')
+              .select('id, date, amount, description, bank_statement_id, category, voided, type')
+              .eq('bank_statement_id', existingStmt.id);
+            const existingRows = (existingRowsRaw || []).filter(r => !r.voided);
+            const categorized = existingRows.filter(r => r.category && r.category.trim() !== '').length;
+
+            const proceed = await new Promise(resolve => {
+              setReuploadCtx({
+                existingStmt,
+                existingRows,
+                file,
+                extracted,
+                path: uploadResult?.path || '',
+                resolve,
+                existingCount: existingRows.length,
+                categorizedCount: categorized,
+              });
+            }).finally(() => setReuploadCtx(null));
+            if (!proceed) {
+              toast('Re-upload cancelled — no changes made.', { icon: '↩️' });
+              continue;
+            }
+
+            // Safe re-upload: update summary + file refs on the EXISTING row,
+            // never insert a new bank_statements row. Insert only the
+            // multiplicity-difference for credits and debits independently.
+            await supabase
+              .from('bank_statements')
+              .update({
+                file_name: file.name,
+                file_url: uploadResult?.path || '',
+                upload_date: new Date().toISOString(),
+                statement_totals: extracted.statement_totals || existingStmt.statement_totals || null,
+              })
+              .eq('id', existingStmt.id);
+
             const candidates = extracted.transactions.map((t) => ({
               date: t.date,
               description: t.description || '',
               supplier: t.description || '',
               amount: parseFloat(t.amount) || 0,
               type: t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
-              category: fuzzyMatchCategory(t.description || '', supplierCategories),
-              bank_statement_id: stmt?.id,
+              // Re-upload rows land UNCATEGORIZED so we never overwrite a
+              // manual categorization on a row that's already in the DB.
+              category: null,
+              bank_statement_id: existingStmt.id,
               posted: false,
             }));
-            const { data: existing } = await supabase
-              .from('transactions')
-              .select('id, date, amount, description, bank_statement_id')
-              .eq('bank_statement_id', stmt?.id);
-            const { toInsert } = partitionNewRows(existing || [], candidates);
+            const existingCredits = existingRows.filter(r => r.type === 'credit');
+            const existingDebits  = existingRows.filter(r => r.type === 'debit');
+            const incomingCredits = candidates.filter(r => r.type === 'credit');
+            const incomingDebits  = candidates.filter(r => r.type === 'debit');
+            const { toInsert: creditsToInsert } = partitionByMultiplicity(existingCredits, incomingCredits);
+            const { toInsert: debitsToInsert  } = partitionByMultiplicity(existingDebits,  incomingDebits);
+            const toInsert = [...creditsToInsert, ...debitsToInsert];
             for (const row of toInsert) {
               await addTransaction(row);
             }
-            toast.success(`Extracted ${toInsert.length} transactions from ${file.name}`);
+            toast.success(`Safe re-upload: added ${toInsert.length} missing row${toInsert.length === 1 ? '' : 's'} to ${periodKey}. Existing categorized rows untouched.`);
+          } else {
+            // No existing statement — first-ever import for this period.
+            const stmt = await addBankStatement({
+              period: periodKey,
+              file_name: file.name,
+              file_url: uploadResult?.path || '',
+              upload_date: new Date().toISOString(),
+              transaction_count: extracted.transactions?.length || 0,
+              statement_totals: extracted.statement_totals || null,
+              period_start: anchorPeriod?.start || null,
+              period_end:   anchorPeriod?.end   || null,
+            });
+            if (extracted.transactions?.length) {
+              const candidates = extracted.transactions.map((t) => ({
+                date: t.date,
+                description: t.description || '',
+                supplier: t.description || '',
+                amount: parseFloat(t.amount) || 0,
+                type: t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
+                category: fuzzyMatchCategory(t.description || '', supplierCategories),
+                bank_statement_id: stmt?.id,
+                posted: false,
+              }));
+              const { toInsert } = partitionByMultiplicity([], candidates);
+              for (const row of toInsert) {
+                await addTransaction(row);
+              }
+              toast.success(`Extracted ${toInsert.length} transactions from ${file.name}`);
+            }
           }
         } else {
           const base64 = await fileToBase64(file);
@@ -1416,6 +1489,16 @@ export default function BookkeepingPage() {
         onShift={()      => dateWarning?.resolve?.('shift')}
         onInsertAsIs={() => dateWarning?.resolve?.('insert')}
         onCancel={()     => dateWarning?.resolve?.('cancel')}
+      />
+
+      <StatementReuploadConfirm
+        open={!!reuploadCtx}
+        period={reuploadCtx?.existingStmt?.period || ''}
+        fileName={reuploadCtx?.file?.name}
+        existingCount={reuploadCtx?.existingCount || 0}
+        categorizedCount={reuploadCtx?.categorizedCount || 0}
+        onConfirm={() => reuploadCtx?.resolve?.(true)}
+        onCancel={()  => reuploadCtx?.resolve?.(false)}
       />
 
     </div>

@@ -32,6 +32,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { supabase, fetchAll } from './_dbClient.mjs';
 import { validateStatementTotals, assertHasDeposits } from '../src/lib/statementValidation.js';
+import { partitionByMultiplicity } from '../src/lib/statementDedupe.js';
 
 const require = createRequire(import.meta.url);
 const pdfjs   = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -56,6 +57,24 @@ const onlyArg = process.argv.find(a => a.startsWith('--only='));
 const ONLY_MONTHS = onlyArg
   ? onlyArg.slice('--only='.length).split(',').map(s => s.trim()).filter(Boolean)
   : ['2024-10', '2024-12'];
+
+// --local=2024-10:/path/to/oct.pdf,2024-12:/path/to/dec.pdf
+// When set, we read the PDF from the local path instead of Supabase Storage.
+// Rows are still tied to the EXISTING bank_statement_id looked up by period —
+// never a new bank_statements row.
+const localArg = process.argv.find(a => a.startsWith('--local='));
+const LOCAL_PATHS = new Map();
+if (localArg) {
+  for (const pair of localArg.slice('--local='.length).split(',')) {
+    const [k, ...rest] = pair.split(':');
+    if (k && rest.length) LOCAL_PATHS.set(k.trim(), rest.join(':').trim());
+  }
+}
+
+// When both deposit and withdrawal rows should be inserted (full statement
+// re-extraction), pass --insert-both. Default is deposits-only (the Step 1b
+// mode where the source PDF was a cropped reprint).
+const INSERT_BOTH = process.argv.includes('--insert-both');
 
 const OUT_DIR = new URL('../.local/reextract-scanned/', import.meta.url).pathname;
 mkdirSync(OUT_DIR, { recursive: true });
@@ -111,7 +130,7 @@ function anchorClause(a) {
 }
 
 function firstPagePrompt(anchor) {
-  return `You are extracting bank metadata, statement totals, and transactions (deposits AND non-check withdrawals) from PAGE 1 of a bank statement image.${anchorClause(anchor)}
+  return `You are extracting bank metadata, statement totals, and transactions (deposits AND non-check withdrawals) from PAGE 1 of a bank statement image. Call the record_statement tool with what you see.${anchorClause(anchor)}
 
 INCLUDE (as transactions):
 - Deposits & Credits: merchant/processor deposits (SpotOn, Square, Stripe, Toast), teller cash deposits ("Deposit - Thank You"), refunds, ACH credits, wire receipts, card credits.
@@ -126,33 +145,13 @@ SIGN CONVENTION — REQUIRED:
 
 IMPORTANT — banks legitimately post the SAME amount to the SAME description on the SAME day more than once (an Apple.com $2.99 charge twice a day, an ATM withdrawal and its $3 fee twice the same day, two Rackco charges). When you see repeats, INCLUDE EACH ONE as a separate row. Never collapse repeats.
 
-Return ONLY valid JSON (no markdown, no backticks):
-{
-  "bank_name": "string",
-  "account_number_last4": "string",
-  "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
-  "statement_totals": {
-    "beginning_balance": number,
-    "deposits_total": number,
-    "withdrawals_total": number,
-    "checks_total": number,
-    "fees_total": number,
-    "returned_checks_total": number,
-    "automatic_transfers_total": number,
-    "ending_balance": number,
-    "deposit_count": number,
-    "withdrawal_count": number
-  },
-  "transactions": [
-    { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "credit or debit", "balance": number or null }
-  ]
-}
+statement_totals MUST come from the printed summary block on this image. deposits_total, withdrawals_total, checks_total, fees_total, and returned_checks_total are POSITIVE dollar amounts. CRITICAL: a trailing hyphen on a Regions balance ("$9,813.61 -") means NEGATIVE (overdrawn) — record beginning_balance or ending_balance as −9813.61 in that case. Use 0 for fields the summary doesn't print.
 
-statement_totals MUST come from the printed summary block on this image. *_total fields are POSITIVE dollar amounts. Regions summaries print separate lines for "Returned Checks" (goes in returned_checks_total, positive) and "Automatic Transfers". CRITICAL: a trailing hyphen on a Regions balance ("$9,813.61 -") means NEGATIVE (overdrawn) — report ending_balance as −9813.61 in that case. Use 0 for fields the summary doesn't print.`;
+Enumerate EVERY visible transaction row exhaustively. Do not summarize.`;
 }
 
 function laterPagePrompt(anchor) {
-  return `You are extracting deposits and non-check withdrawals from a single page of a bank statement image.${anchorClause(anchor)}
+  return `You are extracting deposits and non-check withdrawals from a single page of a bank statement image. Call the record_transactions tool with what you see.${anchorClause(anchor)}
 
 INCLUDE:
 - Deposits & Credits: merchant/processor deposits, teller cash deposits, refunds, ACH credits, wire receipts, card credits.
@@ -166,36 +165,129 @@ IMPORTANT — same-day, same-amount, same-description REPEATS are real. Include 
 
 ENUMERATE EXHAUSTIVELY: walk down every row visible on this page. Do not skip small amounts, do not summarize. If the page shows 40 rows, return 40 rows.
 
-Return ONLY valid JSON — no markdown:
-{ "transactions": [ { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "credit or debit", "balance": number or null } ] }
-If the page has none of the above, return { "transactions": [] }.`;
+If the page has none of the above (e.g. a Checks-Paid section, or a blank continuation page), pass an empty transactions array.`;
 }
 
-async function postClaude(systemPrompt, messages) {
-  const upstream = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
+// Structured output via tool_use — forces the model to emit a call to a
+// tool whose input schema mirrors what we want back, so we never rely on
+// free-text JSON parsing. Two tool schemas, one for the meta+txns first page
+// and one for txn-only later pages, mirror the shape the rest of the script
+// expects.
+const META_TOOL = {
+  name: 'record_statement',
+  description: 'Record the printed summary block and every deposit + non-check withdrawal on page 1.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      bank_name: { type: 'string' },
+      account_number_last4: { type: 'string' },
+      statement_period: {
+        type: 'object',
+        properties: {
+          start: { type: 'string' },
+          end:   { type: 'string' },
+        },
+      },
+      statement_totals: {
+        type: 'object',
+        properties: {
+          beginning_balance: { type: 'number' },
+          deposits_total: { type: 'number' },
+          withdrawals_total: { type: 'number' },
+          checks_total: { type: 'number' },
+          fees_total: { type: 'number' },
+          returned_checks_total: { type: 'number' },
+          automatic_transfers_total: { type: 'number' },
+          ending_balance: { type: 'number' },
+          deposit_count: { type: 'number' },
+          withdrawal_count: { type: 'number' },
+        },
+        required: ['beginning_balance', 'deposits_total', 'withdrawals_total', 'ending_balance'],
+      },
+      transactions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            date: { type: 'string' },
+            description: { type: 'string' },
+            reference: { type: ['string', 'null'] },
+            amount: { type: 'number' },
+            type: { type: 'string', enum: ['credit', 'debit'] },
+            balance: { type: ['number', 'null'] },
+          },
+          required: ['date', 'description', 'amount', 'type'],
+        },
+      },
     },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 32000, system: systemPrompt, messages }),
-  });
-  if (!upstream.ok) {
-    const body = await upstream.text();
-    throw new Error(`Anthropic ${upstream.status}: ${body.slice(0, 400)}`);
+    required: ['statement_totals', 'transactions'],
+  },
+};
+const TXNS_TOOL = {
+  name: 'record_transactions',
+  description: 'Record every deposit and non-check withdrawal on this page.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      transactions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            date: { type: 'string' },
+            description: { type: 'string' },
+            reference: { type: ['string', 'null'] },
+            amount: { type: 'number' },
+            type: { type: 'string', enum: ['credit', 'debit'] },
+            balance: { type: ['number', 'null'] },
+          },
+          required: ['date', 'description', 'amount', 'type'],
+        },
+      },
+    },
+    required: ['transactions'],
+  },
+};
+
+async function postClaude(systemPrompt, messages, tool, { maxRetries = 2 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 32000,
+        system: systemPrompt,
+        messages,
+        tools: [tool],
+        tool_choice: { type: 'tool', name: tool.name },
+      }),
+    });
+    if (!upstream.ok) {
+      const body = await upstream.text();
+      throw new Error(`Anthropic ${upstream.status}: ${body.slice(0, 400)}`);
+    }
+    const data = await upstream.json();
+    const toolUse = data.content?.find(b => b.type === 'tool_use' && b.name === tool.name);
+    if (!toolUse) {
+      lastErr = new Error(`No tool_use block in response`);
+      if (attempt < maxRetries) { console.warn(`    no tool_use, retrying`); continue; }
+      throw lastErr;
+    }
+    return toolUse.input;
   }
-  const data = await upstream.json();
-  const raw = data.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
-  const stripped = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-  const match = stripped.match(/{[\s\S]*}/);
-  if (!match) throw new Error(`No JSON object in Claude response: ${stripped.slice(0, 300)}`);
-  return JSON.parse(match[0]);
+  throw lastErr;
 }
 
 async function extractPagesSequentially(pageImages, anchor) {
   let meta = {};
   const allTxns = [];
+  const failedPages = [];
   for (let i = 0; i < pageImages.length; i++) {
     const isFirst = i === 0;
     const systemPrompt = isFirst ? firstPagePrompt(anchor) : laterPagePrompt(anchor);
@@ -204,67 +296,45 @@ async function extractPagesSequentially(pageImages, anchor) {
       content: [
         { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pageImages[i] } },
         { type: 'text', text: isFirst
-            ? 'Extract the printed summary block AND every deposit + non-check withdrawal from THIS page. Return only JSON.'
-            : 'Enumerate every deposit and non-check withdrawal on THIS page — do not skip anything. Return only JSON.' },
+            ? 'Extract the printed summary block AND every deposit + non-check withdrawal from THIS page by calling record_statement.'
+            : 'Enumerate every deposit and non-check withdrawal on THIS page by calling record_transactions — do not skip anything.' },
       ],
     }];
     console.log(`    page ${i + 1}/${pageImages.length}: calling Claude`);
-    const parsed = await postClaude(systemPrompt, messages);
+    let parsed;
+    try {
+      parsed = await postClaude(systemPrompt, messages, isFirst ? META_TOOL : TXNS_TOOL);
+    } catch (e) {
+      console.error(`      page ${i + 1}: extraction failed after retries: ${e.message.slice(0, 200)}`);
+      failedPages.push(i + 1);
+      continue;
+    }
     if (isFirst) meta = { ...parsed };
-    const rows = parsed.transactions || [];
+    // Anthropic tool_use occasionally serializes a long array as a JSON string
+    // inside the schema-typed slot. Detect and re-parse.
+    let rows = parsed?.transactions;
+    if (typeof rows === 'string') {
+      try {
+        rows = JSON.parse(rows);
+        console.log(`      page ${i + 1}: tool returned transactions as JSON string; re-parsed`);
+      } catch (e) {
+        console.warn(`      page ${i + 1}: tool returned transactions as string but re-parse failed: ${e.message.slice(0, 120)}`);
+        rows = [];
+      }
+    }
+    if (!Array.isArray(rows)) rows = [];
     console.log(`      page ${i + 1}: ${rows.length} rows (${rows.filter(t => t.type === 'credit').length} deposits, ${rows.filter(t => t.type === 'debit').length} withdrawals)`);
     allTxns.push(...rows);
   }
   // NOTE: no cross-page dedupe by (date, amount, desc). Multi-page statements
   // never re-print the same row on two pages — Regions splits by section, not
   // by pagination — so identical rows across pages are actual bank repeats.
-  return { ...meta, transactions: allTxns };
+  return { ...meta, transactions: allTxns, _failedPages: failedPages };
 }
 
-// ── Multiplicity-aware dedupe ─────────────────────────────────────────────
-// Match on COUNT per (date, amount_cents, normalized_description). Insert the
-// DIFFERENCE between what the statement shows and what the DB already has —
-// so legitimate same-day repeats (15 pairs in the existing 2024 data) survive.
-function amountCents(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 100);
-}
-function normDescription(d) {
-  return String(d || '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-function txKey(row) {
-  return `${row.date}|${amountCents(row.amount)}|${normDescription(row.description)}`;
-}
-function partitionByMultiplicity(existingRows, incoming) {
-  const dbCounts = new Map();
-  for (const r of existingRows || []) {
-    const k = txKey(r);
-    dbCounts.set(k, (dbCounts.get(k) || 0) + 1);
-  }
-  const stmtCounts = new Map();
-  const stmtRowsByKey = new Map();
-  for (const r of incoming || []) {
-    const k = txKey(r);
-    stmtCounts.set(k, (stmtCounts.get(k) || 0) + 1);
-    if (!stmtRowsByKey.has(k)) stmtRowsByKey.set(k, []);
-    stmtRowsByKey.get(k).push(r);
-  }
-  const toInsert = [];
-  const alreadyPresent = [];
-  for (const [k, stmtCount] of stmtCounts.entries()) {
-    const dbCount = dbCounts.get(k) || 0;
-    const gap = stmtCount - dbCount;
-    const rows = stmtRowsByKey.get(k);
-    if (gap <= 0) {
-      alreadyPresent.push(...rows);
-    } else {
-      alreadyPresent.push(...rows.slice(0, dbCount));
-      toInsert.push(...rows.slice(dbCount));
-    }
-  }
-  return { toInsert, alreadyPresent };
-}
+// Multiplicity-aware dedupe now lives in src/lib/statementDedupe.js and is
+// imported at the top. Both this script and the UI upload path call the same
+// implementation.
 
 // ── Period-lock reopen/restore (identical to Step 1) ─────────────────────
 const periodsInScope = [...new Set(ONLY_MONTHS)];
@@ -301,11 +371,28 @@ await snapshotAndReopenPeriods();
 try {
 for (const stmt of bs) {
   console.log(`\n── ${stmt.period} ── ${stmt.file_name}`);
-  const path = stmt.file_path || stmt.file_url;
-  const { data: file, error: dlErr } = await supabase.storage.from('documents').download(path);
-  if (dlErr) { console.error('  download failed:', dlErr.message); continue; }
-  const buf = new Uint8Array(await file.arrayBuffer());
-  console.log(`  downloaded ${buf.length} bytes`);
+  // Reuse existing bank_statements row. Never insert a new one — the whole
+  // point of Step 1c is that a duplicate bank_statements row would leave the
+  // categorized rows tied to the old id looking like they belong to a
+  // "different" statement, and re-imports would double-count the P&L.
+
+  let buf;
+  const localPath = LOCAL_PATHS.get(stmt.period);
+  if (localPath) {
+    try {
+      buf = new Uint8Array(readFileSync(localPath));
+      console.log(`  read local file: ${localPath} (${buf.length} bytes)`);
+    } catch (e) {
+      console.error(`  local read failed: ${e.message}`);
+      continue;
+    }
+  } else {
+    const path = stmt.file_path || stmt.file_url;
+    const { data: file, error: dlErr } = await supabase.storage.from('documents').download(path);
+    if (dlErr) { console.error('  download failed:', dlErr.message); continue; }
+    buf = new Uint8Array(await file.arrayBuffer());
+    console.log(`  downloaded ${buf.length} bytes from storage`);
+  }
 
   console.log(`  rendering pages to high-DPI JPEGs (scale 2.5, ≈200 DPI)`);
   let pageImages;
@@ -348,7 +435,7 @@ for (const stmt of bs) {
     supplier: t.description || '',
     amount: parseFloat(t.amount) || 0,
     type: t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
-    category: null,                                // UNCATEGORIZED
+    category: null,                                // UNCATEGORIZED (per spec)
     bank_statement_id: stmt.id,
     posted: false,
     reference: t.reference || null,
@@ -360,24 +447,35 @@ for (const stmt of bs) {
     .from('transactions')
     .select('id, date, amount, description, bank_statement_id, type')
     .eq('bank_statement_id', stmt.id);
+  const existingDeposits = (existingRows || []).filter(r => r.type === 'credit');
+  const existingWithdrawals = (existingRows || []).filter(r => r.type === 'debit');
 
+  // Partition credits and debits independently — a debit and a credit with
+  // the same (date, amount, description) would collide in a combined pool.
   const { toInsert: depositsToInsert, alreadyPresent: depositsPresent } =
-    partitionByMultiplicity(existingRows || [], depositsAll);
+    partitionByMultiplicity(existingDeposits, depositsAll);
+  const { toInsert: withdrawalsToInsertRaw, alreadyPresent: withdrawalsPresent } =
+    partitionByMultiplicity(existingWithdrawals, withdrawalsAll);
+  const withdrawalsToInsert = INSERT_BOTH ? withdrawalsToInsertRaw : [];
 
-  console.log(`  existing rows for this statement: ${existingRows?.length || 0}`);
+  console.log(`  existing rows for this statement: ${existingRows?.length || 0} (deposits=${existingDeposits.length}, withdrawals=${existingWithdrawals.length})`);
   console.log(`  extracted: ${rowsAll.length} rows (deposits=${depositsAll.length}, withdrawals=${withdrawalsAll.length})`);
-  console.log(`  multiplicity-dedupe result:`);
+  console.log(`  multiplicity-dedupe (credits):`);
   console.log(`    deposits already present (matched by count): ${depositsPresent.length}`);
   console.log(`    deposits to insert (statement count − DB count): ${depositsToInsert.length}`);
+  console.log(`  multiplicity-dedupe (debits):`);
+  console.log(`    withdrawals already present (matched by count): ${withdrawalsPresent.length}`);
+  console.log(`    withdrawals to insert (statement count − DB count): ${withdrawalsToInsertRaw.length}${INSERT_BOTH ? '' : ' [SKIPPED — --insert-both not set]'}`);
 
-  if (!DRY_RUN && depositsToInsert.length > 0) {
+  const toInsert = [...depositsToInsert, ...withdrawalsToInsert];
+  if (!DRY_RUN && toInsert.length > 0) {
     const CHUNK = 100;
-    for (let i = 0; i < depositsToInsert.length; i += CHUNK) {
-      const chunk = depositsToInsert.slice(i, i + CHUNK);
+    for (let i = 0; i < toInsert.length; i += CHUNK) {
+      const chunk = toInsert.slice(i, i + CHUNK);
       const { error } = await supabase.from('transactions').insert(chunk);
       if (error) throw new Error(`insert failed for ${stmt.period}: ${error.message}`);
     }
-    console.log(`  inserted ${depositsToInsert.length} deposit rows`);
+    console.log(`  inserted ${depositsToInsert.length} deposit + ${withdrawalsToInsert.length} withdrawal rows`);
   } else if (DRY_RUN) {
     console.log(`  DRY RUN: no rows inserted`);
   }
@@ -404,6 +502,8 @@ for (const stmt of bs) {
     fees_total: totals.fees_total ?? null,
     extracted_deposit_rows: depositsAll.length,
     inserted_deposit_rows: depositsToInsert.length,
+    extracted_withdrawal_rows: withdrawalsAll.length,
+    inserted_withdrawal_rows: withdrawalsToInsert.length,
     existing_before: existingRows?.length || 0,
   });
 }
