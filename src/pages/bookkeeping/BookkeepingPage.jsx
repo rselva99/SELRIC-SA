@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { extractBankStatementFromText, extractBankStatementFromImages, extractInvoice } from '../../lib/claude';
+import { validateExtractedStatement } from '../../lib/statementValidation';
+import { partitionNewRows } from '../../lib/statementDedupe';
 import { formatCurrency, formatDate, fileToBase64, fuzzyMatchCategory, DEFAULT_CATEGORIES, formatStatementPeriod } from '../../lib/utils';
 import { isBalanceSheetType } from '../../lib/finance';
 import FileDropZone from '../../components/ui/FileDropZone';
@@ -755,6 +757,11 @@ export default function BookkeepingPage() {
           }
           extracted = { ...extracted, transactions: txnsForInsert };
 
+          // Pre-insert gate: refuse implausible extractions (zero deposits or
+          // a summary block that doesn't reconcile). Fails LOUDLY so we never
+          // silently import a debits-only view of the month again.
+          validateExtractedStatement(extracted);
+
           // Namespace the storage path with a uuid AND timestamp so re-uploading
           // a file with the same name (e.g. Dec-24.pdf after a delete) can never
           // collide with whatever the storage bucket still has lingering.
@@ -772,15 +779,30 @@ export default function BookkeepingPage() {
             file_url: uploadResult?.path || '',
             upload_date: new Date().toISOString(),
             transaction_count: extracted.transactions?.length || 0,
+            statement_totals: extracted.statement_totals || null,
             period_start: anchorPeriod?.start || null,
             period_end:   anchorPeriod?.end   || null,
           });
           if (extracted.transactions?.length) {
-            for (const t of extracted.transactions) {
-              const suggestedCat = fuzzyMatchCategory(t.description || '', supplierCategories);
-              await addTransaction({ date: t.date, description: t.description||'', supplier: t.description||'', amount: parseFloat(t.amount)||0, type: t.type||(parseFloat(t.amount)<0?'debit':'credit'), category: suggestedCat, bank_statement_id: stmt?.id, posted: false });
+            const candidates = extracted.transactions.map((t) => ({
+              date: t.date,
+              description: t.description || '',
+              supplier: t.description || '',
+              amount: parseFloat(t.amount) || 0,
+              type: t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
+              category: fuzzyMatchCategory(t.description || '', supplierCategories),
+              bank_statement_id: stmt?.id,
+              posted: false,
+            }));
+            const { data: existing } = await supabase
+              .from('transactions')
+              .select('id, date, amount, description, bank_statement_id')
+              .eq('bank_statement_id', stmt?.id);
+            const { toInsert } = partitionNewRows(existing || [], candidates);
+            for (const row of toInsert) {
+              await addTransaction(row);
             }
-            toast.success(`Extracted ${extracted.transactions.length} transactions from ${file.name}`);
+            toast.success(`Extracted ${toInsert.length} transactions from ${file.name}`);
           }
         } else {
           const base64 = await fileToBase64(file);

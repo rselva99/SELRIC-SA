@@ -12,6 +12,8 @@ import {
   parseStatementPeriodFromFilename,
 } from '../../lib/statementPeriod';
 import { fuzzyMatchCategory } from '../../lib/utils';
+import { validateExtractedStatement } from '../../lib/statementValidation';
+import { partitionNewRows } from '../../lib/statementDedupe';
 import Modal from '../../components/ui/Modal';
 import FileDropZone from '../../components/ui/FileDropZone';
 import toast from 'react-hot-toast';
@@ -96,6 +98,12 @@ export default function StatementImportModal({ open, period, onClose, onImported
         );
       }
 
+      // Pre-insert gate: refuse implausible extractions (zero deposits or a
+      // summary block that doesn't reconcile). Fails LOUDLY so the user sees
+      // exactly why the file was rejected instead of silently importing a
+      // debits-only view of the month.
+      validateExtractedStatement(extracted);
+
       // 5. Persist bank_statements + transactions.
       setStage('saving');
       setProgress('Saving…');
@@ -118,21 +126,27 @@ export default function StatementImportModal({ open, period, onClose, onImported
         .single();
       if (stmtErr) throw stmtErr;
 
-      // Sequential inserts so any per-row failure short-circuits cleanly.
-      // Bank-imported rows go through addTransaction (DataContext) which
-      // handles supplier-category fuzzy matching consistently.
-      for (const t of extracted.transactions || []) {
-        const suggestedCat = fuzzyMatchCategory(t.description || '', supplierCategories);
-        await addTransaction({
-          date: t.date,
-          description: t.description || '',
-          supplier:    t.description || '',
-          amount: parseFloat(t.amount) || 0,
-          type:   t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
-          category: suggestedCat,
-          bank_statement_id: stmt.id,
-          posted: false,
-        });
+      // Build the candidate rows, then dedupe against anything already tied to
+      // this statement id. Fresh imports won't have prior rows; re-imports of
+      // the same PDF will skip everything already present and only add what's
+      // new (typically deposit rows a later extractor fills in).
+      const candidates = (extracted.transactions || []).map((t) => ({
+        date: t.date,
+        description: t.description || '',
+        supplier:    t.description || '',
+        amount: parseFloat(t.amount) || 0,
+        type:   t.type || (parseFloat(t.amount) < 0 ? 'debit' : 'credit'),
+        category: fuzzyMatchCategory(t.description || '', supplierCategories),
+        bank_statement_id: stmt.id,
+        posted: false,
+      }));
+      const { data: existing } = await supabase
+        .from('transactions')
+        .select('id, date, amount, description, bank_statement_id')
+        .eq('bank_statement_id', stmt.id);
+      const { toInsert } = partitionNewRows(existing || [], candidates);
+      for (const row of toInsert) {
+        await addTransaction(row);
       }
 
       setStage('done');

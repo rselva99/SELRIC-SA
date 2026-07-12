@@ -36,18 +36,18 @@ function parseClaudeJson(raw) {
 }
 
 export async function extractBankStatement(base64Pdf) {
-  const systemPrompt = `You are a financial document parser. Extract electronic withdrawal/debit transactions from this bank statement.
+  const systemPrompt = `You are a financial document parser. Extract BOTH deposits (credits) and non-check withdrawals (debits) from this bank statement, and the statement's printed summary totals.
 
-STRICT EXCLUSION RULES — do NOT include any of the following:
-- Checks of any kind: paper checks, check payments, items listed under a "Checks" or "Checks Paid" section, entries with check numbers (e.g. "Check 1234", "Ck #5678", "CHK 0042", or any item whose description is just a number)
-- Deposits, credits, or incoming payments of any kind
+INCLUDE (as transactions):
+- Deposits & Credits: merchant/processor deposits (SpotOn, Square, Stripe, Toast), teller "Deposit - Thank You" cash deposits, refunds, wire receipts, ACH credits, incoming transfers.
+- Non-check withdrawals: ACH payments, wires, card purchases, POS transactions, bank fees, service charges, interest, ATM withdrawals, online bill payments (non-check).
 
-INCLUDE ONLY:
-- Electronic debits: ACH payments, wire transfers, direct debits
-- Card purchases and point-of-sale transactions
-- Bank fees, service charges, interest charges
-- Online bill payments (non-check)
-- ATM withdrawals
+EXCLUDE from the transactions list:
+- Checks of any kind: paper checks, check payments, entries in a "Checks" / "Checks Paid" section, items with check numbers (e.g. "Check 1234", "Ck #5678", "CHK 0042", or descriptions that are just a number). Their total goes in statement_totals.checks_total.
+
+SIGN CONVENTION — REQUIRED:
+- Deposits/credits: POSITIVE amount, "type":"credit"
+- Withdrawals/debits: NEGATIVE amount, "type":"debit"
 
 Return ONLY valid JSON (no markdown, no backticks) in this exact format:
 {
@@ -56,18 +56,31 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
   "statement_period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "opening_balance": number,
   "closing_balance": number,
+  "statement_totals": {
+    "beginning_balance": number,
+    "deposits_total": number,
+    "withdrawals_total": number,
+    "checks_total": number,
+    "fees_total": number,
+    "returned_checks_total": number,
+    "automatic_transfers_total": number,
+    "ending_balance": number,
+    "deposit_count": number,
+    "withdrawal_count": number
+  },
   "transactions": [
     {
       "date": "YYYY-MM-DD",
       "description": "string",
       "reference": "string or null",
       "amount": number,
-      "type": "debit",
+      "type": "credit or debit",
       "balance": number or null
     }
   ]
 }
-Use negative numbers for amounts. If you are unsure whether an item is a check, exclude it.`;
+
+statement_totals MUST come from the statement's PRINTED SUMMARY block, not from summing the rows you extracted. Report POSITIVE dollar values for the *_total fields. Regions summaries in particular print separate lines for "Returned Checks" (money credited back after a bounced check — goes in returned_checks_total) and "Automatic Transfers" (net transfer, goes in automatic_transfers_total; keep sign as printed, positive if net-in). CRITICAL: a trailing hyphen after a Regions balance ("$9,813.61 -" or "9,813.61 -") means the balance is NEGATIVE (overdrawn) — report ending_balance as −9813.61 in that case. If the summary doesn't print a field, use 0. If unsure whether an item is a check, exclude it from transactions.`;
 
   const messages = [
     {
@@ -83,7 +96,7 @@ Use negative numbers for amounts. If you are unsure whether an item is a check, 
         },
         {
           type: 'text',
-          text: 'Extract only electronic withdrawal/debit transactions. Exclude ALL checks (any item in a Checks section, any check number, any paper check payment). Exclude all deposits and credits. Return only JSON.',
+          text: 'Extract BOTH deposits and non-check withdrawals AND the printed summary totals from this bank statement. Deposits: positive amount, type="credit". Withdrawals: negative amount, type="debit". Exclude checks from the transactions list (they belong in checks_total). Return only JSON.',
         },
       ],
     },
@@ -112,18 +125,20 @@ function anchorClause(anchorPeriod) {
 export async function extractBankStatementFromText(text, anchorPeriod = null) {
   const systemPrompt = `You are a financial document parser. The following is text extracted from a bank statement PDF. The text preserves the original line structure but column alignment may be imperfect.${anchorClause(anchorPeriod)}
 
-STRICT EXCLUSION RULES — do NOT include:
-- Checks of any kind: paper checks, check payments, items listed under a "Checks" or "Checks Paid" section, entries with check numbers (e.g. "Check 1234", "Ck #5678", "CHK 0042", or any description that is just a number)
-- Deposits, credits, or incoming payments of any kind
+INCLUDE (as transactions):
+- Deposits & Credits: merchant/processor deposits (SpotOn, Square, Stripe, Toast), "Deposit - Thank You" teller cash deposits, refunds, wire receipts, ACH credits, incoming transfers, card credits.
+- Non-check withdrawals: ACH payments, wires, card purchases, POS transactions, bank fees, service charges, interest, ATM withdrawals, online bill payments (non-check).
 
-INCLUDE ONLY:
-- Electronic debits: ACH payments, wire transfers, direct debits
-- Card purchases and point-of-sale transactions
-- Bank fees, service charges, interest charges
-- Online bill payments (non-check)
-- ATM withdrawals
+EXCLUDE from the transactions list:
+- Checks of any kind: paper checks, check payments, items in a "Checks" / "Checks Paid" section, entries with check numbers ("Check 1234", "Ck #5678", "CHK 0042", or descriptions that are just a number). Their total belongs in statement_totals.checks_total.
 
-Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. Amounts may appear in separate columns. Return ONLY valid JSON (no markdown, no backticks):
+SIGN CONVENTION — REQUIRED:
+- Deposits/credits: POSITIVE amount, "type":"credit"
+- Withdrawals/debits: NEGATIVE amount, "type":"debit"
+
+Parse the text carefully. Dates are typically MM/DD/YYYY or MM/DD. Amounts often appear in separate columns. Statement layouts commonly break out sections like "DEPOSITS & CREDITS", "WITHDRAWALS", "CHECKS PAID", "SUMMARY" — capture rows from the first two, header totals from the last, and skip the checks section entirely.
+
+Return ONLY valid JSON (no markdown, no backticks):
 {
   "bank_name": "string",
   "account_number_last4": "string",
@@ -131,12 +146,16 @@ Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. 
   "opening_balance": number,
   "closing_balance": number,
   "statement_totals": {
-    "withdrawals_total": number,
-    "deposits_total": number,
-    "withdrawal_count": number,
-    "deposit_count": number,
     "beginning_balance": number,
-    "ending_balance": number
+    "deposits_total": number,
+    "withdrawals_total": number,
+    "checks_total": number,
+    "fees_total": number,
+    "returned_checks_total": number,
+    "automatic_transfers_total": number,
+    "ending_balance": number,
+    "deposit_count": number,
+    "withdrawal_count": number
   },
   "transactions": [
     {
@@ -144,7 +163,7 @@ Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. 
       "description": "string",
       "reference": "string or null",
       "amount": number,
-      "type": "debit",
+      "type": "credit or debit",
       "balance": number or null
     }
   ]
@@ -152,16 +171,20 @@ Parse the text carefully. Dates are typically in MM/DD/YYYY or similar formats. 
 
 statement_totals MUST come from the statement's own PRINTED SUMMARY section
 (usually labelled "Account Summary", "Activity Summary", or similar), not
-computed from the rows you extracted. withdrawals_total and deposits_total
-are positive dollar amounts. If the summary doesn't print a value, use 0
-for that field — never invent it.
+computed from the rows you extracted. deposits_total, withdrawals_total,
+checks_total, and fees_total are POSITIVE dollar amounts. Regions summaries
+in particular print separate lines for "Returned Checks" (money credited back
+after a bounced check — goes in returned_checks_total, positive) and
+"Automatic Transfers" (net transfer, positive if net-in, negative if net-out).
+CRITICAL: a trailing hyphen on a Regions balance ("$9,813.61 -") means the
+balance is NEGATIVE (overdrawn) — report ending_balance as −9813.61 in
+that case. If the summary doesn't print a value, use 0 for that field — never invent it.
 
-Use negative numbers for transaction amounts (debits). If unsure whether
-an item is a check, exclude it.`;
+If unsure whether an item is a check, exclude it from transactions.`;
 
   const messages = [{
     role: 'user',
-    content: `Extract only electronic withdrawal/debit transactions AND the statement's printed summary section from this bank statement text. Exclude ALL checks and deposits from the transactions list.\n\n${text}`,
+    content: `Extract BOTH deposits and non-check withdrawals AND the printed summary totals from this bank statement text. Deposits: positive amount, type="credit". Withdrawals: negative amount, type="debit". Exclude checks from the transactions list.\n\n${text}`,
   }];
 
   const raw = await callClaude(messages, systemPrompt);
@@ -177,32 +200,42 @@ an item is a check, exclude it.`;
 // then merge the results here.
 
 function pageTxnSystem(anchorPeriod) {
-  return `You are extracting withdrawal/debit transactions from a single page of a bank statement image.${anchorClause(anchorPeriod)}
+  return `You are extracting deposits AND non-check withdrawals from a single page of a bank statement image.${anchorClause(anchorPeriod)}
 
-STRICT EXCLUSION RULES:
-- No checks of any kind (paper checks, check numbers, "Checks Paid" section entries)
-- No deposits, credits, or incoming payments
+INCLUDE:
+- Deposits & Credits: merchant/processor deposits (SpotOn, Square, Stripe, Toast), teller cash deposits ("Deposit - Thank You"), refunds, ACH credits, wire receipts, card credits.
+- Non-check withdrawals: ACH, wires, card purchases, POS, bank fees, service charges, ATM withdrawals.
 
-INCLUDE ONLY electronic debits: ACH, wire transfers, card purchases, bank fees, ATM withdrawals.
+EXCLUDE:
+- Any check (paper checks, check numbers, "Checks Paid" section entries, descriptions that are just a number).
+
+SIGN CONVENTION — REQUIRED:
+- Deposits: POSITIVE amount, "type":"credit"
+- Withdrawals: NEGATIVE amount, "type":"debit"
 
 Return ONLY valid JSON — no markdown:
 {
   "transactions": [
-    { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "debit", "balance": number or null }
+    { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "credit or debit", "balance": number or null }
   ]
 }
-Use negative numbers for amounts. If unsure whether an item is a check, exclude it.
+If unsure whether an item is a check, exclude it.
 If this page contains no relevant transactions, return { "transactions": [] }.`;
 }
 
 function pageMetaSystem(anchorPeriod) {
-  return `You are extracting bank account metadata and withdrawal/debit transactions from the first page of a bank statement image.${anchorClause(anchorPeriod)}
+  return `You are extracting bank account metadata, statement totals, and transactions (deposits AND non-check withdrawals) from the first page of a bank statement image.${anchorClause(anchorPeriod)}
 
-STRICT EXCLUSION RULES:
-- No checks of any kind (paper checks, check numbers, "Checks Paid" section entries)
-- No deposits, credits, or incoming payments
+INCLUDE (as transactions):
+- Deposits & Credits: merchant/processor deposits, teller cash deposits, refunds, ACH credits, wire receipts, card credits.
+- Non-check withdrawals: ACH, wires, card purchases, POS, bank fees, service charges, ATM withdrawals.
 
-INCLUDE ONLY electronic debits: ACH, wire transfers, card purchases, bank fees, ATM withdrawals.
+EXCLUDE from transactions:
+- Any check (paper checks, check numbers, "Checks Paid" section entries).
+
+SIGN CONVENTION — REQUIRED:
+- Deposits: POSITIVE amount, "type":"credit"
+- Withdrawals: NEGATIVE amount, "type":"debit"
 
 Return ONLY valid JSON — no markdown:
 {
@@ -212,21 +245,25 @@ Return ONLY valid JSON — no markdown:
   "opening_balance": number,
   "closing_balance": number,
   "statement_totals": {
-    "withdrawals_total": number,
-    "deposits_total": number,
-    "withdrawal_count": number,
-    "deposit_count": number,
     "beginning_balance": number,
-    "ending_balance": number
+    "deposits_total": number,
+    "withdrawals_total": number,
+    "checks_total": number,
+    "fees_total": number,
+    "returned_checks_total": number,
+    "automatic_transfers_total": number,
+    "ending_balance": number,
+    "deposit_count": number,
+    "withdrawal_count": number
   },
   "transactions": [
-    { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "debit", "balance": number or null }
+    { "date": "YYYY-MM-DD", "description": "string", "reference": "string or null", "amount": number, "type": "credit or debit", "balance": number or null }
   ]
 }
 
 statement_totals MUST come from the printed summary block on this image
-(not summed from rows). Use 0 for fields the summary doesn't print.
-Use negative numbers for transaction amounts.`;
+(not summed from rows). *_total fields are positive dollar amounts. Use 0 for
+fields the summary doesn't print.`;
 }
 
 async function extractPageImage(base64Jpeg, isFirstPage, anchorPeriod) {
@@ -235,7 +272,7 @@ async function extractPageImage(base64Jpeg, isFirstPage, anchorPeriod) {
     role: 'user',
     content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Jpeg } },
-      { type: 'text', text: 'Extract only electronic debit transactions. Exclude all checks and deposits. Return only JSON.' },
+      { type: 'text', text: 'Extract deposits AND non-check withdrawals. Deposits: positive amount, type="credit". Withdrawals: negative amount, type="debit". Exclude checks. Return only JSON.' },
     ],
   }];
   const raw = await callClaude(messages, systemPrompt);
