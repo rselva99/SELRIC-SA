@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { subMonths, startOfMonth, format } from 'date-fns';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { aggregateForPnL, debitOf } from '../../lib/finance';
@@ -37,12 +38,19 @@ export default function DashboardPage() {
 
   const [transactions, setTransactions] = useState([]);
 
-  // Fetch only the last 6 months of posted transactions — targeted query, not the entire table
+  // Fetch the last 6 months of posted transactions. Paginated because a
+  // 6-month window can easily exceed PostgREST's 1,000-row default cap and
+  // silent truncation would under-report the dashboard's headline numbers.
   useEffect(() => {
     if (!isAdmin) return;
     const sixMonthsAgo = format(startOfMonth(subMonths(new Date(), 5)), 'yyyy-MM-dd');
-    supabase.from('transactions').select('*').gte('date', sixMonthsAgo).eq('voided', false).order('date', { ascending: false })
-      .then(({ data }) => setTransactions(data || []));
+    fetchAll(
+      supabase.from('transactions').select('*')
+        .gte('date', sixMonthsAgo).eq('voided', false)
+        .order('date', { ascending: false })
+    )
+      .then((rows) => setTransactions(rows || []))
+      .catch(() => setTransactions([]));
   }, [isAdmin]);
 
   const stats = useMemo(() => {

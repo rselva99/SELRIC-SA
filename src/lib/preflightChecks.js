@@ -23,6 +23,7 @@
 // back into the warning counts.
 
 import { supabase } from './supabase';
+import { fetchAll } from './fetchAll';
 import { magnitudeOf } from './finance';
 
 const DUPLICATE_MAGNITUDE_THRESHOLD = 1000;
@@ -32,32 +33,42 @@ function sampleOf(arr, n = 3) {
 }
 
 export async function runPeriodPreflight({ periodStart, periodEnd }) {
+  // Every fetch here is paginated: PostgREST silently caps un-ranged responses
+  // at 1,000 rows, so a busy monthly period would under-report unposted /
+  // uncategorized / duplicate counts and mask real close-blocking issues.
+
   // 1) Unposted in period.
-  const { data: unposted, error: e1 } = await supabase
-    .from('transactions')
-    .select('id, date, description, supplier, amount, type, category')
-    .gte('date', periodStart).lte('date', periodEnd)
-    .eq('voided', false)
-    .eq('posted', false);
-  if (e1) throw e1;
+  const unposted = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('id, date, description, supplier, amount, type, category')
+      .gte('date', periodStart).lte('date', periodEnd)
+      .eq('voided', false)
+      .eq('posted', false)
+      .order('date', { ascending: true })
+  );
 
   // 2) Uncategorized in period (either posted or unposted — both matter).
-  const { data: uncategorized, error: e2 } = await supabase
-    .from('transactions')
-    .select('id, date, description, supplier, amount, type')
-    .gte('date', periodStart).lte('date', periodEnd)
-    .eq('voided', false)
-    .or('category.is.null,category.eq.');
-  if (e2) throw e2;
+  const uncategorized = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('id, date, description, supplier, amount, type')
+      .gte('date', periodStart).lte('date', periodEnd)
+      .eq('voided', false)
+      .or('category.is.null,category.eq.')
+      .order('date', { ascending: true })
+  );
 
   // 3) Suspicious duplicates among posted, non-voided txns.
-  const { data: posted, error: e3 } = await supabase
-    .from('transactions')
-    .select('id, date, description, supplier, amount, type, category, journal_entry_id')
-    .gte('date', periodStart).lte('date', periodEnd)
-    .eq('voided', false)
-    .eq('posted', true);
-  if (e3) throw e3;
+  const posted = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('id, date, description, supplier, amount, type, category, journal_entry_id')
+      .gte('date', periodStart).lte('date', periodEnd)
+      .eq('voided', false)
+      .eq('posted', true)
+      .order('date', { ascending: true })
+  );
 
   const buckets = new Map();
   for (const t of posted || []) {
@@ -83,13 +94,15 @@ export async function runPeriodPreflight({ periodStart, periodEnd }) {
   duplicates.sort((a, b) => b.amount - a.amount);
 
   // 4) Orphaned void state.
-  const { data: linkedTxns, error: e4 } = await supabase
-    .from('transactions')
-    .select('id, journal_entry_id, date, description, supplier, amount, type, category')
-    .gte('date', periodStart).lte('date', periodEnd)
-    .eq('voided', false)
-    .not('journal_entry_id', 'is', null);
-  if (e4) throw e4;
+  const linkedTxns = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('id, journal_entry_id, date, description, supplier, amount, type, category')
+      .gte('date', periodStart).lte('date', periodEnd)
+      .eq('voided', false)
+      .not('journal_entry_id', 'is', null)
+      .order('date', { ascending: true })
+  );
 
   let orphanedVoids = [];
   if (linkedTxns?.length) {

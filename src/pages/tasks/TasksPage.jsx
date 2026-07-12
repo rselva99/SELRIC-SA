@@ -4,6 +4,7 @@ import {
   startOfWeek, isToday, isBefore,
 } from 'date-fns';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import Modal from '../../components/ui/Modal';
 import Spinner from '../../components/ui/Spinner';
@@ -65,12 +66,18 @@ export default function TasksPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [taskRes, profRes] = await Promise.all([
-      supabase.from('tasks').select('*').order('due_date').order('created_at'),
-      supabase.from('profiles').select('id, full_name, email'),
+    // Paginated: task backlog is unbounded; the 1,000-row default cap would
+    // silently drop the oldest tasks once the total passes that threshold.
+    const [tasks, profiles] = await Promise.all([
+      fetchAll(
+        supabase.from('tasks').select('*')
+          .order('due_date', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: true })
+      ),
+      fetchAll(supabase.from('profiles').select('id, full_name, email').order('id')),
     ]);
-    setTasks(taskRes.data || []);
-    setProfiles(profRes.data || []);
+    setTasks(tasks || []);
+    setProfiles(profiles || []);
     setLoading(false);
   }, []);
 

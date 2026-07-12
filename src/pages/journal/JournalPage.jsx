@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate, DEFAULT_CATEGORIES } from '../../lib/utils';
 import Modal from '../../components/ui/Modal';
 import { signedDelta } from '../../lib/finance';
-import { insertJournalEntryWithRetry } from '../../lib/journalReference';
+import { postJournalEntry } from '../../lib/postJournalEntry';
 import { PeriodClosedError, isPeriodLockedError, periodFromLockedError } from '../../lib/periodLock';
 import PeriodLockedDialog from '../../components/PeriodLockedDialog';
 import EmptyState from '../../components/ui/EmptyState';
@@ -101,8 +102,14 @@ export default function JournalPage() {
 
   const loadRules = useCallback(async () => {
     setRulesLoading(true);
-    const { data } = await supabase.from('journal_rules')
-      .select('*').order('created_at', { ascending: false });
+    // Paginated: rules table is small today but unbounded; the 1,000-row cap
+    // would silently drop the oldest once it passed that.
+    let data = [];
+    try {
+      data = await fetchAll(
+        supabase.from('journal_rules').select('*').order('created_at', { ascending: false })
+      );
+    } catch { data = []; }
     setRules(data || []);
     setRulesLoading(false);
   }, []);
@@ -153,17 +160,6 @@ export default function JournalPage() {
     setSavingSimple(true);
     try {
       const amount = Math.abs(parseFloat(simpleForm.amount));
-      const { data: entry, reference } = await insertJournalEntryWithRetry({
-        date: simpleForm.date,
-        description: simpleForm.description,
-        memo: simpleForm.reference || null,
-        total_amount: amount,
-        status: 'posted',
-        entry_type: 'simple',
-        created_by: user?.id || null,
-        posted_at: new Date().toISOString(),
-      });
-
       // simpleForm.account_id holds a `categories.id`; the schema's account_id
       // column FKs to the legacy (empty) `accounts` table. Pass null and fall
       // back to the chosen account's name for the category text if the user
@@ -181,7 +177,6 @@ export default function JournalPage() {
       const CASH_CATEGORY = 'Cash & Bank';
       const isCashAlready = categoryText === CASH_CATEGORY;
       const linePayloads = [{
-        journal_entry_id: entry.id,
         account_id: null,
         description: simpleForm.description,
         debit_amount:  simpleForm.type === 'debit'  ? amount : 0,
@@ -197,12 +192,10 @@ export default function JournalPage() {
         account_id: null,
         reference: simpleForm.reference || '',
         bank_statement_id: null,
-        journal_entry_id: entry.id,
         posted: true,
       }];
       if (!isCashAlready) {
         linePayloads.push({
-          journal_entry_id: entry.id,
           account_id: null,
           description: `[Cash leg] ${simpleForm.description}`,
           debit_amount:  simpleForm.type === 'credit' ? amount : 0,
@@ -219,23 +212,26 @@ export default function JournalPage() {
           account_id: null,
           reference: simpleForm.reference || '',
           bank_statement_id: null,
-          journal_entry_id: entry.id,
           posted: true,
         });
       }
 
-      // Defense-in-depth DR=CR check before insert. Should always pass given
-      // the construction above; throws loudly if it ever doesn't.
-      const lineDR = linePayloads.reduce((s, l) => s + (+l.debit_amount  || 0), 0);
-      const lineCR = linePayloads.reduce((s, l) => s + (+l.credit_amount || 0), 0);
-      if (Math.abs(lineDR - lineCR) >= 0.005) {
-        throw new Error(`Simple JE unbalanced: DR ${lineDR.toFixed(2)} vs CR ${lineCR.toFixed(2)}`);
-      }
-
-      const { error: linesErr } = await supabase.from('journal_entry_lines').insert(linePayloads);
-      if (linesErr) throw linesErr;
-      const { error: txnsErr } = await supabase.from('transactions').insert(txnPayloads);
-      if (txnsErr) throw txnsErr;
+      // Atomic post: RPC re-validates DR=CR and rolls back the whole entry
+      // if it doesn't hold. Reference is allocated inside postJournalEntry.
+      const { reference } = await postJournalEntry({
+        entry: {
+          date: simpleForm.date,
+          description: simpleForm.description,
+          memo: simpleForm.reference || null,
+          total_amount: amount,
+          status: 'posted',
+          entry_type: 'simple',
+          created_by: user?.id || null,
+          posted_at: new Date().toISOString(),
+        },
+        lines: linePayloads,
+        txns:  txnPayloads,
+      });
 
       toast.success(`Posted ${reference}`);
       setSimpleForm(blankSimpleForm());
@@ -285,17 +281,6 @@ export default function JournalPage() {
     if (!advancedForm.description) { toast.error('Description required'); return; }
     setSavingAdvanced(true);
     try {
-      const { data: entry, reference } = await insertJournalEntryWithRetry({
-        date: advancedForm.date,
-        description: advancedForm.description,
-        memo: advancedForm.memo || null,
-        total_amount: totalDebit,
-        status: 'posted',
-        entry_type: 'double',
-        created_by: user?.id || null,
-        posted_at: new Date().toISOString(),
-      });
-
       const validLines = advancedForm.lines.filter(l =>
         (parseFloat(l.debit) || 0) > 0 || (parseFloat(l.credit) || 0) > 0
       );
@@ -306,7 +291,6 @@ export default function JournalPage() {
       const lineRows = validLines.map(l => {
         const accountName = categoryNameById[l.account_id] || '';
         return {
-          journal_entry_id: entry.id,
           account_id: null,
           description: l.description || advancedForm.description,
           debit_amount:  parseFloat(l.debit)  || 0,
@@ -314,9 +298,6 @@ export default function JournalPage() {
           category: (l.category || accountName) || null,
         };
       });
-      const { error: e2 } = await supabase.from('journal_entry_lines').insert(lineRows);
-      if (e2) throw e2;
-
       const txnRows = validLines.map(l => {
         const isDebit = (parseFloat(l.debit) || 0) > 0;
         const accountName = categoryNameById[l.account_id] || '';
@@ -328,14 +309,25 @@ export default function JournalPage() {
           type: isDebit ? 'debit' : 'credit',
           category: l.category || accountName || '',
           account_id: null,
-          reference,
           bank_statement_id: null,
-          journal_entry_id: entry.id,
           posted: true,
         };
       });
-      const { error: e3 } = await supabase.from('transactions').insert(txnRows);
-      if (e3) throw e3;
+
+      const { reference } = await postJournalEntry({
+        entry: {
+          date: advancedForm.date,
+          description: advancedForm.description,
+          memo: advancedForm.memo || null,
+          total_amount: totalDebit,
+          status: 'posted',
+          entry_type: 'double',
+          created_by: user?.id || null,
+          posted_at: new Date().toISOString(),
+        },
+        lines: lineRows,
+        txns:  txnRows,
+      });
 
       toast.success(`Posted ${reference} (${validLines.length} lines)`);
       setAdvancedForm(blankAdvancedForm());
@@ -400,10 +392,32 @@ export default function JournalPage() {
       const endDate = new Date(yr, mo, 0).getDate();
       const end = `${yr}-${String(mo).padStart(2,'0')}-${String(endDate).padStart(2,'0')}`;
 
+      // Rule-generated JEs used to be single-legged, which is exactly how the
+      // 59 historical unbalanced JEs were made. Every preview below now emits
+      // a matched Cash & Bank counter-leg so the atomic RPC accepts it. If the
+      // rule already targets Cash & Bank, the second leg is skipped (a single
+      // side-of-Cash entry can't be balanced by another Cash leg).
+      const RULE_CASH_CATEGORY = 'Cash & Bank';
       const previews = [];
       for (const rule of rules.filter(r => r.active)) {
         if (rule.rule_type === 'fixed_amount') {
-          const isDebit = rule.fixed_type === 'debit';
+          const isDebit    = rule.fixed_type === 'debit';
+          const ruleCat    = rule.category || null;
+          const cashIsSame = ruleCat === RULE_CASH_CATEGORY;
+          const primary = {
+            account_id: rule.account_id,
+            description: rule.name,
+            debit_amount:  isDebit ? rule.fixed_amount : 0,
+            credit_amount: isDebit ? 0 : rule.fixed_amount,
+            category: ruleCat,
+          };
+          const cashLeg = {
+            account_id: null,
+            description: `[Cash leg] ${rule.name}`,
+            debit_amount:  isDebit ? 0 : rule.fixed_amount,
+            credit_amount: isDebit ? rule.fixed_amount : 0,
+            category: RULE_CASH_CATEGORY,
+          };
           previews.push({
             rule,
             entry: {
@@ -412,26 +426,40 @@ export default function JournalPage() {
               memo: `Auto-generated for ${genMonth}`,
               total_amount: rule.fixed_amount,
             },
-            lines: [{
-              account_id: rule.account_id,
-              description: rule.name,
-              debit_amount:  isDebit ? rule.fixed_amount : 0,
-              credit_amount: isDebit ? 0 : rule.fixed_amount,
-              category: rule.category || null,
-            }],
+            lines: cashIsSame ? [primary] : [primary, cashLeg],
           });
         } else {
-          // net_to_zero: find matching transactions in the month, sum them, offset
+          // net_to_zero: find matching transactions in the month, sum them, offset.
+          // Paginated: an un-ranged fetch would silently cap at 1,000 rows and
+          // the net would be computed on partial data, so the offset JE would
+          // under-shoot.
           let q = supabase.from('transactions').select('amount, type')
-            .gte('date', start).lte('date', end).eq('voided', false);
+            .gte('date', start).lte('date', end).eq('voided', false)
+            .order('date', { ascending: true });
           if (rule.match_category) q = q.eq('category', rule.match_category);
           if (rule.match_keyword)  q = q.ilike('description', `%${rule.match_keyword}%`);
-          const { data: matched } = await q;
+          const matched = await fetchAll(q);
           const net = (matched || []).reduce((s, t) => s + signedDelta(t), 0);
           if (Math.abs(net) < 0.01) continue;
           // Offset: if net is negative (debits > credits), add a credit equal to |net|
           const offsetIsCredit = net < 0;
           const amt = Math.abs(net);
+          const netCat = rule.category || rule.match_category || null;
+          const cashSameAsNet = netCat === RULE_CASH_CATEGORY;
+          const primary = {
+            account_id: rule.account_id,
+            description: `Offset for ${rule.match_keyword || rule.match_category}`,
+            debit_amount:  offsetIsCredit ? 0 : amt,
+            credit_amount: offsetIsCredit ? amt : 0,
+            category: netCat,
+          };
+          const cashLeg = {
+            account_id: null,
+            description: `[Cash leg] Net-to-zero offset`,
+            debit_amount:  offsetIsCredit ? amt : 0,
+            credit_amount: offsetIsCredit ? 0 : amt,
+            category: RULE_CASH_CATEGORY,
+          };
           previews.push({
             rule,
             entry: {
@@ -440,13 +468,7 @@ export default function JournalPage() {
               memo: `Auto-generated for ${genMonth} · ${matched?.length || 0} matched txns`,
               total_amount: amt,
             },
-            lines: [{
-              account_id: rule.account_id,
-              description: `Offset for ${rule.match_keyword || rule.match_category}`,
-              debit_amount:  offsetIsCredit ? 0 : amt,
-              credit_amount: offsetIsCredit ? amt : 0,
-              category: rule.category || rule.match_category || null,
-            }],
+            lines: cashSameAsNet ? [primary] : [primary, cashLeg],
           });
         }
       }
@@ -463,39 +485,42 @@ export default function JournalPage() {
     setApprovingGen(true);
     try {
       for (const p of toPost) {
-        const { data: entry, reference } = await insertJournalEntryWithRetry({
-          date: p.entry.date,
-          description: p.entry.description,
-          memo: p.entry.memo,
-          total_amount: p.entry.total_amount,
-          status: 'posted',
-          entry_type: 'auto',
-          rule_id: p.rule.id,
-          created_by: user?.id || null,
-          posted_at: new Date().toISOString(),
-        });
-        if (!entry) continue;
-
-        const lineRows = p.lines.map(l => ({ ...l, journal_entry_id: entry.id }));
-        await supabase.from('journal_entry_lines').insert(lineRows);
-
+        const lineRows = p.lines.map(l => ({
+          account_id:    l.account_id || null,
+          description:   l.description,
+          debit_amount:  l.debit_amount  || 0,
+          credit_amount: l.credit_amount || 0,
+          category:      l.category      || null,
+        }));
         const txnRows = p.lines.map(l => {
           const isDebit = (l.debit_amount || 0) > 0;
           return {
-            date: entry.date,
-            description: l.description || entry.description,
-            supplier: l.description || entry.description,
+            date: p.entry.date,
+            description: l.description || p.entry.description,
+            supplier: l.description || p.entry.description,
             amount: isDebit ? l.debit_amount : l.credit_amount,
             type: isDebit ? 'debit' : 'credit',
             category: l.category || '',
             account_id: l.account_id || null,
-            reference,
             bank_statement_id: null,
-            journal_entry_id: entry.id,
             posted: true,
           };
         });
-        await supabase.from('transactions').insert(txnRows);
+        await postJournalEntry({
+          entry: {
+            date: p.entry.date,
+            description: p.entry.description,
+            memo: p.entry.memo,
+            total_amount: p.entry.total_amount,
+            status: 'posted',
+            entry_type: 'auto',
+            rule_id: p.rule.id,
+            created_by: user?.id || null,
+            posted_at: new Date().toISOString(),
+          },
+          lines: lineRows,
+          txns:  txnRows,
+        });
       }
       toast.success(`Posted ${toPost.length} auto entr${toPost.length === 1 ? 'y' : 'ies'}`);
       setShowGenModal(false);
@@ -570,7 +595,6 @@ export default function JournalPage() {
   }
 
   async function reverseEntry(entry, reversalDate) {
-    let createdReversalId = null; // tracked so we can roll back partial state
     try {
       // 1. Load original lines.
       const { data: origLines, error: linesErr } = await supabase
@@ -583,42 +607,19 @@ export default function JournalPage() {
       }
       if (!origLines?.length) throw new Error('No lines to reverse');
 
-      const dateStr   = reversalDate || entry.date;
+      const dateStr = reversalDate || entry.date;
 
-      // 2. Insert the reversal JE. Reference allocation + 23505 retry are
-      //    handled by insertJournalEntryWithRetry so a concurrent insert
-      //    can't park us on a colliding number.
-      const { data: rev, reference } = await insertJournalEntryWithRetry({
-        date: dateStr,
-        description: `Reversal of ${entry.reference}`,
-        memo: entry.description || null,
-        total_amount: entry.total_amount,
-        status: 'posted',
-        entry_type: 'auto',
-        created_by: user?.id || null,
-        posted_at: new Date().toISOString(),
-      });
-      if (!rev) throw new Error('Reversal insert returned no row');
-      createdReversalId = rev.id;
-
-      // 3. Swap debit ↔ credit on each line. For a Simple entry (single line,
-      //    only debit OR only credit populated) this produces a single line
-      //    on the opposite side — the same shape as a Simple JE.
+      // Swap debit ↔ credit on each line, then post via the atomic RPC.
+      // A reversal of a balanced entry stays balanced. Reversing one of the
+      // legacy single-leg entries will be rejected by the RPC — void it
+      // instead, per Phase A's "don't perpetuate unbalanced entries" rule.
       const revLines = origLines.map(l => ({
-        journal_entry_id: rev.id,
         account_id: l.account_id,
         description: `Reversal: ${l.description || ''}`.trim(),
         debit_amount:  l.credit_amount || 0,
         credit_amount: l.debit_amount  || 0,
         category: l.category,
       }));
-      const { error: revLinesErr } = await supabase.from('journal_entry_lines').insert(revLines);
-      if (revLinesErr) {
-        console.error('reverseEntry: failed to insert reversal lines', revLinesErr);
-        throw revLinesErr;
-      }
-
-      // 4. Mirror to the transactions table so P&L / Balance Sheet pick it up.
       const txnRows = revLines.map(l => {
         const isDebit = (l.debit_amount || 0) > 0;
         const amount  = isDebit ? l.debit_amount : l.credit_amount;
@@ -630,31 +631,29 @@ export default function JournalPage() {
           type: isDebit ? 'debit' : 'credit',
           category: l.category || '',
           account_id: l.account_id || null,
-          reference,
           bank_statement_id: null,
-          journal_entry_id: rev.id,
           posted: true,
         };
       });
-      const { error: txnsErr } = await supabase.from('transactions').insert(txnRows);
-      if (txnsErr) {
-        console.error('reverseEntry: failed to insert reversal transactions', txnsErr);
-        throw txnsErr;
-      }
+      const { reference } = await postJournalEntry({
+        entry: {
+          date: dateStr,
+          description: `Reversal of ${entry.reference}`,
+          memo: entry.description || null,
+          total_amount: entry.total_amount,
+          status: 'posted',
+          entry_type: 'auto',
+          created_by: user?.id || null,
+          posted_at: new Date().toISOString(),
+        },
+        lines: revLines,
+        txns:  txnRows,
+      });
 
-      createdReversalId = null;
       toast.success(`Reversed ${entry.reference} via ${reference}`);
       setReverseTarget(null);
       loadEntries();
     } catch (err) {
-      if (createdReversalId) {
-        try {
-          await supabase.from('transactions').delete().eq('journal_entry_id', createdReversalId);
-          await supabase.from('journal_entries').delete().eq('id', createdReversalId);
-        } catch (cleanupErr) {
-          console.error('reverseEntry: rollback of partial reversal failed', cleanupErr);
-        }
-      }
       console.error('reverseEntry failed:', err);
       if (handlePeriodLock(err, () => reverseEntry(entry, reversalDate))) return;
       toast.error(err?.message || 'Failed to create reversal');

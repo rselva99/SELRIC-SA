@@ -34,6 +34,7 @@
 // wipes only the matching-kind JE, not the other.
 
 import { supabase } from './supabase';
+import { postJournalEntry } from './postJournalEntry';
 import {
   listCpaLocks,
   isCpaLocked,
@@ -228,34 +229,35 @@ async function postOneMonthKind({ period, amount, kind, userId }) {
   const monthName = periodLabel(period);
   const rounded   = Math.round(amount * 100) / 100;
 
-  const { data: entry, error: e1 } = await supabase.from('journal_entries').insert({
-    reference,
-    date,
-    description:  `${descPrefix}${monthName}`,
-    memo:         `Straight-line ${kind} for ${monthName}`,
-    total_amount: rounded,
-    status:       'posted',
-    entry_type:   'simple',
-    created_by:   userId || null,
-    posted_at:    new Date().toISOString(),
-  }).select().single();
-  if (e1) throw e1;
-
+  // Atomic post via the DB-side RPC: header + lines + mirrored txns land in
+  // one Postgres transaction. Balance is validated server-side; if it fails,
+  // nothing is written. Reference is preserved (this module allocates its
+  // own JE-DA / JE-AM sequence, distinct from the JE-NNN main sequence).
   const lines = [
-    { journal_entry_id: entry.id, account_id: null, description: expenseCat, debit_amount: rounded, credit_amount: 0,       category: expenseCat },
-    { journal_entry_id: entry.id, account_id: null, description: accumCat,   debit_amount: 0,       credit_amount: rounded, category: accumCat   },
+    { account_id: null, description: expenseCat, debit_amount: rounded, credit_amount: 0,       category: expenseCat },
+    { account_id: null, description: accumCat,   debit_amount: 0,       credit_amount: rounded, category: accumCat   },
   ];
-  const { error: e2 } = await supabase.from('journal_entry_lines').insert(lines);
-  if (e2) throw e2;
-
   const txns = [
-    { date, description: `${isDep ? 'Depreciation' : 'Amortization'} — ${monthName}`, supplier: supplierTag, amount: rounded, type: 'debit',  category: expenseCat, account_id: null, reference, bank_statement_id: null, journal_entry_id: entry.id, posted: true, voided: false },
-    { date, description: `${isDep ? 'Depreciation' : 'Amortization'} — ${monthName}`, supplier: supplierTag, amount: rounded, type: 'credit', category: accumCat,   account_id: null, reference, bank_statement_id: null, journal_entry_id: entry.id, posted: true, voided: false },
+    { date, description: `${isDep ? 'Depreciation' : 'Amortization'} — ${monthName}`, supplier: supplierTag, amount: rounded, type: 'debit',  category: expenseCat, account_id: null, reference, bank_statement_id: null, posted: true, voided: false },
+    { date, description: `${isDep ? 'Depreciation' : 'Amortization'} — ${monthName}`, supplier: supplierTag, amount: rounded, type: 'credit', category: accumCat,   account_id: null, reference, bank_statement_id: null, posted: true, voided: false },
   ];
-  const { error: e3 } = await supabase.from('transactions').insert(txns);
-  if (e3) throw e3;
+  const { entry_id } = await postJournalEntry({
+    entry: {
+      reference,
+      date,
+      description:  `${descPrefix}${monthName}`,
+      memo:         `Straight-line ${kind} for ${monthName}`,
+      total_amount: rounded,
+      status:       'posted',
+      entry_type:   'simple',
+      created_by:   userId || null,
+      posted_at:    new Date().toISOString(),
+    },
+    lines,
+    txns,
+  });
 
-  return entry;
+  return { id: entry_id, reference };
 }
 
 // Post every missing month from Jan 2024 through `endPeriod`. For each

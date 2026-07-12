@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
-import { insertJournalEntryWithRetry } from '../lib/journalReference';
+import { postJournalEntry } from '../lib/postJournalEntry';
 import {
   PeriodClosedError,
   isPeriodLockedError,
@@ -279,20 +279,9 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
   // Posts one row's JE + lines + mirrored transactions. Same shape as the
   // Capitalize and Reverse flows so the P&L / GL pick everything up.
   async function postOneRow(row) {
-    const { data: entry, reference } = await insertJournalEntryWithRetry({
-      date: row.date,
-      description: `Amazon reclass — ${getMonthLabel(row.start)}`,
-      memo: 'Reclass of Amazon balance into Additions / Repairs & Maintenance / Supplies / Miscellaneous',
-      total_amount: row.totalCredits,
-      status: 'posted',
-      entry_type: 'auto',
-      created_by: user?.id || null,
-      posted_at: new Date().toISOString(),
-    });
-    if (!entry) throw new Error('Insert returned no row');
-
+    // Atomic post: header + lines + txns land in one transaction. RPC rejects
+    // if DR != CR, so a partial reclass can't leak into the ledger.
     const lineRows = row.legs.map(l => ({
-      journal_entry_id: entry.id,
       account_id: null,
       description: l.side === 'credit'
         ? 'Reclass from Amazon'
@@ -301,9 +290,6 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
       credit_amount: l.side === 'credit' ? l.amount : 0,
       category: l.categoryName,
     }));
-    const { error: linesErr } = await supabase.from('journal_entry_lines').insert(lineRows);
-    if (linesErr) throw linesErr;
-
     const txnRows = row.legs.map(l => ({
       date: row.date,
       description: l.side === 'credit' ? 'Reclass from Amazon' : `Reclass to ${l.label}`,
@@ -312,14 +298,23 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
       type: l.side,
       category: l.categoryName,
       account_id: null,
-      reference,
       bank_statement_id: null,
-      journal_entry_id: entry.id,
       posted: true,
     }));
-    const { error: txnsErr } = await supabase.from('transactions').insert(txnRows);
-    if (txnsErr) throw txnsErr;
-
+    const { reference } = await postJournalEntry({
+      entry: {
+        date: row.date,
+        description: `Amazon reclass — ${getMonthLabel(row.start)}`,
+        memo: 'Reclass of Amazon balance into Additions / Repairs & Maintenance / Supplies / Miscellaneous',
+        total_amount: row.totalCredits,
+        status: 'posted',
+        entry_type: 'auto',
+        created_by: user?.id || null,
+        posted_at: new Date().toISOString(),
+      },
+      lines: lineRows,
+      txns:  txnRows,
+    });
     return reference;
   }
 

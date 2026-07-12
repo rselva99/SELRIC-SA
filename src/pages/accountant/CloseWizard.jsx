@@ -1,13 +1,14 @@
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generatePnLPdf, generateBalanceSheetPdf } from '../../lib/reports';
 import { aggregateForPnL, aggregateForBS, pickableCategories, debitOf, creditOf, signedDelta, magnitudeOf } from '../../lib/finance';
 import { closePeriod } from '../../lib/periodClose';
-import { insertJournalEntryWithRetry } from '../../lib/journalReference';
+import { postJournalEntry } from '../../lib/postJournalEntry';
 import { runPeriodPreflight } from '../../lib/preflightChecks';
 import PayrollJournalForm from '../../components/PayrollJournalForm';
 import Spinner from '../../components/ui/Spinner';
@@ -186,23 +187,29 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
     try {
       let next = null;
       if (key === 'categorize') {
-        const { data } = await supabase.from('transactions')
-          .select('id, date, description, supplier, amount, type, category, account_id, posted')
-          .gte('date', periodStart).lte('date', periodEnd)
-          .eq('voided', false)
-          .or('category.is.null,category.eq.')
-          .order('date', { ascending: true });
+        // Paginated: monthly volume can exceed the 1,000-row cap.
+        const data = await fetchAll(
+          supabase.from('transactions')
+            .select('id, date, description, supplier, amount, type, category, account_id, posted')
+            .gte('date', periodStart).lte('date', periodEnd)
+            .eq('voided', false)
+            .or('category.is.null,category.eq.')
+            .order('date', { ascending: true })
+        );
         const total = await supabase.from('transactions')
           .select('*', { count: 'exact', head: true })
           .gte('date', periodStart).lte('date', periodEnd)
           .eq('voided', false);
         next = { uncategorized: data || [], totalTxns: total.count || 0 };
       } else if (key === 'post') {
-        const { data } = await supabase.from('transactions')
-          .select('id, date, description, amount, type, category')
-          .gte('date', periodStart).lte('date', periodEnd)
-          .eq('posted', false).not('category', 'is', null).neq('category', '')
-          .order('date', { ascending: true });
+        // Paginated: monthly volume can exceed the 1,000-row cap.
+        const data = await fetchAll(
+          supabase.from('transactions')
+            .select('id, date, description, amount, type, category')
+            .gte('date', periodStart).lte('date', periodEnd)
+            .eq('posted', false).not('category', 'is', null).neq('category', '')
+            .order('date', { ascending: true })
+        );
         next = { unposted: data || [], selected: new Set((data || []).map(r => r.id)) };
       } else if (key === 'journal_rules') {
         const { data: rules } = await supabase.from('journal_rules').select('*').eq('active', true);
@@ -224,21 +231,28 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
           .ilike('description', 'Payroll —%');
         next = { payrollJECount: count || 0 };
       } else if (key === 'reconcile') {
-        const { data } = await supabase.from('transactions')
-          .select('id, date, description, supplier, amount, category')
-          .gte('date', periodStart).lte('date', periodEnd)
-          .eq('type', 'debit').eq('reconciled', false).eq('voided', false)
-          .order('date');
+        // Paginated: monthly debit volume can exceed the 1,000-row cap.
+        const data = await fetchAll(
+          supabase.from('transactions')
+            .select('id, date, description, supplier, amount, category')
+            .gte('date', periodStart).lte('date', periodEnd)
+            .eq('type', 'debit').eq('reconciled', false).eq('voided', false)
+            .order('date', { ascending: true })
+        );
         next = { unreconciled: data || [] };
       } else if (key === 'review_balances') {
         // Group balances by category (the chart of accounts the user maintains).
         // Pull id/date/description too so the step can drill into each balance
         // without a second fetch.
-        const { data: txns } = await supabase.from('transactions')
-          .select('id, date, description, category, amount, type')
-          .gte('date', periodStart).lte('date', periodEnd)
-          .eq('posted', true).eq('voided', false)
-          .order('date', { ascending: true });
+        // Paginated: monthly posted volume can exceed the 1,000-row cap and
+        // truncated data here would silently under-report account balances.
+        const txns = await fetchAll(
+          supabase.from('transactions')
+            .select('id, date, description, category, amount, type')
+            .gte('date', periodStart).lte('date', periodEnd)
+            .eq('posted', true).eq('voided', false)
+            .order('date', { ascending: true })
+        );
         const balByCat = {};
         const txnsByCategory = {};
         (txns || []).forEach(t => {
@@ -257,9 +271,16 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
         next = { accountBalances: list, txnsByCategory };
       } else if (key === 'generate_pl' || key === 'generate_bs') {
         const reportType = key === 'generate_pl' ? 'pl' : 'balance_sheet';
+        // Paginated transactions fetch: a single close-wizard period fetch
+        // can exceed PostgREST's 1,000-row cap once monthly volume grows.
         const queries = [
           supabase.from('report_deliverables').select('id, created_at, file_url').eq('period', period).eq('report_type', reportType).order('created_at', { ascending: false }).limit(1),
-          supabase.from('transactions').select('*').gte('date', periodStart).lte('date', periodEnd).eq('posted', true).eq('voided', false),
+          fetchAll(
+            supabase.from('transactions').select('*')
+              .gte('date', periodStart).lte('date', periodEnd)
+              .eq('posted', true).eq('voided', false)
+              .order('date', { ascending: true })
+          ).then((rows) => ({ data: rows })),
         ];
         if (key === 'generate_pl') {
           // Existing revenue JEs for this period — drives "Replace" instead of stacking.
@@ -1574,28 +1595,25 @@ function StepGeneratePnL({ data, period, reload }) {
       const total     = clean.reduce((s, l) => s + l.amount, 0);
       const jeDate    = periodRange(period).end;
 
-      const { data: entry, reference } = await insertJournalEntryWithRetry({
-        date: jeDate,
-        description: `Revenue Breakdown — ${monthLabel}`,
-        memo: `Manual revenue breakdown for ${monthLabel}: ${clean.map(l => `${l.label} ${l.amount.toFixed(2)}`).join(', ')}`,
-        total_amount: total,
-        status: 'posted',
-        entry_type: 'simple',
-        created_by: user?.id || null,
-        posted_at: new Date().toISOString(),
-      });
-
+      // Balanced Revenue Breakdown: N revenue credits offset by a matching
+      // Cash & Bank debit. Historical revenue JEs were credit-only (see the
+      // 22 CR-only entries the audit flagged) — that's what this fixes going
+      // forward.
+      const CASH_CATEGORY = 'Cash & Bank';
       const lineRows = clean.map(l => ({
-        journal_entry_id: entry.id,
-        account_id:       null,
-        description:      l.label,
-        debit_amount:     0,
-        credit_amount:    l.amount,
-        category:         l.label,
+        account_id:    null,
+        description:   l.label,
+        debit_amount:  0,
+        credit_amount: l.amount,
+        category:      l.label,
       }));
-      const { error: e2 } = await supabase.from('journal_entry_lines').insert(lineRows);
-      if (e2) throw e2;
-
+      lineRows.push({
+        account_id:    null,
+        description:   `[Cash leg] Revenue ${monthLabel}`,
+        debit_amount:  total,
+        credit_amount: 0,
+        category:      CASH_CATEGORY,
+      });
       const txnRows = clean.map(l => ({
         date:              jeDate,
         description:       `${l.label} — ${monthLabel}`,
@@ -1604,13 +1622,34 @@ function StepGeneratePnL({ data, period, reload }) {
         type:              'credit',
         category:          l.label,
         account_id:        null,
-        reference,
         bank_statement_id: null,
-        journal_entry_id:  entry.id,
         posted:            true,
       }));
-      const { error: e3 } = await supabase.from('transactions').insert(txnRows);
-      if (e3) throw e3;
+      txnRows.push({
+        date:              jeDate,
+        description:       `[Cash leg] Revenue ${monthLabel}`,
+        supplier:          'Revenue JE',
+        amount:            total,
+        type:              'debit',
+        category:          CASH_CATEGORY,
+        account_id:        null,
+        bank_statement_id: null,
+        posted:            true,
+      });
+      const { reference } = await postJournalEntry({
+        entry: {
+          date: jeDate,
+          description: `Revenue Breakdown — ${monthLabel}`,
+          memo: `Manual revenue breakdown for ${monthLabel}: ${clean.map(l => `${l.label} ${l.amount.toFixed(2)}`).join(', ')}`,
+          total_amount: total,
+          status: 'posted',
+          entry_type: 'simple',
+          created_by: user?.id || null,
+          posted_at: new Date().toISOString(),
+        },
+        lines: lineRows,
+        txns:  txnRows,
+      });
 
       toast.success(`${verb}d ${reference} — ${formatCurrency(total)}`);
       // Reload the step so preview reflects the new posted revenue, and refresh

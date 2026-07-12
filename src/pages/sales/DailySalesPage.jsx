@@ -5,6 +5,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/fetchAll';
 import { formatCurrency, formatDate, fileToBase64 } from '../../lib/utils';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
@@ -52,12 +53,14 @@ export default function DailySalesPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [salesRes, eventsRes] = await Promise.all([
-        supabase.from('daily_sales').select('*').order('date', { ascending: false }),
-        supabase.from('calendar_events').select('date,color_label,name').order('date'),
+      // Paginated: daily_sales grows unbounded; the 1,000-row default cap
+      // would silently drop the oldest ~2.7 years of history once passed.
+      const [sales, events] = await Promise.all([
+        fetchAll(supabase.from('daily_sales').select('*').order('date', { ascending: false })),
+        fetchAll(supabase.from('calendar_events').select('date,color_label,name').order('date')),
       ]);
-      setSales(salesRes.data || []);
-      setCalEvents(eventsRes.data || []);
+      setSales(sales || []);
+      setCalEvents(events || []);
     } catch { toast.error('Failed to load data'); }
     finally { setLoading(false); }
   }, []);

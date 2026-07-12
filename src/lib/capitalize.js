@@ -7,6 +7,7 @@
 // so the action can be undone cleanly.
 
 import { supabase } from './supabase';
+import { postJournalEntry } from './postJournalEntry';
 
 // One reminder, three places (Assets page top, Capitalize modal, New Asset form).
 // Keep edits in one spot.
@@ -99,53 +100,43 @@ export async function capitalizeFromTransaction({ txn, form, userId }) {
   const cleanup = async () => { await supabase.from('assets').delete().eq('id', asset.id); };
 
   try {
-    // 2. Insert reclass JE.
+    // 2-4. Insert reclass JE + lines + mirrored txns atomically via RPC. The
+    //      DB enforces DR=CR; on any failure, nothing is written.
     const reference = await nextCapitalizationReference();
-    const { data: entry, error: e2 } = await supabase.from('journal_entries').insert({
-      reference,
-      date:         txn.date,
-      description:  `Capitalize — ${asset.name}`,
-      memo:         capitalizationMemo(asset.id, txn.id),
-      total_amount: cost,
-      status:       'posted',
-      entry_type:   'simple',
-      created_by:   userId || null,
-      posted_at:    new Date().toISOString(),
-    }).select().single();
-    if (e2) throw e2;
-
-    // 3. Insert JE lines (DR PP&E / CR original category).
     const lineRows = [
-      { journal_entry_id: entry.id, account_id: null, description: `Capitalize — ${asset.name}`, debit_amount: cost,   credit_amount: 0,    category: PP_AND_E_CATEGORY },
-      { journal_entry_id: entry.id, account_id: null, description: `Reclass from ${txn.category}`, debit_amount: 0, credit_amount: cost, category: txn.category   },
+      { account_id: null, description: `Capitalize — ${asset.name}`,   debit_amount: cost, credit_amount: 0,    category: PP_AND_E_CATEGORY },
+      { account_id: null, description: `Reclass from ${txn.category}`, debit_amount: 0,    credit_amount: cost, category: txn.category   },
     ];
-    const { error: e3 } = await supabase.from('journal_entry_lines').insert(lineRows);
-    if (e3) {
-      await supabase.from('journal_entries').delete().eq('id', entry.id);
-      throw e3;
-    }
-
-    // 4. Insert mirrored transactions (these are what the P&L/BS aggregations actually see).
     const txnRows = [
-      { date: txn.date, description: `Capitalize — ${asset.name}`, supplier: 'Capitalization', amount: cost, type: 'debit',  category: PP_AND_E_CATEGORY, account_id: null, reference, bank_statement_id: null, journal_entry_id: entry.id, posted: true },
-      { date: txn.date, description: `Reclass from ${txn.category}`, supplier: 'Capitalization', amount: cost, type: 'credit', category: txn.category,     account_id: null, reference, bank_statement_id: null, journal_entry_id: entry.id, posted: true },
+      { date: txn.date, description: `Capitalize — ${asset.name}`,   supplier: 'Capitalization', amount: cost, type: 'debit',  category: PP_AND_E_CATEGORY, account_id: null, reference, bank_statement_id: null, posted: true },
+      { date: txn.date, description: `Reclass from ${txn.category}`, supplier: 'Capitalization', amount: cost, type: 'credit', category: txn.category,     account_id: null, reference, bank_statement_id: null, posted: true },
     ];
-    const { error: e4 } = await supabase.from('transactions').insert(txnRows);
-    if (e4) {
-      await supabase.from('journal_entries').delete().eq('id', entry.id); // cascades lines
-      throw e4;
-    }
+    const { entry_id } = await postJournalEntry({
+      entry: {
+        reference,
+        date:         txn.date,
+        description:  `Capitalize — ${asset.name}`,
+        memo:         capitalizationMemo(asset.id, txn.id),
+        total_amount: cost,
+        status:       'posted',
+        entry_type:   'simple',
+        created_by:   userId || null,
+        posted_at:    new Date().toISOString(),
+      },
+      lines: lineRows,
+      txns:  txnRows,
+    });
 
-    // 5. Back-reference on the originating txn.
+    // 5. Back-reference on the originating txn. If this fails, wipe the JE
+    //    (cascades lines) and its mirrored txns.
     const { error: e5 } = await supabase.from('transactions').update({ capitalized_asset_id: asset.id }).eq('id', txn.id);
     if (e5) {
-      // Wipe the mirrored txns + JE, then rethrow.
-      await supabase.from('transactions').delete().eq('journal_entry_id', entry.id);
-      await supabase.from('journal_entries').delete().eq('id', entry.id);
+      await supabase.from('transactions').delete().eq('journal_entry_id', entry_id);
+      await supabase.from('journal_entries').delete().eq('id', entry_id);
       throw e5;
     }
 
-    return { asset, je: entry, reference, cost };
+    return { asset, je: { id: entry_id, reference }, reference, cost };
   } catch (err) {
     await cleanup();
     throw err;

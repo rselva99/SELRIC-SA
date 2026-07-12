@@ -10,6 +10,7 @@
 // period is loaded. Not run for the other 11 chips on the year grid.
 
 import { supabase } from './supabase';
+import { fetchAll } from './fetchAll';
 import { aggregateForPnL } from './finance';
 
 const TOLERANCE = 0.01; // dollars
@@ -25,12 +26,16 @@ const TOLERANCE = 0.01; // dollars
 export async function computeSnapshotDrift({ periodStart, periodEnd, categories, snapshot, snapshotAt }) {
   if (!snapshot?.pl) return { kind: 'no-snapshot' };
 
-  const { data: txns, error } = await supabase
-    .from('transactions')
-    .select('id, date, category, amount, type')
-    .gte('date', periodStart).lte('date', periodEnd)
-    .eq('posted', true).eq('voided', false);
-  if (error) throw error;
+  // Paginated: monthly volume can exceed the 1,000-row cap. Under-fetching
+  // here would show "drift" that is really just missing rows on the live side.
+  const txns = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('id, date, category, amount, type')
+      .gte('date', periodStart).lte('date', periodEnd)
+      .eq('posted', true).eq('voided', false)
+      .order('date', { ascending: true })
+  );
 
   const live = aggregateForPnL(txns || [], categories);
   const snap = snapshot.pl;

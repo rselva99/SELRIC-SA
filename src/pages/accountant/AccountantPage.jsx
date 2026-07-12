@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { formatCurrency } from '../../lib/utils';
@@ -127,8 +128,14 @@ export default function AccountantPage() {
     const yearStart = `${year}-01-01`;
     const yearEnd   = `${year}-12-31`;
 
-    const [{ data: txns }, { data: closes }, { data: cl }] = await Promise.all([
-      supabase.from('transactions').select('date').gte('date', yearStart).lte('date', yearEnd).eq('voided', false),
+    // Paginated fetch: year-range on transactions exceeds the 1,000-row cap.
+    const [txns, { data: closes }, { data: cl }] = await Promise.all([
+      fetchAll(
+        supabase.from('transactions').select('date')
+          .gte('date', yearStart).lte('date', yearEnd)
+          .eq('voided', false)
+          .order('date', { ascending: true })
+      ),
       supabase.from('period_close').select('period, status').like('period', `${year}-%`),
       supabase.from('close_checklist').select('period, status').like('period', `${year}-%`).eq('status', 'done'),
     ]);
@@ -382,14 +389,22 @@ export default function AccountantPage() {
     const yearEnd   = `${year}-12-31`;
     const todayStr  = new Date().toISOString().slice(0, 10);
 
-    const [uncatRes, unpostedRes, unrecRes, rulesRes, tasksRes] = await Promise.all([
-      supabase.from('transactions').select('date')
-        .gte('date', yearStart).lte('date', yearEnd)
-        .eq('voided', false)
-        .or('category.is.null,category.eq.'),
-      supabase.from('transactions').select('date')
-        .gte('date', yearStart).lte('date', yearEnd)
-        .eq('posted', false).not('category', 'is', null).neq('category', ''),
+    // Paginated: year-range fetches of transactions exceed PostgREST's default
+    // 1,000-row cap and would silently under-report per-period counts.
+    const [uncat, unposted, unrecRes, rulesRes, tasksRes] = await Promise.all([
+      fetchAll(
+        supabase.from('transactions').select('date')
+          .gte('date', yearStart).lte('date', yearEnd)
+          .eq('voided', false)
+          .or('category.is.null,category.eq.')
+          .order('date', { ascending: true })
+      ),
+      fetchAll(
+        supabase.from('transactions').select('date')
+          .gte('date', yearStart).lte('date', yearEnd)
+          .eq('posted', false).not('category', 'is', null).neq('category', '')
+          .order('date', { ascending: true })
+      ),
       supabase.from('transactions').select('*', { count: 'exact', head: true })
         .eq('type', 'debit').eq('reconciled', false).eq('voided', false),
       supabase.from('journal_rules').select('*', { count: 'exact', head: true }).eq('active', true),
@@ -404,8 +419,8 @@ export default function AccountantPage() {
     };
 
     setOpenItems({
-      uncategorizedByPeriod: groupByPeriod(uncatRes.data),
-      unpostedByPeriod:      groupByPeriod(unpostedRes.data),
+      uncategorizedByPeriod: groupByPeriod(uncat),
+      unpostedByPeriod:      groupByPeriod(unposted),
       unreconciledTotal:     unrecRes.count || 0,
       activeRules:           rulesRes.count || 0,
       overdueTasks:          tasksRes.count || 0,
@@ -562,9 +577,14 @@ export default function AccountantPage() {
     setGenerating(reportType);
     try {
       const { start, end } = periodRange(selectedPeriod);
-      const { data: txns, error } = await supabase.from('transactions')
-        .select('*').gte('date', start).lte('date', end).eq('posted', true).eq('voided', false);
-      if (error) throw error;
+      // Paginated: PostgREST caps un-ranged responses at 1,000 rows. Full-year
+      // fetches for reports already exceed that.
+      const txns = await fetchAll(
+        supabase.from('transactions')
+          .select('*').gte('date', start).lte('date', end)
+          .eq('posted', true).eq('voided', false)
+          .order('date', { ascending: true })
+      );
 
       let pdf;
       const label = periodFullLabel(selectedPeriod);
@@ -647,12 +667,15 @@ export default function AccountantPage() {
         filenameSlug = `${monthNames[mo - 1]}_${yr}`;
       }
 
-      const { data: txns, error } = await supabase
-        .from('transactions')
-        .select('id, date, description, category, amount, type, posted, reference')
-        .gte('date', start).lte('date', end)
-        .eq('voided', false);
-      if (error) throw error;
+      // Paginated fetch: year-range and even single-period reports can exceed
+      // the PostgREST 1,000-row cap once a month approaches ~1,200 txns.
+      const txns = await fetchAll(
+        supabase.from('transactions')
+          .select('id, date, description, category, amount, type, posted, reference')
+          .gte('date', start).lte('date', end)
+          .eq('voided', false)
+          .order('date', { ascending: true })
+      );
 
       const input = { transactions: txns || [], categories, period: periodLabel };
       const opts  = { supportingDetail: yerIncludeDetail };

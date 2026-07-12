@@ -18,6 +18,7 @@
 // and the close stops representing what the books actually say.
 
 import { supabase } from './supabase';
+import { fetchAll } from './fetchAll';
 import { aggregateForPnL, aggregateForBS } from './finance';
 
 const MONTHS_FULL = [
@@ -51,11 +52,16 @@ function periodFullLabel(period) {
 // helper was extracted. Both files now call this directly.
 export async function buildPeriodSnapshot(period, categories) {
   const { start, end } = periodRange(period);
-  const { data: txns, error } = await supabase.from('transactions')
-    .select('id, date, description, category, amount, type')
-    .gte('date', start).lte('date', end)
-    .eq('posted', true).eq('voided', false);
-  if (error) throw error;
+  // Paginated: single-period volume approaches 1,000 rows in busy months, and
+  // PostgREST silently caps un-ranged responses at 1,000. Any snapshot
+  // computed from truncated data under-reports every P&L / BS number.
+  const txns = await fetchAll(
+    supabase.from('transactions')
+      .select('id, date, description, category, amount, type')
+      .gte('date', start).lte('date', end)
+      .eq('posted', true).eq('voided', false)
+      .order('date', { ascending: true })
+  );
   return {
     period,
     pl:            aggregateForPnL(txns || [], categories),

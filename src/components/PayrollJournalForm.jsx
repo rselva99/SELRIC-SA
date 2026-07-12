@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { formatCurrency, formatDate } from '../lib/utils';
 import { magnitudeOf } from '../lib/finance';
-import { insertJournalEntryWithRetry } from '../lib/journalReference';
+import { postJournalEntry } from '../lib/postJournalEntry';
 import { PeriodClosedError } from '../lib/periodLock';
 import PeriodLockedDialog from './PeriodLockedDialog';
 import Spinner from './ui/Spinner';
@@ -202,45 +202,68 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
       const monthLabel = periodFullLabel(activePeriod);
       const jeDate     = pEnd;
 
-      const { data: entry, reference } = await insertJournalEntryWithRetry({
-        date: jeDate,
-        description: `Payroll — ${monthLabel}`,
-        memo: `Total payroll $${total.toFixed(2)} | Venmo/CashApp already posted $${venmoTotal.toFixed(2)} | Check/Other recorded here $${remaining.toFixed(2)}`,
-        total_amount: remaining,
-        status: 'posted',
-        entry_type: 'simple',
-        created_by: user?.id || null,
-        posted_at: new Date().toISOString(),
+      // Balanced double-entry payroll JE: DR payroll expense / CR Cash & Bank.
+      // Historical Payroll JEs (JE-033 etc.) were single-leg debits — that
+      // pattern is exactly what the atomic RPC now blocks.
+      const CASH_CATEGORY = 'Cash & Bank';
+      const lineRows = [
+        {
+          account_id: null,
+          description: `Check/Other payroll for ${monthLabel}`,
+          debit_amount: remaining,
+          credit_amount: 0,
+          category: categoryName,
+        },
+        {
+          account_id: null,
+          description: `[Cash leg] Payroll ${monthLabel}`,
+          debit_amount: 0,
+          credit_amount: remaining,
+          category: CASH_CATEGORY,
+        },
+      ];
+      const txnRows = [
+        {
+          date: jeDate,
+          description: `Payroll — ${monthLabel}`,
+          supplier: 'Payroll JE',
+          amount: remaining,
+          type: 'debit',
+          category: categoryName,
+          account_id: null,
+          bank_statement_id: null,
+          posted: true,
+        },
+        {
+          date: jeDate,
+          description: `[Cash leg] Payroll — ${monthLabel}`,
+          supplier: 'Payroll JE',
+          amount: remaining,
+          type: 'credit',
+          category: CASH_CATEGORY,
+          account_id: null,
+          bank_statement_id: null,
+          posted: true,
+        },
+      ];
+      const { entry_id, reference } = await postJournalEntry({
+        entry: {
+          date: jeDate,
+          description: `Payroll — ${monthLabel}`,
+          memo: `Total payroll $${total.toFixed(2)} | Venmo/CashApp already posted $${venmoTotal.toFixed(2)} | Check/Other recorded here $${remaining.toFixed(2)}`,
+          total_amount: remaining,
+          status: 'posted',
+          entry_type: 'simple',
+          created_by: user?.id || null,
+          posted_at: new Date().toISOString(),
+        },
+        lines: lineRows,
+        txns:  txnRows,
       });
-
-      const { error: e2 } = await supabase.from('journal_entry_lines').insert({
-        journal_entry_id: entry.id,
-        account_id: null,
-        description: `Check/Other payroll for ${monthLabel}`,
-        debit_amount: remaining,
-        credit_amount: 0,
-        category: categoryName,
-      });
-      if (e2) throw e2;
-
-      const { error: e3 } = await supabase.from('transactions').insert({
-        date: jeDate,
-        description: `Payroll — ${monthLabel}`,
-        supplier: 'Payroll JE',
-        amount: remaining,
-        type: 'debit',
-        category: categoryName,
-        account_id: null,
-        reference,
-        bank_statement_id: null,
-        journal_entry_id: entry.id,
-        posted: true,
-      });
-      if (e3) throw e3;
 
       toast.success(`Posted ${reference} — ${formatCurrency(remaining)}`);
       setTotalPayroll('');
-      setExistingJE({ id: entry.id, reference, total_amount: remaining, date: jeDate });
+      setExistingJE({ id: entry_id, reference, total_amount: remaining, date: jeDate });
       onPosted?.({ reference, amount: remaining });
     } catch (err) {
       if (err instanceof PeriodClosedError) {

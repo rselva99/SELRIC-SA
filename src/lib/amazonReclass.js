@@ -13,6 +13,7 @@
 //     expense-type categories).
 
 import { supabase } from './supabase';
+import { fetchAll } from './fetchAll';
 import { debitMinusCredit } from './finance';
 
 // Fixed split. RESIDUAL_LEG_KEY is the leg that absorbs the penny diff
@@ -98,15 +99,18 @@ export async function fetchAmazonBalance({ amazonName, start, end }) {
   if (!amazonName || !start || !end) {
     return { balance: 0, txnCount: 0, unpostedCount: 0 };
   }
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('amount, type, posted')
-    .eq('category', amazonName)
-    .eq('voided', false)
-    .gte('date', start)
-    .lte('date', end);
-  if (error) throw error;
-  const rows = data || [];
+  // Paginated: Amazon activity in a year approaches the 1,000-row cap; a
+  // truncated fetch would under-report the balance the reclass JE targets.
+  const rows = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('amount, type, posted')
+      .eq('category', amazonName)
+      .eq('voided', false)
+      .gte('date', start)
+      .lte('date', end)
+      .order('date', { ascending: true })
+  );
   let balance = 0;
   let unposted = 0;
   for (const t of rows) {
@@ -126,15 +130,17 @@ export async function fetchAmazonBalance({ amazonName, start, end }) {
 export async function fetchAmazonBalanceByMonth({ amazonName, year }) {
   if (!amazonName || !year) return [];
   const { start, end } = yearBounds(year);
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('amount, type, date, posted')
-    .eq('category', amazonName)
-    .eq('voided', false)
-    .gte('date', start)
-    .lte('date', end);
-  if (error) throw error;
-  const rows = data || [];
+  // Paginated: full-year Amazon fetch can exceed the 1,000-row cap.
+  const rows = await fetchAll(
+    supabase
+      .from('transactions')
+      .select('amount, type, date, posted')
+      .eq('category', amazonName)
+      .eq('voided', false)
+      .gte('date', start)
+      .lte('date', end)
+      .order('date', { ascending: true })
+  );
 
   const buckets = {};
   for (const period of monthsInYear(year)) {

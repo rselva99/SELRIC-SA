@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAll } from '../lib/fetchAll';
 import { useAuth } from './AuthContext';
 import { fuzzyMatchCategory } from '../lib/utils';
 import { batchCategorize } from '../lib/claude';
@@ -123,12 +124,16 @@ export function DataProvider({ children }) {
   const propagateCategories = useCallback(async (supplierMap) => {
     const map = supplierMap || supplierCategoriesRef.current;
     if (!Object.keys(map).length) return 0;
-    const { data: targets } = await supabase
-      .from('transactions')
-      .select('id, description, supplier')
-      .eq('posted', false)
-      .or('category.is.null,category.eq.')
-      .limit(500);
+    // Paginated: silently capping at 500 rows meant supplier-mapping propagation
+    // only touched the newest half-page of uncategorized transactions.
+    const targets = await fetchAll(
+      supabase
+        .from('transactions')
+        .select('id, description, supplier')
+        .eq('posted', false)
+        .or('category.is.null,category.eq.')
+        .order('id', { ascending: true })
+    );
     if (!targets?.length) return 0;
     const matches = targets
       .map((t) => ({ id: t.id, cat: fuzzyMatchCategory(t.description || t.supplier || '', map) }))
@@ -209,14 +214,22 @@ export function DataProvider({ children }) {
       .from('transactions')
       .select('id, description, supplier')
       .eq('posted', false)
-      .or('category.is.null,category.eq.');
+      .or('category.is.null,category.eq.')
+      .order('id', { ascending: true });
     if (period) {
       const [yr, mo] = period.split('-');
       const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
       q = q.gte('date', `${yr}-${mo}-01`).lte('date', `${yr}-${mo}-${String(lastDay).padStart(2,'0')}`);
     }
-    const { data: targets, error: fetchErr } = await q.limit(500);
-    if (fetchErr || !targets?.length) return 0;
+    // Paginated: previous 500-row cap left later batches un-categorized when
+    // the AI helper was invoked on a large backlog.
+    let targets;
+    try {
+      targets = await fetchAll(q);
+    } catch {
+      return 0;
+    }
+    if (!targets?.length) return 0;
 
     const { data: scRows } = await supabase
       .from('supplier_categories')

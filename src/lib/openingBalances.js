@@ -4,6 +4,7 @@
 // INSERT so a typo can never desync the books.
 
 import { supabase } from './supabase';
+import { postJournalEntry } from './postJournalEntry';
 
 export const OPENING_REFERENCE   = 'JE-OPENING';
 export const OPENING_DATE        = '2024-01-01';
@@ -122,31 +123,15 @@ export async function postOpeningJE({ userId, existingCategories, addCategory, r
     await deleteOpeningJE(existing);
   }
 
-  // 4. Insert JE + lines + txns.
-  const { data: entry, error: e1 } = await supabase.from('journal_entries').insert({
-    reference:    OPENING_REFERENCE,
-    date:         OPENING_DATE,
-    description:  OPENING_DESCRIPTION,
-    memo:         `Debits ${dr.toFixed(2)} = Credits ${cr.toFixed(2)} (asserted)`,
-    total_amount: dr,
-    status:       'posted',
-    entry_type:   'simple',
-    created_by:   userId || null,
-    posted_at:    new Date().toISOString(),
-  }).select().single();
-  if (e1) throw e1;
-
+  // 4. Insert JE + lines + txns — atomically through the RPC. If any part
+  //    fails (or the DB re-check finds the lines unbalanced), nothing lands.
   const lineRows = OPENING_LINES.map(l => ({
-    journal_entry_id: entry.id,
-    account_id:       null,
-    description:      l.category,
-    debit_amount:     l.debit,
-    credit_amount:    l.credit,
-    category:         l.category,
+    account_id:    null,
+    description:   l.category,
+    debit_amount:  l.debit,
+    credit_amount: l.credit,
+    category:      l.category,
   }));
-  const { error: e2 } = await supabase.from('journal_entry_lines').insert(lineRows);
-  if (e2) throw e2;
-
   const txnRows = OPENING_LINES.map(l => ({
     date:              OPENING_DATE,
     description:       `Opening balance — ${l.category}`,
@@ -157,11 +142,23 @@ export async function postOpeningJE({ userId, existingCategories, addCategory, r
     account_id:        null,
     reference:         OPENING_REFERENCE,
     bank_statement_id: null,
-    journal_entry_id:  entry.id,
     posted:            true,
   }));
-  const { error: e3 } = await supabase.from('transactions').insert(txnRows);
-  if (e3) throw e3;
+  const { entry_id } = await postJournalEntry({
+    entry: {
+      reference:    OPENING_REFERENCE,
+      date:         OPENING_DATE,
+      description:  OPENING_DESCRIPTION,
+      memo:         `Debits ${dr.toFixed(2)} = Credits ${cr.toFixed(2)} (asserted)`,
+      total_amount: dr,
+      status:       'posted',
+      entry_type:   'simple',
+      created_by:   userId || null,
+      posted_at:    new Date().toISOString(),
+    },
+    lines: lineRows,
+    txns:  txnRows,
+  });
 
-  return { posted: true, replaced: !!existing, je: entry, created, reused, total: dr };
+  return { posted: true, replaced: !!existing, je: { id: entry_id, reference: OPENING_REFERENCE }, created, reused, total: dr };
 }
