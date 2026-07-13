@@ -557,6 +557,139 @@ try {
           }
         }
       }
+
+      // Tests (i)-(k) require migrations/2026-07-14-cash-leg-guard-expense-credits.sql
+      // to be applied. If it is not, the trigger under test is V3.1 (debit-only)
+      // and these three tests will fail. Check by probing: insert a bank-imported
+      // expense CREDIT and see if a mirror appears.
+      const v14Probe = await supabase.from('transactions').insert({
+        date: '2024-01-15',
+        description: `${RUN_MARKER} v14 probe`,
+        supplier: RUN_MARKER,
+        amount: 0.02,
+        type: 'credit',
+        category: 'Food Expense',
+        bank_statement_id: TEST_BS_ID,
+        posted: true,
+        voided: false,
+      }).select().single();
+      let v14Live = false;
+      if (!v14Probe.error) {
+        await new Promise(r => setTimeout(r, 200));
+        const { data: pl } = await supabase.from('transactions').select('id').eq('reference', `CASH-LEG-${v14Probe.data.id}`);
+        v14Live = (pl?.length || 0) > 0;
+        // The probe source row + any mirror get cleaned by RUN_MARKER sweep.
+      }
+
+      if (!v14Live) {
+        skip('(i)-(k) expense-credit tests', 'V3.2 (2026-07-14) not applied — trigger is debit-only. Apply migration then rerun.');
+      } else {
+
+        // (i) Posted bank-imported EXPENSE CREDIT auto-creates exactly one
+        //     Cash & Bank DEBIT mirror.
+        {
+          const { data: src, error } = await supabase.from('transactions').insert({
+            date: '2024-01-15',
+            description: `${RUN_MARKER} (i) expense credit`,
+            supplier: RUN_MARKER,
+            amount: 42.50,
+            type: 'credit',
+            category: 'Liquor',
+            bank_statement_id: TEST_BS_ID,
+            posted: true,
+            voided: false,
+          }).select().single();
+          if (error) { fail('(i) expense-credit mirror', 'insert failed: ' + error.message); }
+          else {
+            await new Promise(r => setTimeout(r, 200));
+            const { data: legs } = await supabase.from('transactions').select('*').eq('reference', `CASH-LEG-${src.id}`);
+            if ((legs?.length || 0) === 1 && legs[0].category === 'Cash & Bank' && legs[0].type === 'debit') {
+              pass('(i) posted bank-imported expense CREDIT auto-creates exactly one Cash & Bank DEBIT leg');
+            } else {
+              fail('(i)', `expected 1 mirror with cat=Cash & Bank type=debit, got ${legs?.length}: ${JSON.stringify(legs?.[0])}`);
+            }
+          }
+        }
+
+        // (j) Posted bank-imported REVENUE CREDIT still creates NO Cash & Bank leg.
+        //     This is load-bearing — Phase 2B Task 2 rerouted revenue via Merchant
+        //     Clearing; allowing a Cash & Bank leg here would double-count.
+        {
+          const { data: src, error } = await supabase.from('transactions').insert({
+            date: '2024-01-15',
+            description: `${RUN_MARKER} (j) revenue credit`,
+            supplier: RUN_MARKER,
+            amount: 425.00,
+            type: 'credit',
+            category: 'Bar Sales',
+            bank_statement_id: TEST_BS_ID,
+            posted: true,
+            voided: false,
+          }).select().single();
+          if (error) { fail('(j) revenue-credit no-mirror', 'insert failed: ' + error.message); }
+          else {
+            await new Promise(r => setTimeout(r, 200));
+            const { data: legs } = await supabase.from('transactions').select('*').eq('reference', `CASH-LEG-${src.id}`);
+            if ((legs?.length || 0) === 0) {
+              pass('(j) posted bank-imported REVENUE credit still creates NO Cash & Bank leg');
+            } else {
+              fail('(j)', `expected 0 mirrors, got ${legs.length}`);
+            }
+          }
+        }
+
+        // (k) Voiding an expense-credit source voids its Cash & Bank DEBIT leg;
+        //     TB delta at the triple is $0.00.
+        {
+          const key = { date: '2024-01-15', amount: 33.33 };
+          const { data: src, error } = await supabase.from('transactions').insert({
+            date: key.date,
+            description: `${RUN_MARKER} (k) expense credit to void`,
+            supplier: RUN_MARKER,
+            amount: key.amount,
+            type: 'credit',
+            category: 'Food Expense',
+            bank_statement_id: TEST_BS_ID,
+            posted: true,
+            voided: false,
+          }).select().single();
+          if (error) { fail('(k) source insert', error.message); }
+          else {
+            await new Promise(r => setTimeout(r, 200));
+            const legRef = `CASH-LEG-${src.id}`;
+            const { data: legsPre } = await supabase.from('transactions').select('*').eq('reference', legRef);
+            if ((legsPre?.length || 0) !== 1) {
+              fail('(k) pre-void', `expected 1 mirror before void, got ${legsPre?.length}`);
+            } else {
+              const tbAtKey = async () => {
+                const { data } = await supabase.from('transactions').select('amount, type, voided')
+                  .eq('bank_statement_id', TEST_BS_ID)
+                  .eq('date', key.date)
+                  .eq('amount', key.amount);
+                return (data || []).reduce((acc, r) => {
+                  if (r.voided) return acc;
+                  return r.type === 'debit'
+                    ? acc + Number(r.amount)
+                    : acc - Number(r.amount);
+                }, 0);
+              };
+              const tbBefore = await tbAtKey();
+              const { error: uErr } = await supabase.from('transactions').update({ voided: true }).eq('id', src.id);
+              if (uErr) fail('(k) void', uErr.message);
+              else {
+                await new Promise(r => setTimeout(r, 200));
+                const { data: legsPost } = await supabase.from('transactions').select('*').eq('reference', legRef);
+                const tbAfter = await tbAtKey();
+                if ((legsPost?.length || 0) === 1 && legsPost[0].voided === true && Math.abs(tbAfter - tbBefore) < 0.005) {
+                  pass('(k) voiding an expense-credit source voids its mirror; TB delta at triple = $0.00');
+                } else {
+                  fail('(k)', `expected 1 voided mirror & TB delta=0, got ${legsPost?.length} with voided=${legsPost?.[0]?.voided}, TB delta=${(tbAfter - tbBefore).toFixed(2)}`);
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
