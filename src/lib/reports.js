@@ -787,10 +787,74 @@ function fmtIncomeLoss(amount) {
 // legacy branch.
 function renderFinalSummary(doc, y, totals) {
   if (!totals) return y;
+  const hasCpaFormat = Object.prototype.hasOwnProperty.call(totals, 'partnersCapital')
+                     && Object.prototype.hasOwnProperty.call(totals, 'm2Adjustments');
   const isTaxRecon = Object.prototype.hasOwnProperty.call(totals, 'netIncomeLoss');
-  return isTaxRecon
-    ? renderTaxReconSummary(doc, y, totals)
-    : renderLegacyBalanceSummary(doc, y, totals);
+  if (hasCpaFormat)    return renderCpaFormatSummary(doc, y, totals);
+  if (isTaxRecon)      return renderTaxReconSummary(doc, y, totals);
+  return renderLegacyBalanceSummary(doc, y, totals);
+}
+
+// CPA-format renderer — matches Justin's tax reconciliation layout:
+//   TOTAL LIABILITIES & S/E   = L15 + L17 + L20 + L21
+//   M-2 ADJUSTMENTS           = M202 + M206A (raw signed sum — L21 stays with L&SE)
+//   STRUCTURAL GAP            = -(A + L&SE + M-2)
+//   Then a BS-IMPLIED NI vs actual P&L NI comparison, unhidden.
+//
+// The identity A + L&SE + NIL + M-2 = 0 is validated against Justin's own
+// 2023 column to the cent (see SELRIC-FINAL-PREFLIGHT.md).
+function renderCpaFormatSummary(doc, y, totals) {
+  const A       = Number(totals.totalAssets)      || 0;
+  const LSE     = Number(totals.totalLiabEquity)  || 0;      // now excludes M-2
+  const M2      = Number(totals.m2Adjustments)    || 0;
+  const NIL     = Number(totals.netIncomeLoss)    || 0;
+  const bsNI    = Number(totals.bsImpliedNetIncome) || 0;    // = -NIL
+  const actual  = totals.actualNetIncome;
+
+  // 1. TOTAL LIABILITIES & S/E (L15 + L17 + L20 + L21 — CPA format, L21 in L&SE)
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES & S/E', formatCurrency(LSE), LIGHT_BG, BRAND_DARK);
+
+  // 2. M-2 ADJUSTMENTS (M202 + M206A) — SEPARATE line per CPA format
+  y = drawSummaryBand(doc, y, 'M-2 ADJUSTMENTS (M202 + M206A)', formatCurrency(M2), LIGHT_BG, BRAND_DARK);
+
+  // 3. STRUCTURAL GAP — the balancing plug from the CPA identity
+  y = drawSummaryBand(doc, y, 'STRUCTURAL GAP — UNBOOKED ACTIVITY', fmtIncomeLoss(NIL), LIGHT_BG, BRAND_DARK);
+
+  // 4. Identity tie: A + L&SE + NIL + M-2 = 0 by construction. Print the literal sum.
+  const tie = Math.round((A + LSE + NIL + M2) * 100) / 100;
+  y = drawSummaryBand(
+    doc, y,
+    'CPA IDENTITY: TIES (sums to 0)',
+    `A + L&SE + NIL + M-2 = ${formatCurrency(tie)}`,
+    [217, 237, 227], BRAND_DARK, 10,
+  );
+
+  // 5. BS-IMPLIED NET INCOME (from the CPA-target capital accounts)
+  y = drawSummaryBand(doc, y, 'BS-IMPLIED NET INCOME',
+    formatCurrency(bsNI), LIGHT_BG, BRAND_DARK);
+
+  // 6. P&L NET INCOME (reference — live recompute)
+  if (actual == null) {
+    y = drawSummaryBand(doc, y, 'P&L NET INCOME (reference)',
+      'not linked — pass categories at snapshot time to enable',
+      [255, 244, 214], [146, 64, 14], 10);
+    return y;
+  }
+  y = drawSummaryBand(doc, y, 'P&L NET INCOME (reference)',
+    formatCurrency(actual), LIGHT_BG, BRAND_DARK);
+
+  // 7. GAP — displayed prominently, NEVER auto-corrected.
+  const gap = Math.round((bsNI - Number(actual || 0)) * 100) / 100;
+  const zero = Math.abs(gap) < 0.005;
+  y = drawSummaryBand(
+    doc, y,
+    zero ? 'GAP: BS-IMPLIED vs P&L NET INCOME  ✓' : 'GAP: BS-IMPLIED vs P&L NET INCOME — UNEXPLAINED',
+    `BS-implied ${formatCurrency(bsNI)}  −  P&L ${formatCurrency(actual)}  =  ${formatCurrency(gap)}`,
+    zero ? [217, 237, 227] : [255, 230, 230],
+    zero ? BRAND_DARK       : [224, 49, 49],
+    11,
+  );
+  return y;
 }
 
 function renderTaxReconSummary(doc, y, totals) {
@@ -1231,6 +1295,7 @@ function renderCoverPage(doc, { scope, year, periodLabel }) {
   if (scope === 'year') {
     doc.text(safeText('• Financing Schedule — Jaris / SpotOn Capital'), PAGE_MARGIN + 6, y); y += 8;
     doc.text(safeText('• Balance Sheet (Book BS — book_bs_lines)'), PAGE_MARGIN + 6, y); y += 8;
+    doc.text(safeText('• Members\' Capital — Reconciliation to CPA'), PAGE_MARGIN + 6, y); y += 8;
   }
   doc.text(safeText('• Trial Balance'), PAGE_MARGIN + 6, y); y += 8;
 
@@ -1279,7 +1344,22 @@ export function generateAuditorPackagePdf(input, opts = {}) {
     generateBookBalanceSheetPdf({ year, snapshot: bookBSSnapshot, locked: null }, String(year), { doc });
   }
 
-  // 5. Trial Balance (posted-only basis per opts.includeUnposted = false)
+  // 5. Members' Capital Reconciliation (year scope only). Immediately after
+  //    the Balance Sheet so the auditor can compare the BS-implied FY net
+  //    income to the actual P&L net income while the balance sheet page is
+  //    still in mind. Uses the snapshot's totals plus the transactions/
+  //    categories for the live actual-NI recompute.
+  if (scope === 'year' && bookBSSnapshot) {
+    doc.addPage();
+    renderMembersCapitalReconciliationPage(doc, {
+      periodLabel,
+      snapshot: bookBSSnapshot,
+      transactions,
+      categories,
+    });
+  }
+
+  // 6. Trial Balance (posted-only basis per opts.includeUnposted = false)
   doc.addPage();
   generateTrialBalancePdf(
     { transactions, categories, period: periodLabel },
@@ -1441,4 +1521,129 @@ function renderFinancingSchedulePage(doc, { periodLabel }) {
     '5. "Jaris L2 showed $96,082.69 outstanding at 01/06/2024. The 2023 tax reconciliation records Loan Payable - Spoton at $2,302.67. Apparent understatement of approximately $94,000. Referred to CPA."',
   ];
   for (const d of DISCLOSURES) body(d, { size: 8 });
+}
+
+// ── Members' Capital — Reconciliation to CPA ──────────────────────────────
+//
+// Per contract 2026-07-14 (SELRIC-FINAL-EQUITY.md): after aligning L21 to the
+// CPA's expected closing capital accounts and zeroing M-2 flows, the CPA
+// treatment implies a FY2024 net income that differs from the general ledger's.
+// This page displays the gap and the KNOWN CANDIDATES that MIGHT account for
+// it, without claiming any of them explain it. The final "question for the
+// CPA" is included verbatim.
+function renderMembersCapitalReconciliationPage(doc, { periodLabel, snapshot, transactions, categories }) {
+  addHeader(doc, "Members' Capital — Reconciliation to CPA", periodLabel);
+  let y = 44;
+
+  function h2(text) {
+    y = ensureSpace(doc, y, 12);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...BRAND_DARK);
+    doc.text(safeText(text), PAGE_MARGIN, y);
+    y += 6;
+  }
+  function body(text, opts = {}) {
+    const size    = opts.size || 9;
+    const italic  = opts.italic || false;
+    doc.setFontSize(size);
+    doc.setFont('helvetica', italic ? 'italic' : 'normal');
+    doc.setTextColor(...(opts.color || TEXT_DARK));
+    const lines = doc.splitTextToSize(safeText(text), USABLE_WIDTH);
+    for (const line of lines) {
+      y = ensureSpace(doc, y, size * 0.55);
+      doc.text(line, PAGE_MARGIN, y);
+      y += size * 0.55;
+    }
+    y += 1.5;
+  }
+
+  const totals = snapshot?.totals || {};
+  const bsNI   = Number(totals.bsImpliedNetIncome) || 0;
+  const actual = totals.actualNetIncome != null ? Number(totals.actualNetIncome) : null;
+  const gap    = actual != null ? Math.round((bsNI - actual) * 100) / 100 : null;
+
+  // ── PLAIN STATEMENT ─────────────────────────────────────────────────────
+  h2('CPA-aligned treatment (what this year is set to)');
+  body('- L21 is set to the CPA\'s expected 2024 closing capital accounts.');
+  body('- Retained Earnings is ZERO, per the CPA\'s treatment (acct 3000: preliminary $91,436.11 → adjustment −$91,436.11 → book balance $0.00, then income allocated to member capital).');
+  body('- M202 (Capital Contributed) and M206A (Distributions) are ZERO. No 2024 contributions and no 2024 draws. These are M-2 FLOWS, not standing equity.');
+  body('- Balance-check identity: A + L&SE + NIL + M-2 = 0.');
+
+  // ── THE GAP ─────────────────────────────────────────────────────────────
+  h2('The BS-implied FY2024 net income vs the ledger');
+  y = ensureSpace(doc, y, 30);
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: [['Line', 'Amount']],
+    body: [
+      ['These capital accounts imply FY2024 net income of',        formatCurrency(bsNI)],
+      ['The general ledger reports',                                 actual != null ? formatCurrency(actual) : 'not linked'],
+      [{ content: 'GAP — UNEXPLAINED, NOT PLUGGED',
+         styles: { fontStyle: 'bold', fillColor: [255, 230, 230], textColor: [153, 27, 27] } },
+       { content: gap != null ? formatCurrency(gap) : '—',
+         styles: { fontStyle: 'bold', halign: 'right', fillColor: [255, 230, 230], textColor: [153, 27, 27] } }],
+    ],
+    columnStyles: {
+      0: { cellWidth: 130 },
+      1: { cellWidth: 52,  halign: 'right' },
+    },
+  });
+  y = (doc.lastAutoTable?.finalY ?? y) + 4;
+  body(
+    'This gap has NOT been plugged. No entry has been posted to close it. It is a real unexplained difference between what the CPA-target capital accounts imply and what the ledger actually reports.',
+    { italic: true, size: 9 }
+  );
+
+  // ── CANDIDATES ──────────────────────────────────────────────────────────
+  h2('Known candidates (NOT claimed to explain the gap)');
+  body('The following items are known-open issues on the ledger. Each is listed with its amount so the CPA can consider whether any combination might account for the gap. NONE has been booked, netted, or attributed here.', { size: 9, italic: true });
+  y = ensureSpace(doc, y, 60);
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: [['Candidate', 'Amount']],
+    body: [
+      ['SpotOn / Jaris liability apparently understated at 2023 close', '≈ $93,780.02'],
+      ['  (Jaris L2 outstanding at 01/06/2024 = $96,082.69; 2023 tax recon = $2,302.67)', ''],
+      ['"Meridian Payments Made/Not Found" per CPA 2023 sheet — carried at $0 in SELRIC. Payoff status unverified.', '−$157,459.91'],
+      ['Merchant Clearing residual — undecomposed (tips, sales tax, SpotOn withholdings)',                          '−$252,375.62'],
+      ['Check payments unrecorded (extractor excludes checks)',                                                     '≈ $498,073.42'],
+      ['  of which identified: POS/Custom Solutions loan payoff $56,067.90 + Great Southern paydown $39,687.39',    '  ($95,755.29)'],
+      ['L2 finance charge not booked — statements Feb–Jul 2024 missing',                                            '$13,252.79'],
+      ['21 single-legged JEs',                                                                                       '$15,901.20'],
+    ],
+    columnStyles: {
+      0: { cellWidth: 130 },
+      1: { cellWidth: 52,  halign: 'right' },
+    },
+  });
+  y = (doc.lastAutoTable?.finalY ?? y) + 6;
+
+  // ── THE QUESTION ────────────────────────────────────────────────────────
+  h2('Question for the CPA (verbatim)');
+  y = ensureSpace(doc, y, 24);
+  doc.setFillColor(...LIGHT_BG);
+  doc.rect(PAGE_MARGIN - 2, y - 4, USABLE_WIDTH + 4, 20, 'F');
+  doc.setTextColor(...BRAND_DARK);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'italic');
+  const q = doc.splitTextToSize(
+    '"What FY2024 net income were you assuming when you prepared these capital accounts? Our general ledger reports ' +
+    (actual != null ? formatCurrency(actual) : '$—') + '."',
+    USABLE_WIDTH,
+  );
+  for (const line of q) { doc.text(line, PAGE_MARGIN, y + 4); y += 6; }
+  y += 10;
+
+  // ── DO NOT PLUG NOTE ────────────────────────────────────────────────────
+  body(
+    'This page is a RECONCILIATION artifact, not an adjustment proposal. Nothing above has been booked. ' +
+    'Closing the gap requires the CPA to either (a) revise the expected 2024 closing capital accounts, ' +
+    '(b) provide the FY2024 net-income figure they used, or (c) authorize specific corrections to the ' +
+    'candidates listed above with row-level source documentation. Under NO circumstance should any of ' +
+    'these numbers be "corrected" by a plug entry.',
+    { size: 8, italic: true }
+  );
 }

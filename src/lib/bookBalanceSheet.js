@@ -549,7 +549,15 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
 
   let totalAssets       = 0;
   let totalLiabilities  = 0;
-  let totalEquity       = 0;
+  // Section-level subtotals we need to break out for the CPA-format identity:
+  //   partnersCapital  = L21 raw signed sum
+  //   m2Adjustments    = M202 + M206A (raw signed, NO contra flip — this is
+  //                       the tax-return M-2 convention Justin uses; draws are
+  //                       stored positive on M206A but folded INTO the M-2 sum
+  //                       directly, not flipped). Validated against Justin's
+  //                       2023 column to the cent — see SELRIC-FINAL-PREFLIGHT.md.
+  let partnersCapital = 0;
+  let m2Adjustments   = 0;
   for (const sec of sectionMap.values()) {
     // A contra section always REDUCES its parent group's total. The stored
     // sign of contra subtotals is inconsistent across this codebase:
@@ -560,14 +568,32 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
     const contribution = sec.contra ? -Math.abs(sec.subtotal) : sec.subtotal;
     if (sec.group === 'asset')     totalAssets      += contribution;
     if (sec.group === 'liability') totalLiabilities += contribution;
-    if (sec.group === 'equity')    totalEquity      += contribution;
+    // Equity gets DECOMPOSED into partnersCapital (L21) and m2Adjustments
+    // (M202 + M206A raw). This split matches the CPA's tax-return format
+    // and is required by the CPA identity  A + L&SE + NIL + M-2 = 0.
+    if (sec.code === 'L21')   partnersCapital += sec.subtotal;
+    if (sec.code === 'M202')  m2Adjustments   += sec.subtotal;
+    if (sec.code === 'M206A') m2Adjustments   += sec.subtotal;    // RAW, no contra flip
   }
   totalAssets      = Math.round(totalAssets * 100) / 100;
   totalLiabilities = Math.round(totalLiabilities * 100) / 100;
-  totalEquity      = Math.round(totalEquity * 100) / 100;
-  const totalLiabEquity = Math.round((totalLiabilities + totalEquity) * 100) / 100;
-  // Tax-recon plug: A + (signed L+E) + NetIncomeLoss = 0  ⇒  NetIncomeLoss = -(A + L+E).
-  const netIncomeLoss   = Math.round(-(totalAssets + totalLiabEquity) * 100) / 100;
+  partnersCapital  = Math.round(partnersCapital * 100) / 100;
+  m2Adjustments    = Math.round(m2Adjustments * 100) / 100;
+  // CPA format: TOTAL LIABILITIES & S/E = L15+L17+L20+L21  (M-2 lives on its own line).
+  const totalLiabEquity = Math.round((totalLiabilities + partnersCapital) * 100) / 100;
+  // Legacy back-compat: totalEquity was the OLD single-line "Equity" bundle
+  // (L21 + M202 + M206A with contra flip). Preserved so previously locked
+  // snapshots keep rendering the way they were locked.
+  const totalEquity = Math.round((partnersCapital + m2Adjustments - Math.abs(0)) * 100) / 100;
+  // Tax-recon plug (CPA format): A + L&SE + NIL + M-2 = 0
+  //   ⇒ NIL = -(A + L&SE + M-2)
+  //   ⇒ where L&SE = totalLiabilities + partnersCapital (L21 only, no M-2)
+  // Numerically identical to the old formula but presented with M-2 on its
+  // own line — see renderTaxReconSummary in reports.js for the display.
+  const netIncomeLoss   = Math.round(-(totalAssets + totalLiabEquity + m2Adjustments) * 100) / 100;
+  // The BS-implied FY net income the CPA capital accounts would require.
+  // Reported alongside the P&L number so any gap between the two is visible.
+  const bsImpliedNetIncome = Math.round(-netIncomeLoss * 100) / 100;
 
   // Reconciliation gap: compare the plug to the actual P&L net income for the
   // year. Needs the chart of accounts to classify revenue/expense — if the
@@ -604,6 +630,13 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
     totals: {
       totalAssets,
       totalLiabEquity,
+      // NEW CPA-format fields: split equity into L21 (partnersCapital) and
+      // M-2 (M202 + M206A raw), plus the derived BS-implied NI. Renderers
+      // that detect these fields use the CPA presentation; renderers that
+      // don't fall back to the legacy tax-recon layout.
+      partnersCapital,
+      m2Adjustments,
+      bsImpliedNetIncome,
       netIncomeLoss,
       actualNetIncome,
       reconciliationGap,
