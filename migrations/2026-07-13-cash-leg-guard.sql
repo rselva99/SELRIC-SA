@@ -289,24 +289,64 @@ CREATE TRIGGER trg_cash_leg_write
 
 -- ─── DELETE TRIGGER ──────────────────────────────────────────────────────
 --
--- On DELETE of a source row, delete the corresponding mirror leg so it
--- doesn't remain as an orphan credit. Handles both:
---   • per-row form  (reference = 'CASH-LEG-<OLD.id>')
---   • Task 5 form   (reference = 'CASH-LEG-2024', match by
---                    bs_id/date/amount, LIMIT 1 for multiplicity safety)
+-- MASTER INVARIANT (must hold before and after every operation on the
+-- transactions table, for every (bank_statement_id, date, amount) triple):
 --
--- We DELETE rather than void. If the source is being physically removed,
--- its mirror should be too — otherwise the mirror sits with a dangling
--- 'CASH-LEG-<gone-id>' reference forever. Voiding would work for balance
--- purposes but leaves permanent no-op audit rows.
+--   active_sources_at_triple == active_mirrors_at_triple
+--
+-- where
+--   active_sources = COUNT(*) WHERE type='debit' AND posted=TRUE AND
+--                    voided IS NOT TRUE AND reference NOT LIKE 'CASH-LEG-%'
+--   active_mirrors = COUNT(*) WHERE reference IN ('CASH-LEG-2024',
+--                    'CASH-LEG-<any>') AND type='credit' AND
+--                    category='Cash & Bank' AND voided IS NOT TRUE
+--
+-- The write/update trigger's Case A preserves this on INSERT and on
+-- UPDATEs that restore v_should_have; Case B preserves it on UPDATEs
+-- that drop v_should_have (voids ONE mirror when active_mirrors exceeds
+-- active_sources). The DELETE handler below preserves it on physical
+-- source removal.
+--
+-- On DELETE of a source row, the OLD row is gone by the time this
+-- AFTER trigger runs, so the count of active_sources naturally excludes
+-- OLD. We then take up to two actions:
+--
+--   Step P (per-row): If OLD had a per-row mirror ('CASH-LEG-<OLD.id>'),
+--     that's an unambiguous 1:1 match. Delete it. Done.
+--
+--   Step V (prefer voided): If a VOIDED CASH-LEG-2024 mirror exists at
+--     OLD's triple, delete one. Reasoning: Case B voids exactly one mirror
+--     per source-void, and that voided mirror belongs to whichever source
+--     was voided. Deleting a voided mirror never affects the active
+--     invariant — active counts don't move. This also cleans up the leg
+--     of the row being deleted when OLD was voided first.
+--
+--   Step S (surplus): AFTER step V, re-evaluate the invariant. If
+--     active_mirrors > active_sources (i.e., OLD was active AND its
+--     mirror is still active), delete ONE active mirror to restore the
+--     invariant.
+--
+-- Steps V and S can BOTH fire in the same DELETE. That's correct: e.g.
+-- if source X was voided (Case B voided M1) and then some OTHER source Y
+-- at the same triple is deleted while active, step V cleans up M1 (X's
+-- leftover) and step S removes M2 (Y's active mirror) — Y is gone, X is
+-- still voided-source, and both mirrors correctly disappear.
+--
+-- The previous version had a defect: the fallback SELECT ignored `voided`
+-- and used ORDER BY id LIMIT 1, which meant that after Case B voided one
+-- mirror, deleting a different active source at the same triple could
+-- pick the ACTIVE mirror belonging to a surviving active source. That
+-- silently broke the trial balance by that source's amount. The
+-- voided-first + invariant-guard structure below eliminates that.
+--
+-- We DELETE rather than void — if the source is physically removed, its
+-- mirror should be too rather than leaving a dangling 'CASH-LEG-<gone-id>'.
 --
 -- Interaction with period-lock: `trg_period_lock_transactions` blocks
 -- DELETEs on rows dated in closed periods. If the source is in a closed
--- period, the DELETE fails at the row level before this trigger fires,
--- and the whole transaction rolls back. When the period is open, the
--- source DELETE succeeds, this trigger fires, and the cascade DELETE
--- on the mirror row (same period) also succeeds. The two DELETEs are
--- atomic under the source's transaction.
+-- period the DELETE fails before this trigger fires; the transaction
+-- rolls back. When the period is open, both the source DELETE and any
+-- cascade DELETEs from this trigger run in the same transaction atomically.
 
 CREATE OR REPLACE FUNCTION public.transactions_handle_source_delete()
 RETURNS TRIGGER
@@ -315,29 +355,34 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_leg_id UUID;
+  v_leg_id           UUID;
+  v_active_src_count INT;
+  v_active_leg_count INT;
 BEGIN
-  -- Guard: OLD row is itself a mirror. No cascade in either direction —
-  -- terminates the recursive DELETE the cascade below would otherwise
-  -- trigger on the mirror.
+  -- Guard: OLD row is itself a mirror. No cascade — terminates the
+  -- recursive fire that step P / step S DELETE would otherwise trigger.
   IF OLD.reference IS NOT NULL AND OLD.reference LIKE 'CASH-LEG-%' THEN
     RETURN OLD;
   END IF;
 
-  -- Try per-row form first.
+  ---- Step P: per-row form (unambiguous 1:1) ---------------------------
   DELETE FROM public.transactions
    WHERE reference = 'CASH-LEG-' || OLD.id::text;
   IF FOUND THEN
     RETURN OLD;
   END IF;
 
-  -- Fall back to Task 5 CASH-LEG-2024 form. Delete EXACTLY ONE.
+  -- No per-row mirror. Task 5 CASH-LEG-2024 fallback needs a key.
   IF OLD.bank_statement_id IS NULL
      OR OLD.date            IS NULL
      OR OLD.amount          IS NULL THEN
     RETURN OLD;
   END IF;
 
+  ---- Step V: prefer a voided mirror at OLD's triple -------------------
+  -- Voided mirrors were placed there by Case B when a source at this
+  -- triple was voided. Deleting one never affects active-count balance
+  -- (voided rows aren't in active counts), so it's always safe.
   SELECT id INTO v_leg_id
     FROM public.transactions
    WHERE reference          = 'CASH-LEG-2024'
@@ -346,11 +391,55 @@ BEGIN
      AND amount            = OLD.amount
      AND type              = 'credit'
      AND category          = 'Cash & Bank'
+     AND voided            = TRUE
    ORDER BY id
    LIMIT 1;
 
   IF v_leg_id IS NOT NULL THEN
     DELETE FROM public.transactions WHERE id = v_leg_id;
+    v_leg_id := NULL;
+  END IF;
+
+  ---- Step S: invariant re-check + active-mirror prune -----------------
+  -- OLD is already gone (AFTER DELETE), so this count excludes OLD.
+  -- If OLD was active, active_sources dropped by 1 and now
+  -- active_mirrors > active_sources — prune one active mirror.
+  SELECT COUNT(*) INTO v_active_src_count
+    FROM public.transactions
+   WHERE bank_statement_id = OLD.bank_statement_id
+     AND date              = OLD.date
+     AND amount            = OLD.amount
+     AND type              = 'debit'
+     AND posted            = TRUE
+     AND (voided IS NULL OR voided = FALSE)
+     AND (reference IS NULL OR reference NOT LIKE 'CASH-LEG-%');
+
+  SELECT COUNT(*) INTO v_active_leg_count
+    FROM public.transactions
+   WHERE reference          = 'CASH-LEG-2024'
+     AND bank_statement_id = OLD.bank_statement_id
+     AND date              = OLD.date
+     AND amount            = OLD.amount
+     AND type              = 'credit'
+     AND category          = 'Cash & Bank'
+     AND (voided IS NULL OR voided = FALSE);
+
+  IF v_active_leg_count > v_active_src_count THEN
+    SELECT id INTO v_leg_id
+      FROM public.transactions
+     WHERE reference          = 'CASH-LEG-2024'
+       AND bank_statement_id = OLD.bank_statement_id
+       AND date              = OLD.date
+       AND amount            = OLD.amount
+       AND type              = 'credit'
+       AND category          = 'Cash & Bank'
+       AND (voided IS NULL OR voided = FALSE)
+     ORDER BY id
+     LIMIT 1;
+
+    IF v_leg_id IS NOT NULL THEN
+      DELETE FROM public.transactions WHERE id = v_leg_id;
+    END IF;
   END IF;
 
   RETURN OLD;

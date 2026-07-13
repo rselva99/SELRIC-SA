@@ -448,6 +448,115 @@ try {
           }
         }
       }
+
+      // (h) Two sources sharing a triple + two mirrors. Void X, then DELETE X.
+      //     Y must still have exactly ONE ACTIVE cash leg after; TB delta $0.
+      //     This is the exact scenario the pre-patch DELETE handler broke.
+      {
+        const key = { date: '2024-01-15', amount: -1357911.13 };
+        const legRows = [];
+        for (let i = 0; i < 2; i++) {
+          const { data: leg, error: le } = await supabase.from('transactions').insert({
+            date: key.date,
+            description: `[Cash leg] ${RUN_MARKER} (h) synthetic mirror ${i + 1}`,
+            supplier: RUN_MARKER,
+            amount: key.amount,
+            type: 'credit',
+            category: 'Cash & Bank',
+            reference: 'CASH-LEG-2024',
+            bank_statement_id: TEST_BS_ID,
+            posted: true,
+            voided: false,
+          }).select().single();
+          if (le) { fail(`(h) legacy-leg ${i + 1} setup`, le.message); break; }
+          legRows.push(leg);
+        }
+        const srcRows = [];
+        if (legRows.length === 2) {
+          for (let i = 0; i < 2; i++) {
+            const { data: src, error } = await supabase.from('transactions').insert({
+              date: key.date,
+              description: `${RUN_MARKER} (h) source ${i + 1}`,
+              supplier: RUN_MARKER,
+              amount: key.amount,
+              type: 'debit',
+              category: 'Food Expense',
+              bank_statement_id: TEST_BS_ID,
+              posted: true,
+              voided: false,
+            }).select().single();
+            if (error) { fail(`(h) source ${i + 1} insert`, error.message); break; }
+            srcRows.push(src);
+          }
+        }
+        if (legRows.length === 2 && srcRows.length === 2) {
+          const [X, Y] = srcRows;
+          await new Promise(r => setTimeout(r, 200));
+
+          const inv = async () => {
+            const { data: srcs } = await supabase.from('transactions')
+              .select('id, voided, reference')
+              .eq('bank_statement_id', TEST_BS_ID)
+              .eq('date', key.date)
+              .eq('amount', key.amount)
+              .eq('type', 'debit');
+            const activeSrc = (srcs || []).filter(r => !r.voided && !(r.reference || '').startsWith('CASH-LEG-')).length;
+            const { data: legs } = await supabase.from('transactions')
+              .select('id, voided')
+              .eq('reference', 'CASH-LEG-2024')
+              .eq('bank_statement_id', TEST_BS_ID)
+              .eq('date', key.date)
+              .eq('amount', key.amount);
+            const activeLeg = (legs || []).filter(r => !r.voided).length;
+            return { activeSrc, activeLeg };
+          };
+          const tb = async () => {
+            const { data } = await supabase.from('transactions')
+              .select('amount, type, voided')
+              .eq('bank_statement_id', TEST_BS_ID)
+              .eq('date', key.date)
+              .eq('amount', key.amount);
+            return (data || []).reduce((acc, r) => {
+              if (r.voided) return acc;
+              return r.type === 'debit'
+                ? acc + Number(r.amount)
+                : acc - Number(r.amount);
+            }, 0);
+          };
+
+          const inv0 = await inv();
+          const tb0  = await tb();
+          if (inv0.activeSrc !== 2 || inv0.activeLeg !== 2) {
+            fail('(h) precondition', `expected 2 active src & 2 active mirrors, got src=${inv0.activeSrc} leg=${inv0.activeLeg}`);
+          } else {
+            // 1) Void X → Case B should void ONE mirror. Invariant → 1==1.
+            const { error: vErr } = await supabase.from('transactions').update({ voided: true }).eq('id', X.id);
+            if (vErr) fail('(h) void X', vErr.message);
+            else {
+              await new Promise(r => setTimeout(r, 200));
+              const inv1 = await inv();
+              if (inv1.activeSrc !== 1 || inv1.activeLeg !== 1) {
+                fail('(h) after-void', `expected src=1 leg=1 after voiding X, got src=${inv1.activeSrc} leg=${inv1.activeLeg}`);
+              } else {
+                // 2) Delete X → DELETE trigger step V should pick the VOIDED mirror,
+                //    NOT Y's active one. Y remains with its active mirror.
+                const { error: dErr } = await supabase.from('transactions').delete().eq('id', X.id);
+                if (dErr) fail('(h) delete X', dErr.message);
+                else {
+                  await new Promise(r => setTimeout(r, 200));
+                  const inv2 = await inv();
+                  const tb2  = await tb();
+                  if (inv2.activeSrc === 1 && inv2.activeLeg === 1 && Math.abs(tb2 - tb0) < 0.005) {
+                    pass(`(h) void-then-delete X preserves Y's active mirror; TB delta = $0.00 (src=${inv2.activeSrc}, leg=${inv2.activeLeg})`);
+                  } else {
+                    fail('(h)', `expected src=1 leg=1 & TB delta=0, got src=${inv2.activeSrc} leg=${inv2.activeLeg} TB delta=${(tb2 - tb0).toFixed(2)}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
