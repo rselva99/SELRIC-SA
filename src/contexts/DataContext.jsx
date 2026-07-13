@@ -108,12 +108,55 @@ export function DataProvider({ children }) {
     setAccounts((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
+  // Reusable helper — writes the offsetting Cash & Bank leg for a
+  // bank-imported transaction, idempotent via reference='CASH-LEG-<txId>'.
+  // Called from BOTH the single-row postTransaction path AND updateTransaction
+  // when it detects `posted` flipping false → true. Historically only the
+  // former existed, so bulk-import posting flows silently skipped the mirror
+  // — see Phase 1 recon, Task 2 audit trail, and Phase 2B Task 6.
+  const CASH_CATEGORY = 'Cash & Bank';
+  const ensureCashLeg = useCallback(async (txnRow) => {
+    if (!txnRow) return;
+    if (!txnRow.bank_statement_id) return;
+    if (!txnRow.amount || !txnRow.type) return;
+    if (txnRow.category === CASH_CATEGORY) return;   // don't mirror the cash side of itself
+    const cashRef = `CASH-LEG-${txnRow.id}`;
+    const { data: dup } = await supabase
+      .from('transactions').select('id').eq('reference', cashRef).limit(1);
+    if (dup && dup.length > 0) return;
+    await supabase.from('transactions').insert({
+      date: txnRow.date,
+      description: `[Cash leg] ${txnRow.description || ''}`,
+      supplier: txnRow.supplier || txnRow.description || '',
+      amount: txnRow.amount,
+      type: txnRow.type === 'debit' ? 'credit' : 'debit',
+      category: CASH_CATEGORY,
+      account_id: null,
+      reference: cashRef,
+      bank_statement_id: txnRow.bank_statement_id,
+      posted: true,
+    });
+  }, []);
+
   // ── Transaction CRUD (pure DB — pages manage their own state) ─────────────
   const updateTransaction = useCallback(async (id, updates) => {
+    // Snapshot the previous posted flag so we can detect a false → true flip
+    // and, when it happens on a bank-imported row, fire the cash-leg mirror.
+    // Bulk categorizations and inline edits used to bypass this entirely.
+    let prevPosted = null;
+    if (updates?.posted === true) {
+      const { data: cur } = await supabase.from('transactions').select('posted, bank_statement_id, category').eq('id', id).maybeSingle();
+      prevPosted = cur?.posted ?? null;
+    }
     const { data, error } = await supabase.from('transactions').update(updates).eq('id', id).select().single();
     if (error) throw error;
+    if (updates?.posted === true && prevPosted === false) {
+      // Fire and forget — the mirror is idempotent, and if it fails we don't
+      // want to roll back the primary posting.
+      ensureCashLeg(data).catch((err) => console.error('ensureCashLeg (updateTransaction) failed:', err));
+    }
     return data;
-  }, []);
+  }, [ensureCashLeg]);
 
   const deleteTransaction = useCallback(async (id) => {
     const { error } = await supabase.from('transactions').delete().eq('id', id);
@@ -169,39 +212,14 @@ export function DataProvider({ children }) {
 
   const postTransaction = useCallback(async (txnId, txnData) => {
     await updateTransaction(txnId, { posted: true });
-
-    // Phase 3 architectural fix: bank-imported transactions were historically
-    // single-entry — they hit a P&L category but never wrote the offsetting
-    // Cash & Bank leg, so the balance-sheet equation could never close. On
-    // post, mirror an offsetting Cash & Bank row so revenue/expense activity
-    // actually moves cash in the ledger. Idempotent via reference='CASH-LEG-<txnId>'.
-    const CASH_CATEGORY = 'Cash & Bank';
-    const isBankImport = !!txnData?.bank_statement_id;
-    const isCashAlready = txnData?.category === CASH_CATEGORY;
-    if (isBankImport && !isCashAlready && txnData?.amount && txnData?.type) {
-      const cashRef = `CASH-LEG-${txnId}`;
-      const { data: dup } = await supabase
-        .from('transactions').select('id').eq('reference', cashRef).limit(1);
-      if (!dup || dup.length === 0) {
-        await supabase.from('transactions').insert({
-          date: txnData.date,
-          description: `[Cash leg] ${txnData.description || ''}`,
-          supplier: txnData.supplier || txnData.description || '',
-          amount: txnData.amount,
-          type: txnData.type === 'debit' ? 'credit' : 'debit',
-          category: CASH_CATEGORY,
-          account_id: null,
-          reference: cashRef,
-          bank_statement_id: txnData.bank_statement_id,
-          posted: true,
-        });
-      }
-    }
-
+    // Delegate the mirror to the shared helper — same code path bulk imports
+    // and inline edits now flow through. Historically this fn had its own
+    // copy of the logic; now it's one implementation, one contract.
+    await ensureCashLeg({ id: txnId, ...(txnData || {}) });
     const supplier = txnData?.description || txnData?.supplier;
     if (supplier && txnData?.category) return learnSupplierCategory(supplier, txnData.category);
     return propagateCategories();
-  }, [updateTransaction, learnSupplierCategory, propagateCategories]);
+  }, [updateTransaction, ensureCashLeg, learnSupplierCategory, propagateCategories]);
 
   const unpostTransaction = useCallback(async (id) => {
     return updateTransaction(id, { posted: false });

@@ -1,0 +1,166 @@
+// Phase 2B / Tasks 3 + 4 — post 346 deposit settlement JEs + 2 financing JEs.
+//
+// Task 3: per source bank tx (228 SpotOn Merch Dep + 118 Deposit-Thank You)
+//   - Post JE via post_journal_entry RPC with:
+//       lines: DR Cash & Bank / CR Merchant Clearing
+//       p_txns: ONE mirror only (DR Cash & Bank) — the source bank tx will
+//               serve as the CR Merchant Clearing mirror after we link it.
+//   - Update source tx:
+//       posted=true, category='Merchant Clearing', journal_entry_id=<new_je_id>
+//   Result: 2 tx rows per JE contribute correctly to the ledger:
+//     source tx (CR Merchant Clearing) + new mirror (DR Cash & Bank).
+//     No double count on Merchant Clearing.
+//
+// Task 4: two one-off financing JEs:
+//   - $95,100 Spoton Funding      → DR Cash & Bank / CR Loan - Spoton
+//   - $18,523.32 Finwise/Upstart  → DR Cash & Bank / CR Due to Partners - J. Harris
+//
+// Uses shared fetchAll pagination. Reopens 2024 periods for INSERT, restores
+// their prior status on exit via try/finally.
+
+import { supabase, fetchAll } from './_dbClient.mjs';
+
+const DRY_RUN = process.argv.includes('--dry-run');
+console.log(DRY_RUN ? '[DRY RUN]' : '[LIVE]');
+
+const CATS = await fetchAll(supabase.from('categories').select('*'));
+const typeOf = new Map();
+for (const c of CATS) typeOf.set(c.name, (c.type||'').toLowerCase());
+if (!CATS.find(c => c.name === 'Merchant Clearing')) throw new Error('Merchant Clearing category missing');
+if (!CATS.find(c => c.name === 'Loan - Spoton')) throw new Error('Loan - Spoton category missing');
+if (!CATS.find(c => c.name === 'Due to Partners - J. Harris')) throw new Error('Due to Partners - J. Harris missing');
+
+// Load candidate 470 unposted credits
+const unposted = await fetchAll(
+  supabase.from('transactions').select('*')
+    .gte('date','2024-01-01').lte('date','2024-12-31')
+    .eq('voided', false).eq('posted', false)
+    .eq('type', 'credit')
+    .not('bank_statement_id', 'is', null)
+    .is('category', null)
+);
+console.log('candidate unposted credits:', unposted.length);
+
+const spotonDeposits = unposted.filter(t => /Spoton, Inc\. +Merch Dep/i.test(t.description||''));
+const tillDeposits   = unposted.filter(t => /Deposit\s*-\s*Thank You/i.test(t.description||''));
+const spotonFunding  = unposted.filter(t => /Spoton Funding/i.test(t.description||''));
+const finwiseFunding = unposted.filter(t => /Finwise|upstart Loan Funds/i.test(t.description||''));
+
+console.log('  SpotOn Merch Dep:', spotonDeposits.length);
+console.log('  Deposit - Thank You:', tillDeposits.length);
+console.log('  Spoton Funding:', spotonFunding.length);
+console.log('  Finwise/Upstart:', finwiseFunding.length);
+
+if (spotonDeposits.length !== 228) throw new Error('expected 228 SpotOn deposits');
+if (tillDeposits.length !== 118) throw new Error('expected 118 till deposits');
+if (spotonFunding.length !== 1) throw new Error('expected 1 SpotOn Funding row');
+if (finwiseFunding.length !== 1) throw new Error('expected 1 Finwise row');
+
+// Reopen 2024 periods
+const PERIODS = ['2024-01','2024-02','2024-03','2024-04','2024-05','2024-06','2024-07','2024-08','2024-09','2024-10','2024-11','2024-12'];
+const { data: pcRows } = await supabase.from('period_close').select('*').in('period', PERIODS);
+const closedSnapshot = (pcRows||[]).filter(r => r.status === 'closed');
+
+async function reopenPeriods() {
+  if (DRY_RUN) return;
+  console.log(`\nReopening ${closedSnapshot.length} 2024 periods`);
+  for (const r of closedSnapshot) {
+    const { error } = await supabase.from('period_close').update({ status: 'open' }).eq('id', r.id);
+    if (error) throw new Error('reopen ' + r.period + ': ' + error.message);
+  }
+}
+async function restorePeriods() {
+  if (DRY_RUN) return;
+  console.log(`\nRestoring ${closedSnapshot.length} 2024 period locks`);
+  for (const r of closedSnapshot) {
+    const { error } = await supabase.from('period_close').update({ status: 'closed' }).eq('id', r.id);
+    if (error) console.error('restore ' + r.period + ': ' + error.message);
+  }
+}
+
+// Reference allocation: next JE-NNN
+const jeAll = await fetchAll(supabase.from('journal_entries').select('reference').ilike('reference', 'JE-%'));
+const maxN = jeAll.map(e => (e.reference||'').match(/^JE-(\d+)$/)).filter(Boolean).map(m => parseInt(m[1],10)).reduce((a,b)=>Math.max(a,b), 0);
+let nextN = maxN;
+function nextRef() { nextN += 1; return `JE-${String(nextN).padStart(3,'0')}`; }
+
+await reopenPeriods();
+try {
+  const t3Rows = [...spotonDeposits, ...tillDeposits];
+  console.log(`\nTask 3: posting ${t3Rows.length} settlement JEs`);
+
+  let count = 0, sumDep = 0;
+  for (const src of t3Rows) {
+    const amount = Math.abs(+src.amount||0);
+    if (amount <= 0) continue;
+    const ref = nextRef();
+    const entry = {
+      reference: ref,
+      date: src.date,
+      description: `Merchant Clearing settlement (source tx ${src.id.slice(0,8)})`,
+      memo: `Auto-generated by Phase 2B Task 3 · settles bank deposit against Merchant Clearing. Source tx: ${src.id}`,
+      status: 'posted',
+      entry_type: 'simple',
+    };
+    const lines = [
+      { description: 'Cash & Bank',       category: 'Cash & Bank',       debit_amount: amount, credit_amount: 0 },
+      { description: 'Merchant Clearing', category: 'Merchant Clearing', debit_amount: 0, credit_amount: amount },
+    ];
+    // Only ONE mirror — the DR Cash & Bank leg. The source tx will serve
+    // as the CR Merchant Clearing mirror once we link it.
+    const txns = [
+      { date: src.date, description: `[Cash leg] ${src.description || 'Merchant Clearing settlement'}`,
+        supplier: 'SpotOn / Deposit', amount, type: 'debit', category: 'Cash & Bank', posted: true },
+    ];
+    if (DRY_RUN) { count++; sumDep += amount; continue; }
+    const { data, error } = await supabase.rpc('post_journal_entry', { p_entry: entry, p_lines: lines, p_txns: txns });
+    if (error) throw new Error(`JE post ${ref}: ${error.message}`);
+    const jeId = data.entry_id;
+    // Update source tx to link it and categorize
+    const { error: e2 } = await supabase.from('transactions').update({
+      posted: true, category: 'Merchant Clearing', journal_entry_id: jeId,
+    }).eq('id', src.id);
+    if (e2) throw new Error(`source tx update ${src.id}: ${e2.message}`);
+    count++; sumDep += amount;
+    if (count % 50 === 0) console.log(`  progressed ${count}/${t3Rows.length} — running sum $${sumDep.toFixed(2)}`);
+  }
+  console.log(`Task 3 complete: ${count} JEs posted, total $${sumDep.toFixed(2)}`);
+
+  // Task 4 — two financing JEs
+  console.log(`\nTask 4: posting 2 financing JEs`);
+  for (const [src, crCategory, note] of [
+    [spotonFunding[0],  'Loan - Spoton',                  'SpotOn merchant-cash-advance draw'],
+    [finwiseFunding[0], 'Due to Partners - J. Harris',    'Finwise/Upstart Loan Funds — J. Harris'],
+  ]) {
+    const amount = Math.abs(+src.amount||0);
+    const ref = nextRef();
+    const entry = {
+      reference: ref,
+      date: src.date,
+      description: `Financing inflow: ${note}`,
+      memo: `Auto-generated by Phase 2B Task 4 · books bank deposit against ${crCategory}. Source tx: ${src.id}`,
+      status: 'posted',
+      entry_type: 'simple',
+    };
+    const lines = [
+      { description: 'Cash & Bank', category: 'Cash & Bank', debit_amount: amount, credit_amount: 0 },
+      { description: crCategory,    category: crCategory,    debit_amount: 0, credit_amount: amount },
+    ];
+    const txns = [
+      { date: src.date, description: `[Cash leg] ${src.description}`, supplier: note, amount, type: 'debit', category: 'Cash & Bank', posted: true },
+    ];
+    if (DRY_RUN) { console.log(`  would post ${ref} ${src.date} $${amount}`); continue; }
+    const { data, error } = await supabase.rpc('post_journal_entry', { p_entry: entry, p_lines: lines, p_txns: txns });
+    if (error) throw new Error(`JE post ${ref}: ${error.message}`);
+    const jeId = data.entry_id;
+    const { error: e2 } = await supabase.from('transactions').update({
+      posted: true, category: crCategory, journal_entry_id: jeId,
+    }).eq('id', src.id);
+    if (e2) throw new Error(`source tx update ${src.id}: ${e2.message}`);
+    console.log(`  ${ref}: ${crCategory} +$${amount.toFixed(2)}`);
+  }
+} finally {
+  await restorePeriods();
+}
+
+console.log('\ndone.');
