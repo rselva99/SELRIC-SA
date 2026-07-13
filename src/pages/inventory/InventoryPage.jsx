@@ -74,7 +74,10 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
     const to   = all ? 999 : from + (showAll ? PAGE_SIZE - 1 : 4);
     const { data, count } = await supabase
       .from('inventory_logs').select('*', { count: 'exact' })
-      .eq('product_id', p.id).order('created_at', { ascending: false }).range(from, to);
+      .eq('product_id', p.id)
+      .order('created_at', { ascending: false })
+      .order('id',         { ascending: true })  // stable tiebreaker
+      .range(from, to);
     setLogs(data || []);
     setTotal(count || 0);
     setLogsLoading(false);
@@ -198,7 +201,9 @@ function MovementHistoryTab({ products }) {
   useEffect(() => {
     const from = page * PAGE_SIZE;
     supabase.from('inventory_logs').select('*', { count: 'exact' })
-      .order('created_at', { ascending: false }).range(from, from + PAGE_SIZE - 1)
+      .order('created_at', { ascending: false })
+      .order('id',         { ascending: true })  // stable tiebreaker
+      .range(from, from + PAGE_SIZE - 1)
       .then(({ data, count }) => { setLogs(data || []); setTotal(count || 0); });
   }, [page]);
 

@@ -273,7 +273,9 @@ export default function BookkeepingPage() {
       const allMatches = await fetchAllPages((f, t) => {
         let q = supabase.from('transactions').select('*')
           .eq('posted', false)
-          .order('date', { ascending: false }).range(f, t);
+          .order('date', { ascending: false })
+          .order('id',   { ascending: true })  // stable tiebreaker
+          .range(f, t);
         if (search) q = q.ilike('description', `%${search}%`);
         if (filterCategory) q = q.eq('category', filterCategory);
         return q;
@@ -309,6 +311,7 @@ export default function BookkeepingPage() {
         .from('bank_statements').select('*', { count: 'exact' })
         .order('upload_date', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
+        .order('id',         { ascending: true })  // stable tiebreaker
         .range(from, from + STMTS_PER_PAGE - 1);
       setStmts(stmtData || []);
       setStmtsTotal(stmtCount || 0);
@@ -320,7 +323,9 @@ export default function BookkeepingPage() {
         stmtTxnData = await fetchAllPages((f, t) =>
           supabase.from('transactions').select('*')
             .eq('posted', false).in('bank_statement_id', ids)
-            .order('date', { ascending: false }).range(f, t)
+            .order('date', { ascending: false })
+            .order('id',   { ascending: true })  // stable tiebreaker
+            .range(f, t)
         );
         const grouped = {};
         stmtTxnData.forEach(t => { (grouped[t.bank_statement_id] = grouped[t.bank_statement_id] || []).push(t); });
@@ -332,7 +337,9 @@ export default function BookkeepingPage() {
       manData = await fetchAllPages((f, t) =>
         supabase.from('transactions').select('*')
           .eq('posted', false).is('bank_statement_id', null)
-          .order('date', { ascending: false }).range(f, t)
+          .order('date', { ascending: false })
+          .order('id',   { ascending: true })  // stable tiebreaker
+          .range(f, t)
       );
       setManualTxns(manData);
     }
@@ -362,7 +369,10 @@ export default function BookkeepingPage() {
     setPostedLoading(true);
     const from = postedPage * POSTED_PAGE_SIZE;
     const { data, count } = await supabase.from('transactions').select('*', { count: 'exact' })
-      .eq('posted', true).eq('voided', false).order('date', { ascending: false }).range(from, from + POSTED_PAGE_SIZE - 1);
+      .eq('posted', true).eq('voided', false)
+      .order('date', { ascending: false })
+      .order('id',   { ascending: true })  // stable tiebreaker
+      .range(from, from + POSTED_PAGE_SIZE - 1);
     setPostedTxns(data || []);
     setPostedTotal(count || 0);
     // Load note counts for this page of posted transactions

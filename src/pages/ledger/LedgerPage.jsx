@@ -143,11 +143,19 @@ export default function LedgerPage() {
   }, [dateBounds, selectedAccountId, selectedCategory, txnType, minAmount, maxAmount, search]);
 
   // Pull every matching row in batches of 1000. Returns the merged set.
+  //
+  // STABLE PAGINATION: .order('date') alone is non-deterministic across
+  // .range() calls when many rows share the same date. .order('id') is
+  // appended as the unique tiebreaker so pages don't silently overlap or
+  // skip rows. See src/lib/fetchAll.js header.
   const fetchAllFiltered = useCallback(async (columns) => {
     const out = [];
     let from = 0;
     while (true) {
-      const { data, error } = await buildFilteredQuery(columns).order('date', { ascending: true }).range(from, from + FETCH_BATCH - 1);
+      const { data, error } = await buildFilteredQuery(columns)
+        .order('date', { ascending: true })
+        .order('id',   { ascending: true })
+        .range(from, from + FETCH_BATCH - 1);
       if (error) throw error;
       const rows = data || [];
       out.push(...rows);
@@ -164,8 +172,11 @@ export default function LedgerPage() {
     const myId = ++loadIdRef.current;
     setLoading(true);
     try {
+      // Stable pagination: .order('id') is the unique tiebreaker for the
+      // non-unique .order('date'). Same rationale as fetchAllFiltered above.
       const pageQ = buildFilteredQuery('*', { count: 'exact' })
         .order('date', { ascending: true })
+        .order('id',   { ascending: true })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       const [pageRes, summary] = await Promise.all([

@@ -51,6 +51,12 @@ export default function ReportsPage() {
     // so the Full-Year scope (which can exceed the cap) returns the complete
     // set. Monthly scopes are usually well under 1000 but the same loop is
     // harmless and keeps both branches consistent.
+    //
+    // STABLE-PAGINATION TIEBREAKER. .order('date') alone is non-deterministic
+    // across .range() calls when many rows share the same date — rows near a
+    // page boundary can silently duplicate or drop. .order('id') is appended
+    // as the unique tiebreaker. See src/lib/fetchAll.js header and
+    // ~/Documents/SELRIC-ALARM-NI-DRIFT.md (Jul 12 2026) for the incident.
     (async () => {
       const out = [];
       let from = 0;
@@ -60,6 +66,7 @@ export default function ReportsPage() {
           .select('*')
           .gte('date', start).lte('date', end).eq('voided', false)
           .order('date', { ascending: true })
+          .order('id',   { ascending: true })
           .range(from, from + FETCH_BATCH - 1);
         if (error || !data) break;
         out.push(...data);
