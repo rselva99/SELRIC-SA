@@ -1229,6 +1229,7 @@ function renderCoverPage(doc, { scope, year, periodLabel }) {
   let y = 160;
   doc.text(safeText('• Profit & Loss Statement'), PAGE_MARGIN + 6, y); y += 8;
   if (scope === 'year') {
+    doc.text(safeText('• Financing Schedule — Jaris / SpotOn Capital'), PAGE_MARGIN + 6, y); y += 8;
     doc.text(safeText('• Balance Sheet (Book BS — book_bs_lines)'), PAGE_MARGIN + 6, y); y += 8;
   }
   doc.text(safeText('• Trial Balance'), PAGE_MARGIN + 6, y); y += 8;
@@ -1265,13 +1266,20 @@ export function generateAuditorPackagePdf(input, opts = {}) {
   doc.addPage();
   generatePnLPdf({ transactions, categories, period: periodLabel }, undefined, { doc });
 
-  // 3. Balance Sheet (year scope only — Book BS Builder is year-grained)
+  // 3. Financing Schedule (year scope only; Jaris / SpotOn Capital analysis is
+  //    an annualized reconciliation and the disclosures reference FY2024 fees).
+  if (scope === 'year') {
+    doc.addPage();
+    renderFinancingSchedulePage(doc, { periodLabel });
+  }
+
+  // 4. Balance Sheet (year scope only — Book BS Builder is year-grained)
   if (scope === 'year' && bookBSSnapshot) {
     doc.addPage();
     generateBookBalanceSheetPdf({ year, snapshot: bookBSSnapshot, locked: null }, String(year), { doc });
   }
 
-  // 4. Trial Balance (posted-only basis per opts.includeUnposted = false)
+  // 5. Trial Balance (posted-only basis per opts.includeUnposted = false)
   doc.addPage();
   generateTrialBalancePdf(
     { transactions, categories, period: periodLabel },
@@ -1282,4 +1290,155 @@ export function generateAuditorPackagePdf(input, opts = {}) {
   // Single footer pass — continuous page numbers across every section.
   addFootersToAllPages(doc);
   return doc;
+}
+
+// ── Financing Schedule — Jaris / SpotOn Capital ──────────────────────────────
+//
+// SELF-CONTAINED page for the auditor package. Every fact the auditor needs to
+// reproduce every number is on this page — the source, the three loans, the
+// recognition method, the arithmetic, the year-by-year total, and every
+// disclosure verbatim per contract 2026-07-14 (see ~/Documents/SELRIC-JARIS.md
+// for the underlying statement analysis).
+function renderFinancingSchedulePage(doc, { periodLabel }) {
+  addHeader(doc, 'Financing Schedule — Jaris / SpotOn Capital', periodLabel);
+  let y = 44;
+
+  function h2(text) {
+    y = ensureSpace(doc, y, 12);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...BRAND_DARK);
+    doc.text(safeText(text), PAGE_MARGIN, y);
+    y += 6;
+  }
+  function body(text, opts = {}) {
+    const size    = opts.size || 9;
+    const italic  = opts.italic || false;
+    const width   = USABLE_WIDTH;
+    doc.setFontSize(size);
+    doc.setFont('helvetica', italic ? 'italic' : 'normal');
+    doc.setTextColor(...TEXT_DARK);
+    const lines = doc.splitTextToSize(safeText(text), width);
+    for (const line of lines) {
+      y = ensureSpace(doc, y, size * 0.55);
+      doc.text(line, PAGE_MARGIN, y);
+      y += size * 0.55;
+    }
+    y += 1.5;
+  }
+
+  // ── A. SOURCE ────────────────────────────────────────────────────────────
+  h2('A. Source documents');
+  body(
+    'Servicer: Jaris Lending LLC. Lender of record: First Internet Bank of Indiana. ' +
+    'Marketed to the borrower as "SpotOn Capital." Merchant ID: SO / KV7FR11. ' +
+    'Borrower on the statements: John Harris (member).'
+  );
+  body(
+    'Analysis is based on 16 monthly statements spanning April 2023 through January 2025. ' +
+    'Every statement reconciles to the penny — the roll-forward "Check" column reads $0.00 on every one.'
+  );
+
+  // ── B. THE THREE LOANS ────────────────────────────────────────────────────
+  h2('B. The three sequential loans (each refinanced into the next)');
+  y = ensureSpace(doc, y, 40);
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: [['Loan', 'Funding date', 'Principal', 'Fee (16%)', 'Total obligation', 'Status']],
+    body: [
+      ['L1', '~Apr 2023',   '$45,000.00',  '$7,200.00',  '$52,200.00',  'PAID OFF 12/04/2023 (principal/fee INFERRED from $52,200 ÷ 1.16)'],
+      ['L2',  '12/08/2023',  '$91,800.00',  '$14,688.00', '$106,488.00', 'REFINANCED into L3 on 06/27/2024'],
+      ['L3',  '06/27/2024',  '$95,100.00',  '$15,216.00', '$110,316.00', 'OUTSTANDING at 12/31/2024'],
+    ],
+    columnStyles: {
+      0: { cellWidth: 12 },
+      1: { cellWidth: 22 },
+      2: { cellWidth: 24, halign: 'right' },
+      3: { cellWidth: 22, halign: 'right' },
+      4: { cellWidth: 30, halign: 'right' },
+      5: { cellWidth: 72 },
+    },
+  });
+  y = (doc.lastAutoTable?.finalY ?? y) + 4;
+  body(
+    'Fee is a FLAT 16.00% of principal on each loan. It is NOT an APR. It is a flat origination charge assessed at funding and embedded in every repayment dollar.',
+    { italic: true }
+  );
+
+  // ── C. THE METHOD ─────────────────────────────────────────────────────────
+  h2('C. Recognition method (proportional / effective-interest)');
+  body(
+    'Withholdings are debt service, not expense. The origination fee is the sole P&L item ' +
+    'and is recognized proportionally as the loan is repaid, at 13.79% of each dollar repaid ' +
+    '(fee / total obligation). The fee is a flat 16% charge, not an APR, and is not time-accrued. ' +
+    'The ratio is identical on all three loans: $7,200 / $52,200 = $14,688 / $106,488 = $15,216 / $110,316 = 13.79%.'
+  );
+  body(
+    'Rationale for the proportional method: prepayment yields no discount (proven on L1 — the 12/04/2023 ' +
+    'payoff of $4,822.95 exactly equalled the remaining balance). The charge is embedded in every ' +
+    'dollar repaid, so it is earned as repaid. Daily withholdings are debt service, not expense — ' +
+    'they hit the balance sheet (reducing loan payable) and financing cash flow. Expensing them ' +
+    'directly would overstate 2024 costs by roughly $150,000.',
+    { size: 8, italic: true }
+  );
+
+  // ── D. THE CALCULATION ────────────────────────────────────────────────────
+  h2('D. FY2024 finance charge — the arithmetic');
+  y = ensureSpace(doc, y, 30);
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: [['Loan', '2024 withholdings (repaid)', 'Rate', '2024 finance charge']],
+    body: [
+      ['L3', '$74,676.27', '× 13.79%', '$10,300.18'],
+      ['L2', '$1,751.70',  '× 13.79%', '$241.61'],
+      [{ content: 'FY2024 INTEREST EXPENSE (documented)', styles: { fontStyle: 'bold' } },
+       { content: '',                                      styles: { fontStyle: 'bold' } },
+       { content: '',                                      styles: { fontStyle: 'bold' } },
+       { content: '$10,541.79',                            styles: { fontStyle: 'bold' } }],
+    ],
+    columnStyles: {
+      0: { cellWidth: 60 },
+      1: { cellWidth: 50, halign: 'right' },
+      2: { cellWidth: 22, halign: 'right' },
+      3: { cellWidth: 50, halign: 'right' },
+    },
+  });
+  y = (doc.lastAutoTable?.finalY ?? y) + 4;
+  body(
+    'Booked as JE-JARIS-2024 (dated 2024-12-31): DR Interest Expense $10,541.79 / CR Loan - Spoton $10,541.79. ' +
+    'The fee accretes the liability as it is earned; no cash moves. Supersedes JE-444 and JE-445 (both voided).'
+  );
+
+  // ── E. YEAR-BY-YEAR ───────────────────────────────────────────────────────
+  h2('E. Year-by-year finance charge (documented method)');
+  y = ensureSpace(doc, y, 24);
+  doc.autoTable({
+    ...TABLE_BASE,
+    startY: y,
+    head: [['Year', 'Documented finance charge', 'Notes']],
+    body: [
+      ['2023',  '$7,728.37',  'L1 $6,534.77 + L2 $1,193.60. NOT recorded on the ledger. Prior-year issue — CPA to determine treatment.'],
+      ['2024', '$10,541.79',  'L3 $10,300.18 + L2 $241.61. Booked via JE-JARIS-2024 this pass.'],
+      ['2025',  '$1,289.57',  'L3 remainder through Jan 2025 (subsequent-year charge).'],
+    ],
+    columnStyles: {
+      0: { cellWidth: 18 },
+      1: { cellWidth: 36, halign: 'right' },
+      2: { cellWidth: 128 },
+    },
+  });
+  y = (doc.lastAutoTable?.finalY ?? y) + 4;
+
+  // ── F. DISCLOSURES ────────────────────────────────────────────────────────
+  h2('F. Required disclosures (verbatim)');
+  const DISCLOSURES = [
+    '1. "L2 statements for Feb–Jul 2024 are missing. If L2 was retired during 2024, an additional $13,252.79 of finance charge belongs in FY2024, bringing the total to $23,794.58. Not recorded — awaiting source documents."',
+    '2. "L1 principal ($45,000) and fee ($7,200) are INFERRED from the $52,200 opening balance divided by the 1.16 factor. Not documented."',
+    '3. "The borrower of record on the Jaris statements is John Harris, not 3700 Laclede Ave LLC. L1\'s statement address is residential (Chesterfield, MO). L2 and L3 are at 3700 Laclede Ave. CPA to determine whether this debt is an obligation of the LLC or of the member."',
+    '4. "Effective cost: 16% flat is NOT 16% APR. On L1 — the only complete lifecycle — $45,000 was borrowed and $52,200 repaid over 220 days. Average outstanding principal was $20,819 (46% of the amount borrowed). Nominal APR 47.3%; effective annual rate 60.4%, by IRR on the 44 actual daily cash flows."',
+    '5. "Jaris L2 showed $96,082.69 outstanding at 01/06/2024. The 2023 tax reconciliation records Loan Payable - Spoton at $2,302.67. Apparent understatement of approximately $94,000. Referred to CPA."',
+  ];
+  for (const d of DISCLOSURES) body(d, { size: 8 });
 }
