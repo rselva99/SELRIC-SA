@@ -96,8 +96,21 @@ CREATE TRIGGER trg_transactions_set_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.transactions_set_updated_at();
 
--- 4. Helper index on the "after 2026-07-13" partial — surfaces changed rows
---    without indexing the historical set (all seeded at created_at).
+-- 4. Helper index on updated_at.
+--
+--    Original draft used a partial index
+--       WHERE updated_at > '2026-07-13'::timestamptz
+--    Postgres requires partial-index predicates to be IMMUTABLE. The cast
+--    text -> timestamptz is marked STABLE (not IMMUTABLE) — its result
+--    depends on the session TimeZone setting when the string has no
+--    explicit offset. `'2026-07-13'::timestamptz` has no offset and is
+--    therefore STABLE, which typically triggers
+--       ERROR: functions in index predicate must be marked IMMUTABLE
+--    We have no arbitrary-SQL RPC (`exec_sql` etc.) or direct DB
+--    connection available from the migration harness in this repo, so
+--    the predicate could not be tested live. Rather than assume, we
+--    take the user's fallback: drop the WHERE clause and index the
+--    whole column. The index doubles as an ORDER BY helper for the
+--    audit-timeline query the app uses to display recent edits.
 CREATE INDEX IF NOT EXISTS transactions_updated_at_idx
-  ON public.transactions (updated_at)
-  WHERE updated_at > '2026-07-13'::timestamptz;
+  ON public.transactions (updated_at);

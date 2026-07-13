@@ -17,9 +17,12 @@
 // If a proper rollback harness is desired, run the equivalent BEGIN/ROLLBACK
 // SQL in the Supabase SQL editor — the assertions here map 1-to-1 to it.
 //
-// Runs on: LIVE database. Requires the two rewritten migrations to be
-// applied first. If the trigger doesn't exist yet, the trigger-behaviour
-// tests correctly FAIL with a clear error and no test rows are written.
+// LIVE-DB REQUIREMENT: This script DOES NOT install the triggers itself.
+// It requires BOTH migrations already applied to the DB:
+//   migrations/2026-07-13-cash-leg-guard.sql          (write + delete triggers)
+//   migrations/2026-07-13-transactions-updated-at.sql (updated_at column + trigger)
+// If either is missing, the corresponding tests SKIP with a clear message.
+// Apply the migrations first, then rerun this script.
 
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -255,6 +258,192 @@ try {
               const { data: legsPost } = await supabase.from('transactions').select('*').eq('reference', `CASH-LEG-${src.id}`);
               if ((legsPost?.length || 0) === 1 && legsPost[0].voided === true) pass('(e) voiding a source also voids its cash leg (no orphan)');
               else fail('(e) post-void', `expected 1 voided mirror, got ${legsPost?.length} with voided=${legsPost?.[0]?.voided}`);
+            }
+          }
+        }
+      }
+
+      // (f) Voiding a Task 5-style CASH-LEG-2024 source voids exactly ONE
+      //     matching leg AND the trial-balance delta at that key is $0.00.
+      //     Uses a distinctive amount (–4242424.24) so no real 2024 row
+      //     matches the key — the mirror voided is guaranteed to be ours.
+      {
+        const key = { date: '2024-01-15', amount: -4242424.24 };
+        const { data: fakeLeg, error: le } = await supabase.from('transactions').insert({
+          date: key.date,
+          description: `[Cash leg] ${RUN_MARKER} (f) synthetic Task 5 mirror`,
+          supplier: RUN_MARKER,
+          amount: key.amount,
+          type: 'credit',
+          category: 'Cash & Bank',
+          reference: 'CASH-LEG-2024',
+          bank_statement_id: TEST_BS_ID,
+          posted: true,
+          voided: false,
+        }).select().single();
+        if (le) { fail('(f) legacy-leg setup', le.message); }
+        else {
+          const { data: src, error } = await supabase.from('transactions').insert({
+            date: key.date,
+            description: `${RUN_MARKER} (f) Task-5 source to void`,
+            supplier: RUN_MARKER,
+            amount: key.amount,
+            type: 'debit',
+            category: 'Food Expense',
+            bank_statement_id: TEST_BS_ID,
+            posted: true,
+            voided: false,
+          }).select().single();
+          if (error) { fail('(f) source insert', error.message); }
+          else {
+            await new Promise(r => setTimeout(r, 200));
+
+            // Sanity: no per-row mirror should have been created (Case A
+            // legacy-count check should have short-circuited on the fake leg).
+            const { data: perRowExtra } = await supabase.from('transactions').select('id').eq('reference', `CASH-LEG-${src.id}`);
+            if ((perRowExtra?.length || 0) !== 0) {
+              fail('(f) pre-void invariant', `expected 0 per-row mirrors (Task 5 already covered key), got ${perRowExtra.length}`);
+            }
+
+            // Snapshot: active CASH-LEG-2024 mirrors at this key.
+            const legsAtKey = async () => {
+              const { data } = await supabase.from('transactions')
+                .select('id, voided')
+                .eq('reference', 'CASH-LEG-2024')
+                .eq('bank_statement_id', TEST_BS_ID)
+                .eq('date', key.date)
+                .eq('amount', key.amount);
+              return (data || []);
+            };
+            // Trial-balance at this key = Σ debits − Σ credits over active rows.
+            const tbAtKey = async () => {
+              const { data } = await supabase.from('transactions')
+                .select('amount, type, voided')
+                .eq('bank_statement_id', TEST_BS_ID)
+                .eq('date', key.date)
+                .eq('amount', key.amount);
+              return (data || []).reduce((acc, r) => {
+                if (r.voided) return acc;
+                return r.type === 'debit'
+                  ? acc + Number(r.amount)
+                  : acc - Number(r.amount);
+              }, 0);
+            };
+
+            const legsBefore  = await legsAtKey();
+            const activeBefore = legsBefore.filter(r => !r.voided).length;
+            const tbBefore    = await tbAtKey();
+
+            // Void the source. Should trigger Case B → void ONE CASH-LEG-2024.
+            const { error: uErr } = await supabase.from('transactions').update({ voided: true }).eq('id', src.id);
+            if (uErr) fail('(f) void', 'update failed: ' + uErr.message);
+            else {
+              await new Promise(r => setTimeout(r, 200));
+
+              const legsAfter   = await legsAtKey();
+              const activeAfter = legsAfter.filter(r => !r.voided).length;
+              const tbAfter     = await tbAtKey();
+
+              const mirrorsVoided = activeBefore - activeAfter;
+              const tbDelta       = tbAfter - tbBefore;
+
+              if (mirrorsVoided === 1 && Math.abs(tbDelta) < 0.005) {
+                pass(`(f) voiding a CASH-LEG-2024 source voids exactly ONE mirror; trial-balance delta = $0.00 (before=${tbBefore.toFixed(2)}, after=${tbAfter.toFixed(2)})`);
+              } else {
+                fail('(f)', `expected 1 mirror voided & TB delta=0, got mirrors_voided=${mirrorsVoided}, TB delta=${tbDelta.toFixed(2)}`);
+              }
+            }
+          }
+        }
+      }
+
+      // (g) Deleting a source row does not orphan its mirror. Covers both
+      //     the per-row 'CASH-LEG-<id>' form and the Task 5 'CASH-LEG-2024'
+      //     form. Each sub-test verifies the mirror is DELETED (not just
+      //     voided) after the source is deleted.
+      {
+        // (g1) per-row form
+        const { data: src, error } = await supabase.from('transactions').insert({
+          date: '2024-01-15',
+          description: `${RUN_MARKER} (g1) source to delete (per-row)`,
+          supplier: RUN_MARKER,
+          amount: -19.99,
+          type: 'debit',
+          category: 'Food Expense',
+          bank_statement_id: TEST_BS_ID,
+          posted: true,
+          voided: false,
+        }).select().single();
+        if (error) { fail('(g1) source insert', error.message); }
+        else {
+          await new Promise(r => setTimeout(r, 200));
+          const legRef = `CASH-LEG-${src.id}`;
+          const { data: legPre } = await supabase.from('transactions').select('id').eq('reference', legRef);
+          if ((legPre?.length || 0) !== 1) {
+            fail('(g1) pre-delete', `expected 1 mirror before delete, got ${legPre?.length}`);
+          } else {
+            const { error: dErr } = await supabase.from('transactions').delete().eq('id', src.id);
+            if (dErr) fail('(g1) delete', 'delete failed: ' + dErr.message);
+            else {
+              await new Promise(r => setTimeout(r, 200));
+              const { data: legPost } = await supabase.from('transactions').select('id').eq('reference', legRef);
+              if ((legPost?.length || 0) === 0) pass('(g1) deleting a source deletes its per-row mirror (no orphan)');
+              else fail('(g1)', `expected mirror deleted, got ${legPost.length} still present`);
+            }
+          }
+        }
+
+        // (g2) Task 5 CASH-LEG-2024 form
+        const key = { date: '2024-01-15', amount: -8765432.10 };
+        const { data: fakeLeg, error: le } = await supabase.from('transactions').insert({
+          date: key.date,
+          description: `[Cash leg] ${RUN_MARKER} (g2) synthetic Task 5 mirror`,
+          supplier: RUN_MARKER,
+          amount: key.amount,
+          type: 'credit',
+          category: 'Cash & Bank',
+          reference: 'CASH-LEG-2024',
+          bank_statement_id: TEST_BS_ID,
+          posted: true,
+          voided: false,
+        }).select().single();
+        if (le) { fail('(g2) legacy-leg setup', le.message); }
+        else {
+          const { data: src2, error: se } = await supabase.from('transactions').insert({
+            date: key.date,
+            description: `${RUN_MARKER} (g2) Task-5 source to delete`,
+            supplier: RUN_MARKER,
+            amount: key.amount,
+            type: 'debit',
+            category: 'Food Expense',
+            bank_statement_id: TEST_BS_ID,
+            posted: true,
+            voided: false,
+          }).select().single();
+          if (se) { fail('(g2) source insert', se.message); }
+          else {
+            await new Promise(r => setTimeout(r, 200));
+            const legsAtKey = async () => {
+              const { data } = await supabase.from('transactions')
+                .select('id')
+                .eq('reference', 'CASH-LEG-2024')
+                .eq('bank_statement_id', TEST_BS_ID)
+                .eq('date', key.date)
+                .eq('amount', key.amount);
+              return (data || []).length;
+            };
+            const before = await legsAtKey();
+            if (before !== 1) {
+              fail('(g2) pre-delete invariant', `expected 1 CASH-LEG-2024 mirror at key, got ${before}`);
+            } else {
+              const { error: dErr } = await supabase.from('transactions').delete().eq('id', src2.id);
+              if (dErr) fail('(g2) delete', 'delete failed: ' + dErr.message);
+              else {
+                await new Promise(r => setTimeout(r, 200));
+                const after = await legsAtKey();
+                if (after === 0) pass('(g2) deleting a Task-5 source deletes its CASH-LEG-2024 mirror (no orphan)');
+                else fail('(g2)', `expected 0 mirrors after delete, got ${after}`);
+              }
             }
           }
         }
