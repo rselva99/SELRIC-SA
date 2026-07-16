@@ -43,6 +43,7 @@ const STEP_LABELS = {
   review_balances:   'Review Account Balances',
   generate_pl:       'Generate P&L',
   generate_bs:       'Generate Balance Sheet',
+  classify_checks:   'Classify Paid Checks',
   close:             'Close Period',
 };
 
@@ -169,8 +170,29 @@ export default function AccountantPage() {
     setChecklist(null);
     const { start, end } = periodRange(selectedPeriod);
 
+    // Cash Management gate: unclassified checks whose clear_date falls in this
+    // period block the close. Undated checks are surfaced but do NOT block —
+    // they can't be assigned to a specific period until dated.
+    // Query is defensive: if the checks table isn't installed yet, treat as 0.
+    async function fetchUnclassifiedChecksInPeriod() {
+      try {
+        const { count } = await supabase.from('checks')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'unclassified')
+          .gte('clear_date', start).lte('clear_date', end);
+        const { count: undated } = await supabase.from('checks')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'unclassified')
+          .is('clear_date', null);
+        return { inPeriod: count || 0, undated: undated || 0 };
+      } catch {
+        return { inPeriod: 0, undated: 0 };
+      }
+    }
+
     const [
       stmtRes, uncatRes, unpostedRes, manualRes, unrecRes, plRes, bsRes, closeRes,
+      unclChecks,
     ] = await Promise.all([
       // Pull the full rows for this period so we can show "imported / matched /
       // confirmed manually" on the import step rather than just a count.
@@ -206,6 +228,8 @@ export default function AccountantPage() {
         .eq('period', selectedPeriod).eq('report_type', 'balance_sheet'),
 
       supabase.from('period_close').select('status, snapshot, snapshot_at, closed_at').eq('period', selectedPeriod).maybeSingle(),
+
+      fetchUnclassifiedChecksInPeriod(),
     ]);
 
     const manualByKey = {};
@@ -340,6 +364,22 @@ export default function AccountantPage() {
         actionLabel: hasSnapshot ? 'View close snapshot' : (bsCount > 0 ? 'Regenerate' : 'Generate Balance Sheet'),
         actionType:  hasSnapshot ? 'view_snapshot' : 'generate_report',
         actionTarget: 'balance_sheet',
+      },
+      // Cash Management gate — unclassified checks whose clear_date falls
+      // in this period block close. Undated checks are surfaced separately.
+      {
+        key:    'classify_checks',
+        status: unclChecks.inPeriod === 0 ? 'done' : 'pending',
+        detail: unclChecks.inPeriod === 0
+          ? (unclChecks.undated > 0
+              ? `All in-period checks classified · ${unclChecks.undated} undated overall (informational)`
+              : 'All checks in this period classified')
+          : `${unclChecks.inPeriod} unclassified check${unclChecks.inPeriod===1?'':'s'} in this period` +
+            (unclChecks.undated > 0 ? ` · ${unclChecks.undated} undated overall` : ''),
+        actionLabel: 'Go to Cash Management',
+        actionType:  'navigate',
+        actionTarget: '/cash-management',
+        actionDisabled: unclChecks.inPeriod === 0,
       },
       {
         key:    'close',

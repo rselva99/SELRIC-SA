@@ -20,6 +20,7 @@ import {
   BookText,
   Calculator,
   Wrench,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -27,6 +28,7 @@ const adminNav = [
   { label: 'Accountant',        icon: Calculator,      path: '/accountant' },
   { label: 'Dashboard',         icon: LayoutDashboard, path: '/' },
   { label: 'Bookkeeping',       icon: BookOpen,        path: '/bookkeeping' },
+  { label: 'Cash Management',   icon: Receipt,     path: '/cash-management' },
   { label: 'General Ledger',    icon: Landmark,        path: '/ledger' },
   { label: 'Journal',           icon: BookText,        path: '/journal' },
   { label: 'Chart of Accounts', icon: FileText,        path: '/accounts' },

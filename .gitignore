@@ -34,3 +34,6 @@ docs/
 # One-off recovery artifacts (raw extractor output for the Step 1 re-run)
 # contain full bank statement contents. Keep them local, never commit.
 .local/
+
+scripts/
+docs/

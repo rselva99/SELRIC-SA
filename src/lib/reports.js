@@ -74,12 +74,54 @@ const SUMMARY_BAND_H  = 18;
 
 // jsPDF.text throws "Invalid arguments passed to jsPDF.text" when handed
 // null, undefined, NaN, or a raw number. Coerce here at the boundary.
+//
+// Encoding note: jsPDF's default helvetica font is WinAnsi (CP-1252) only —
+// characters outside that page (em-dash "—" U+2014, en-dash "–" U+2013,
+// curly quotes "" '' U+2018-201D, minus sign "−" U+2212, checkmarks
+// U+2713/U+2717, bullets "•" U+2022) render as garbled multi-glyph
+// sequences with visible letter-spacing artifacts. Fix: sanitize to ASCII
+// equivalents at the boundary. If we ever add a Unicode font (Roboto etc.)
+// via addFileToVFS + addFont, this substitution can be removed.
+const PDF_UNICODE_MAP = {
+  '—': '-',   // em-dash
+  '–': '-',   // en-dash
+  '−': '-',   // minus sign
+  '•': '*',   // bullet
+  '‘': "'",   // curly single quote left
+  '’': "'",   // curly single quote right
+  '“': '"',   // curly double quote left
+  '”': '"',   // curly double quote right
+  '…': '...', // ellipsis
+  ' ': ' ',   // non-breaking space
+  '✓': 'OK',  // check mark
+  '✗': 'X',   // ballot X
+  '→': '->',  // right arrow
+  '←': '<-',  // left arrow
+  '≤': '<=',  // less-or-equal
+  '≥': '>=',  // greater-or-equal
+  '·': '.',   // middle dot
+};
+function sanitizeForPdf(s) {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    const code = ch.charCodeAt(0);
+    if (code < 128) { out += ch; continue; }
+    const mapped = PDF_UNICODE_MAP[ch];
+    if (mapped !== undefined) { out += mapped; continue; }
+    // For any remaining character in the CP-1252 range keep it; anything
+    // higher gets a '?' placeholder so we never emit unmapped multibyte
+    // sequences that jsPDF would render as spaced glyphs.
+    out += (code < 256) ? ch : '?';
+  }
+  return out;
+}
 function safeText(value, fallback = '') {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : fallback;
-  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return sanitizeForPdf(fallback);
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : sanitizeForPdf(fallback);
+  if (typeof value === 'string') return sanitizeForPdf(value);
   // Booleans, dates, anything else — String() never throws.
-  try { return String(value); } catch { return fallback; }
+  try { return sanitizeForPdf(String(value)); } catch { return sanitizeForPdf(fallback); }
 }
 
 // Currency formatter that never returns "$NaN". Null/undefined/NaN → $0.00.
