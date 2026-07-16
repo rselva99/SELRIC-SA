@@ -8,7 +8,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
-  Landmark, AlertTriangle, CheckCircle2, ChevronDown, Search, Filter,
+  Landmark, AlertTriangle, CheckCircle2, ChevronDown, Search,
   RotateCcw, Trash2, DollarSign, Ban, BookOpen, CornerDownLeft,
 } from 'lucide-react';
 
@@ -61,7 +61,7 @@ export default function CashManagementPage() {
 
   const [checks, setChecks]             = useState([]);
   const [loading, setLoading]           = useState(true);
-  const [statusFilter, setStatusFilter] = useState('unclassified');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [monthFilter, setMonthFilter]   = useState('all');
   const [search, setSearch]             = useState('');
   const [selected, setSelected]         = useState(new Set());
@@ -101,9 +101,34 @@ export default function CashManagementPage() {
 
   // ── Derived state ────────────────────────────────────────────────────────────
 
+  // statusFilter values:
+  //   'unclassified' — status = 'unclassified'
+  //   'expense'      — status = 'classified' AND account.type = 'expense'
+  //   'balance'      — status = 'classified' AND account.type ∈ {asset,liability,equity}
+  //   'excluded'     — status = 'excluded'
+  //   'all'          — every check (including voided)
+  const catTypeById = useMemo(() => {
+    const m = new Map();
+    for (const cat of categories) m.set(cat.id, cat.type);
+    return m;
+  }, [categories]);
+
   const filtered = useMemo(() => {
+    const BS_TYPES = new Set(['asset','liability','equity']);
     return checks.filter(c => {
-      if (statusFilter !== 'all' && c.status !== statusFilter) return false;
+      // Tile-based status filter (compound aware for expense/balance)
+      if (statusFilter === 'unclassified' && c.status !== 'unclassified') return false;
+      if (statusFilter === 'excluded'     && c.status !== 'excluded')     return false;
+      if (statusFilter === 'expense') {
+        if (c.status !== 'classified') return false;
+        if (catTypeById.get(c.account_id) !== 'expense') return false;
+      }
+      if (statusFilter === 'balance') {
+        if (c.status !== 'classified') return false;
+        if (!BS_TYPES.has(catTypeById.get(c.account_id))) return false;
+      }
+      // 'all' matches everything
+
       if (
         monthFilter !== 'all' &&
         (!c.clear_date || c.clear_date.slice(0, 7) !== monthFilter)
@@ -114,13 +139,25 @@ export default function CashManagementPage() {
           !(
             c.check_no.toLowerCase().includes(s) ||
             (c.payee || '').toLowerCase().includes(s) ||
-            String(c.amount).includes(s)
+            String(c.amount).includes(s) ||
+            (c.notes || '').toLowerCase().includes(s)
           )
         ) return false;
       }
       return true;
     });
-  }, [checks, statusFilter, monthFilter, search]);
+  }, [checks, statusFilter, monthFilter, search, catTypeById]);
+
+  // Sort by check_no + clear_date when in excluded view so bounced-pair siblings are adjacent
+  const filteredSorted = useMemo(() => {
+    if (statusFilter !== 'excluded') return filtered;
+    return [...filtered].sort((a, b) => {
+      const an = String(a.check_no||'');
+      const bn = String(b.check_no||'');
+      if (an !== bn) return an.localeCompare(bn, undefined, { numeric: true });
+      return String(a.clear_date||'').localeCompare(String(b.clear_date||''));
+    });
+  }, [filtered, statusFilter]);
 
   const totals = useMemo(() => {
     const byStatus = s => checks.filter(c => c.status === s);
@@ -432,37 +469,47 @@ export default function CashManagementPage() {
         </div>
       </div>
 
-      {/* Running tallies — always sum to grand total */}
+      {/* Running tallies — clickable filter tiles. Click active tile again to reset. */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <StatCard
           label="Unclassified"
           value={totals.unclassifiedCount}
           sub={formatCurrency(totals.unclassifiedTotal)}
           tone={totals.unclassifiedCount > 0 ? 'warn' : 'ok'}
+          active={statusFilter === 'unclassified'}
+          onClick={() => setStatusFilter(statusFilter === 'unclassified' ? 'all' : 'unclassified')}
         />
         <StatCard
           label="Expense"
           value={totals.expenseCount}
           sub={formatCurrency(totals.expenseTotal)}
           tone="ok"
+          active={statusFilter === 'expense'}
+          onClick={() => setStatusFilter(statusFilter === 'expense' ? 'all' : 'expense')}
         />
         <StatCard
           label="Balance Sheet"
           value={totals.balanceSheetCount}
           sub={formatCurrency(totals.balanceSheetTotal)}
           tone="ok"
+          active={statusFilter === 'balance'}
+          onClick={() => setStatusFilter(statusFilter === 'balance' ? 'all' : 'balance')}
         />
         <StatCard
           label="Already recorded"
           value={totals.excludedCount}
           sub={formatCurrency(totals.excludedTotal)}
           tone="neutral"
+          active={statusFilter === 'excluded'}
+          onClick={() => setStatusFilter(statusFilter === 'excluded' ? 'all' : 'excluded')}
         />
         <StatCard
           label="All checks"
           value={totals.grandCount}
           sub={formatCurrency(totals.grandTotal)}
           tone="neutral"
+          active={statusFilter === 'all'}
+          onClick={() => setStatusFilter('all')}
         />
       </div>
 
@@ -490,20 +537,20 @@ export default function CashManagementPage() {
         </div>
       )}
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div className="flex items-center gap-1 text-sm">
-          <Filter size={14} className="text-surface-400" />
-          {['unclassified', 'classified', 'excluded', 'voided', 'all'].map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-md text-sm ${statusFilter === s ? 'bg-brand-600 text-white' : 'bg-surface-100 text-surface-700 hover:bg-surface-200'}`}
-            >
-              {s}
-            </button>
-          ))}
+      {/* "Already recorded" detail banner */}
+      {statusFilter === 'excluded' && (
+        <div className="mb-4 rounded-xl border border-surface-200 bg-surface-50 p-4">
+          <div className="flex items-start gap-3">
+            <Ban size={18} className="text-surface-500 shrink-0 mt-0.5" />
+            <div className="text-sm text-surface-700 leading-relaxed">
+              <b>These checks are excluded from the classify-me worklist.</b> Most were paid then <b>returned</b> (bounced) within a few days — no net cash left, so no ledger post is needed. Some may have been manually marked as recorded elsewhere. <b>Nothing was posted to the ledger</b> when they were excluded. Click <b>Undo</b> on any row to pull it back to <i>unclassified</i>.
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Filter bar — status filter is driven by the clickable tiles above */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <select
           value={monthFilter}
           onChange={e => setMonthFilter(e.target.value)}
@@ -556,14 +603,14 @@ export default function CashManagementPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {filteredSorted.length === 0 ? (
               <tr>
                 <td colSpan={9} className="p-6 text-center text-surface-500">
                   No checks match the filters.
                 </td>
               </tr>
             ) : (
-              filtered.slice(0, 500).map(c => {
+              filteredSorted.slice(0, 500).map(c => {
                 const assigned   = c.account_id ? categories.find(cat => cat.id === c.account_id)?.name : null;
                 const isOpen     = inlineForm?.id === c.id;
                 const isPosting  = posting && isOpen;
@@ -586,11 +633,18 @@ export default function CashManagementPage() {
                       <td className="p-3 text-right font-medium">{formatCurrency(c.amount)}</td>
                       <td className="p-3 text-surface-600">{c.payee || <span className="text-surface-400">—</span>}</td>
                       <td className="p-3">
-                        {assigned
-                          ? <span className="text-brand-700">{assigned}{c.notes ? <span className="text-surface-400"> · {c.notes}</span> : null}</span>
-                          : c.notes
-                            ? <span className="text-surface-500 italic">{c.notes}</span>
-                            : <span className="text-surface-400">—</span>}
+                        {c.status === 'excluded' ? (
+                          <div className="text-surface-700 leading-snug">
+                            <div className="text-xs uppercase tracking-wider text-surface-400 mb-0.5">Reason</div>
+                            <div className="text-sm">{c.notes || <span className="text-surface-400 italic">no note recorded</span>}</div>
+                          </div>
+                        ) : assigned ? (
+                          <span className="text-brand-700">{assigned}{c.notes ? <span className="text-surface-400"> · {c.notes}</span> : null}</span>
+                        ) : c.notes ? (
+                          <span className="text-surface-500 italic">{c.notes}</span>
+                        ) : (
+                          <span className="text-surface-400">—</span>
+                        )}
                       </td>
                       <td className="p-3 text-xs text-surface-500">{c.source_statement}</td>
                       <td className="p-3"><StatusBadge status={c.status} /></td>
@@ -1024,15 +1078,26 @@ function BulkClassifyModal({ open, onClose, onConfirm, expenseCats, balanceSheet
 
 // ── StatCard ──────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, tone = 'neutral' }) {
+function StatCard({ label, value, sub, tone = 'neutral', active = false, onClick }) {
   const tones = {
     ok:      'bg-emerald-50 border-emerald-200 text-emerald-800',
     warn:    'bg-amber-50 border-amber-200 text-amber-800',
     neutral: 'bg-surface-50 border-surface-200 text-surface-700',
   };
+  const clickable = onClick ? 'cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5' : '';
+  const activeRing = active ? 'ring-2 ring-brand-500 ring-offset-2 shadow-md' : '';
   return (
-    <div className={`rounded-xl border p-4 ${tones[tone]}`}>
-      <div className="text-xs uppercase tracking-wider opacity-70">{label}</div>
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      className={`rounded-xl border p-4 ${tones[tone]} ${clickable} ${activeRing}`}
+    >
+      <div className="text-xs uppercase tracking-wider opacity-70 flex items-center justify-between">
+        <span>{label}</span>
+        {active && <span className="text-[10px] font-bold uppercase opacity-70">Filtering</span>}
+      </div>
       <div className="text-2xl font-display font-bold mt-1">{value}</div>
       <div className="text-sm opacity-80">{sub}</div>
     </div>
