@@ -64,13 +64,27 @@ export default function CashManagementPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [monthFilter, setMonthFilter]   = useState('all');
   const [search, setSearch]             = useState('');
+  const [amountMin, setAmountMin]       = useState('');
+  const [amountMax, setAmountMax]       = useState('');
+  const [sortMode, setSortMode]         = useState('default'); // 'default' | 'amount_desc' | 'amount_asc'
+  const [tagFilter, setTagFilter]       = useState('all');     // 'all' | 'LOHR'
   const [selected, setSelected]         = useState(new Set());
   const [classifyOpen, setClassifyOpen] = useState(false);
+  const [classifyPrefill, setClassifyPrefill] = useState(null); // { categoryName, description } | null
   const [posting, setPosting]           = useState(false);
 
   // Inline form state: { id, outcome } | null
   // outcome ∈ 'expense' | 'balance' | 'excluded' | null (none open)
   const [inlineForm, setInlineForm] = useState(null);
+
+  // Detect a tag on a row — prefer the dedicated match_tag column when present,
+  // fall back to a [TAG] prefix in the notes field (used before the column
+  // migration is applied). Supplier-agnostic: pass 'LOHR', 'SYSCO', etc.
+  function rowTag(c) {
+    if (c.match_tag) return c.match_tag;
+    const m = /^\[([A-Z]+)\]/.exec(c.notes || '');
+    return m ? m[1] : null;
+  }
 
   // ── Data load ───────────────────────────────────────────────────────────────
 
@@ -115,6 +129,8 @@ export default function CashManagementPage() {
 
   const filtered = useMemo(() => {
     const BS_TYPES = new Set(['asset','liability','equity']);
+    const minVal = amountMin === '' ? null : Number(amountMin);
+    const maxVal = amountMax === '' ? null : Number(amountMax);
     return checks.filter(c => {
       // Tile-based status filter (compound aware for expense/balance)
       if (statusFilter === 'unclassified' && c.status !== 'unclassified') return false;
@@ -128,6 +144,14 @@ export default function CashManagementPage() {
         if (!BS_TYPES.has(catTypeById.get(c.account_id))) return false;
       }
       // 'all' matches everything
+
+      // Tag filter (LOHR etc.) — treats the LOHR-tagged set as a scoped view
+      if (tagFilter !== 'all' && rowTag(c) !== tagFilter) return false;
+
+      // Amount range (open-ended if a bound is blank)
+      const amt = Number(c.amount);
+      if (minVal !== null && Number.isFinite(minVal) && amt < minVal) return false;
+      if (maxVal !== null && Number.isFinite(maxVal) && amt > maxVal) return false;
 
       if (
         monthFilter !== 'all' &&
@@ -146,18 +170,43 @@ export default function CashManagementPage() {
       }
       return true;
     });
-  }, [checks, statusFilter, monthFilter, search, catTypeById]);
+  }, [checks, statusFilter, monthFilter, search, catTypeById, amountMin, amountMax, tagFilter]);
 
-  // Sort by check_no + clear_date when in excluded view so bounced-pair siblings are adjacent
+  // Sort: user-selected takes priority; then excluded view keeps pair-siblings adjacent
   const filteredSorted = useMemo(() => {
-    if (statusFilter !== 'excluded') return filtered;
-    return [...filtered].sort((a, b) => {
-      const an = String(a.check_no||'');
-      const bn = String(b.check_no||'');
-      if (an !== bn) return an.localeCompare(bn, undefined, { numeric: true });
-      return String(a.clear_date||'').localeCompare(String(b.clear_date||''));
-    });
-  }, [filtered, statusFilter]);
+    const rows = [...filtered];
+    if (sortMode === 'amount_desc') {
+      rows.sort((a, b) => Number(b.amount) - Number(a.amount));
+      return rows;
+    }
+    if (sortMode === 'amount_asc') {
+      rows.sort((a, b) => Number(a.amount) - Number(b.amount));
+      return rows;
+    }
+    if (statusFilter === 'excluded') {
+      rows.sort((a, b) => {
+        const an = String(a.check_no||'');
+        const bn = String(b.check_no||'');
+        if (an !== bn) return an.localeCompare(bn, undefined, { numeric: true });
+        return String(a.clear_date||'').localeCompare(String(b.clear_date||''));
+      });
+    }
+    return rows;
+  }, [filtered, statusFilter, sortMode]);
+
+  // Tagged-set aggregate (count + $) for the Lohr chip
+  const tagAggregates = useMemo(() => {
+    const agg = new Map();
+    for (const c of checks) {
+      const t = rowTag(c);
+      if (!t) continue;
+      const a = agg.get(t) || { count: 0, total: 0 };
+      a.count++;
+      a.total += Number(c.amount || 0);
+      agg.set(t, a);
+    }
+    return agg;
+  }, [checks]);
 
   const totals = useMemo(() => {
     const byStatus = s => checks.filter(c => c.status === s);
@@ -549,8 +598,69 @@ export default function CashManagementPage() {
         </div>
       )}
 
-      {/* Filter bar — status filter is driven by the clickable tiles above */}
+      {/* Filter bar — status is driven by both the tiles above AND this dropdown (synced) */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
+        <label className="flex items-center gap-1 text-xs text-surface-500">
+          Status
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            className="ml-1 px-2 py-1.5 rounded-md text-sm border border-surface-200 bg-white"
+          >
+            <option value="all">All</option>
+            <option value="unclassified">Unclassified</option>
+            <option value="expense">Expense</option>
+            <option value="balance">Balance Sheet</option>
+            <option value="excluded">Already Recorded</option>
+          </select>
+        </label>
+
+        {/* Amount range */}
+        <label className="flex items-center gap-1 text-xs text-surface-500">
+          Amount
+          <input
+            type="number" inputMode="decimal" step="0.01" min="0"
+            value={amountMin} onChange={e => setAmountMin(e.target.value)}
+            placeholder="min"
+            className="ml-1 w-20 px-2 py-1.5 rounded-md text-sm border border-surface-200"
+          />
+          <span className="text-surface-400">–</span>
+          <input
+            type="number" inputMode="decimal" step="0.01" min="0"
+            value={amountMax} onChange={e => setAmountMax(e.target.value)}
+            placeholder="max"
+            className="w-24 px-2 py-1.5 rounded-md text-sm border border-surface-200"
+          />
+        </label>
+
+        {/* Sort */}
+        <label className="flex items-center gap-1 text-xs text-surface-500">
+          Sort
+          <select
+            value={sortMode}
+            onChange={e => setSortMode(e.target.value)}
+            className="ml-1 px-2 py-1.5 rounded-md text-sm border border-surface-200 bg-white"
+          >
+            <option value="default">Default</option>
+            <option value="amount_desc">Amount: High → Low</option>
+            <option value="amount_asc">Amount: Low → High</option>
+          </select>
+        </label>
+
+        {/* Supplier tag chips (Lohr etc.) */}
+        {[...tagAggregates.entries()].map(([tag, agg]) => (
+          <button
+            key={tag}
+            onClick={() => setTagFilter(tagFilter === tag ? 'all' : tag)}
+            className={`px-3 py-1.5 rounded-md text-sm border transition-colors flex items-center gap-2 ${tagFilter === tag ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-brand-200 text-brand-700 hover:bg-brand-50'}`}
+            title={`Filter to ${tag}-tagged checks`}
+          >
+            <span className="font-semibold">{tag}</span>
+            <span className="opacity-80">({agg.count} · {formatCurrency(agg.total)})</span>
+            {tagFilter === tag && <span className="text-[10px] uppercase font-bold ml-1">×</span>}
+          </button>
+        ))}
+
         <select
           value={monthFilter}
           onChange={e => setMonthFilter(e.target.value)}
@@ -570,7 +680,17 @@ export default function CashManagementPage() {
         </div>
         {selected.size > 0 && (
           <button
-            onClick={() => setClassifyOpen(true)}
+            onClick={() => {
+              // If everything selected carries the same tag, prefill category + description.
+              const selRows = filteredSorted.filter(c => selected.has(c.id));
+              const tags = new Set(selRows.map(rowTag).filter(Boolean));
+              if (tags.size === 1 && tags.has('LOHR')) {
+                setClassifyPrefill({ categoryName: 'Liquor', description: 'Lohr Distributing' });
+              } else {
+                setClassifyPrefill(null);
+              }
+              setClassifyOpen(true);
+            }}
             className="px-4 py-1.5 rounded-md text-sm bg-brand-600 text-white hover:bg-brand-700 flex items-center gap-2"
           >
             <DollarSign size={14} />
@@ -626,7 +746,12 @@ export default function CashManagementPage() {
                           disabled={c.status !== 'unclassified'}
                         />
                       </td>
-                      <td className="p-3 font-mono text-xs">{c.check_no}</td>
+                      <td className="p-3 font-mono text-xs">
+                        {c.check_no}
+                        {(() => { const t = rowTag(c); return t ? (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-brand-100 text-brand-700 uppercase tracking-wider" title={`Tagged ${t} — matched via supplier statement`}>{t}</span>
+                        ) : null; })()}
+                      </td>
                       <td className="p-3 text-surface-600">
                         {c.clear_date || <span className="text-amber-600">— undated</span>}
                       </td>
@@ -733,12 +858,13 @@ export default function CashManagementPage() {
       {classifyOpen && (
         <BulkClassifyModal
           open={classifyOpen}
-          onClose={() => setClassifyOpen(false)}
+          onClose={() => { setClassifyOpen(false); setClassifyPrefill(null); }}
           onConfirm={classifySelection}
           expenseCats={expenseCats}
           balanceSheetCats={balanceSheetCats}
           selectedRows={selectedRows}
           posting={posting}
+          prefill={classifyPrefill}
         />
       )}
     </div>
@@ -902,13 +1028,27 @@ function InlineForm({ check, outcome, expenseCats, balanceSheetCats, posting, on
 // ── BulkClassifyModal ─────────────────────────────────────────────────────────
 // Extended modal supporting all three outcomes for N selected rows.
 
-function BulkClassifyModal({ open, onClose, onConfirm, expenseCats, balanceSheetCats, selectedRows, posting }) {
+function BulkClassifyModal({ open, onClose, onConfirm, expenseCats, balanceSheetCats, selectedRows, posting, prefill }) {
   const [outcome,      setOutcome]      = useState('expense');
   const [categoryId,   setCategoryId]   = useState('');
   const [categoryName, setCategoryName] = useState('');
   const [userDesc,     setUserDesc]     = useState('');
   const [note,         setNote]         = useState('');
   const [dateOverride, setDateOverride] = useState('');
+
+  // Apply prefill on first open (from a supplier-tagged bulk-classify, e.g. LOHR → Liquor)
+  useEffect(() => {
+    if (!open || !prefill) return;
+    const found = expenseCats.find(c => c.name === prefill.categoryName)
+              || balanceSheetCats.find(c => c.name === prefill.categoryName);
+    if (found) {
+      setOutcome(expenseCats.some(c => c.id === found.id) ? 'expense' : 'balance');
+      setCategoryId(found.id);
+      setCategoryName(found.name);
+    }
+    if (prefill.description) setUserDesc(prefill.description);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const undatedInSelection = selectedRows.filter(r => !r.clear_date).length;
   const total              = selectedRows.reduce((s, c) => s + Number(c.amount || 0), 0);
