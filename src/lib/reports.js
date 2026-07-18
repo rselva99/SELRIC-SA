@@ -1351,42 +1351,22 @@ export function generateAuditorPackagePdf(input, opts = {}) {
 
   const doc = new jsPDF();
 
-  // 1. Cover
-  renderCoverPage(doc, { scope, year, periodLabel });
+  // Auditor package trimmed to the three financial statements only.
+  // Removed: Cover page, Financing Schedule (Jaris/SpotOn Capital), and
+  // Members' Capital Reconciliation. The renderer functions for those
+  // three sections are retained (as dead code) further down this file
+  // so this trim can be reverted by re-adding the calls below.
 
-  // 2. P&L
-  doc.addPage();
+  // 1. P&L — renders on page 1 directly (no leading addPage).
   generatePnLPdf({ transactions, categories, period: periodLabel }, undefined, { doc });
 
-  // 3. Financing Schedule (year scope only; Jaris / SpotOn Capital analysis is
-  //    an annualized reconciliation and the disclosures reference FY2024 fees).
-  if (scope === 'year') {
-    doc.addPage();
-    renderFinancingSchedulePage(doc, { periodLabel });
-  }
-
-  // 4. Balance Sheet (year scope only — Book BS Builder is year-grained)
+  // 2. Balance Sheet (year scope only — Book BS Builder is year-grained).
   if (scope === 'year' && bookBSSnapshot) {
     doc.addPage();
     generateBookBalanceSheetPdf({ year, snapshot: bookBSSnapshot, locked: null }, String(year), { doc });
   }
 
-  // 5. Members' Capital Reconciliation (year scope only). Immediately after
-  //    the Balance Sheet so the auditor can compare the BS-implied FY net
-  //    income to the actual P&L net income while the balance sheet page is
-  //    still in mind. Uses the snapshot's totals plus the transactions/
-  //    categories for the live actual-NI recompute.
-  if (scope === 'year' && bookBSSnapshot) {
-    doc.addPage();
-    renderMembersCapitalReconciliationPage(doc, {
-      periodLabel,
-      snapshot: bookBSSnapshot,
-      transactions,
-      categories,
-    });
-  }
-
-  // 6. Trial Balance (posted-only basis per opts.includeUnposted = false)
+  // 3. Trial Balance (posted-only basis per opts.includeUnposted = false).
   doc.addPage();
   generateTrialBalancePdf(
     { transactions, categories, period: periodLabel },
