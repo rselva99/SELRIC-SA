@@ -931,7 +931,6 @@ function renderTaxReconSummary(doc, y, totals) {
   //    informational, never a plug — it is the truth source, not a derived
   //    value. If unavailable, surfaces a "not linked" amber chip.
   const actual = totals.actualNetIncome;
-  const gap    = totals.reconciliationGap;
   if (actual == null) {
     y = drawSummaryBand(
       doc, y,
@@ -948,22 +947,8 @@ function renderTaxReconSummary(doc, y, totals) {
     );
   }
 
-  // 5. Structural gap vs the P&L truth. If single-entry bank data has been
-  //    repaired upstream, |gap| should shrink toward zero. Large gap = the
-  //    accounting equation is leaking from the bank-import single-entry path.
-  if (actual == null || gap == null) {
-    // already showed amber chip above; skip the comparison band
-    return y;
-  }
-  const ok = Math.abs(Number(gap) || 0) < 0.005;
-  y = drawSummaryBand(
-    doc, y,
-    ok ? 'STRUCTURAL GAP vs P&L NET INCOME  ✓' : 'STRUCTURAL GAP vs P&L NET INCOME — drift',
-    `gap ${fmtIncomeLoss(totals.netIncomeLoss)} vs P&L ${formatCurrency(actual)} · diff ${formatCurrency(gap)}`,
-    ok ? [217, 237, 227] : [255, 230, 230],
-    ok ? BRAND_DARK : [224, 49, 49],
-    10,
-  );
+  // (Structural-gap-vs-P&L-net-income drift banner intentionally removed —
+  //  the CPA-format L&SE + M-2 identity is enforced elsewhere in the pack.)
   return y;
 }
 
