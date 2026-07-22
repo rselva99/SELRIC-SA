@@ -36,6 +36,7 @@ export default function PayrollPage() {
   const [sortKey, setSortKey] = useState('pay_date');
   const [sortDir, setSortDir] = useState('asc');
   const [previewBasis, setPreviewBasis] = useState('accrual'); // 'accrual' | 'net_cash'
+  const [checksById, setChecksById] = useState(new Map());
 
   const loadData = useCallback(async () => {
     setLoadState('loading');
@@ -46,6 +47,24 @@ export default function PayrollPage() {
       ]);
       setMonths(monthsRes.sort((a, b) => (a.pay_month < b.pay_month ? -1 : 1)));
       setLines(linesRes);
+
+      // Fetch check details for every matched_check_id so the line table can show check_no, clear_date, returned_flag
+      const checkIds = [...new Set(linesRes.map(l => l.matched_check_id).filter(Boolean))];
+      const map = new Map();
+      for (let i = 0; i < checkIds.length; i += 100) {
+        const chunk = checkIds.slice(i, i + 100);
+        // Try new columns first; fall back if the returned-item migration hasn't been applied.
+        let { data, error } = await supabase.from('checks')
+          .select('id, check_no, amount, clear_date, status, returned_flag, returned_date')
+          .in('id', chunk);
+        if (error && /returned_flag|returned_date/.test(error.message || '')) {
+          const fb = await supabase.from('checks').select('id, check_no, amount, clear_date, status').in('id', chunk);
+          data = fb.data || [];
+        }
+        for (const c of (data || [])) map.set(c.id, c);
+      }
+      setChecksById(map);
+
       setLoadState('ready');
     } catch (e) {
       console.error(e);
@@ -200,8 +219,8 @@ export default function PayrollPage() {
         </div>
       )}
 
-      {/* Month list */}
-      {!isEmpty && (
+      {/* Month list — hidden when a month is selected (drill-down) */}
+      {!isEmpty && !selectedMonthObj && (
         <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-600">
@@ -264,16 +283,42 @@ export default function PayrollPage() {
         </div>
       )}
 
-      {/* Selected month detail */}
+      {/* Selected month detail — replaces the month list when open (drill-down) */}
       {selectedMonthObj && (
         <div className="rounded-lg border border-blue-300 bg-blue-50/40 p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold">{selectedMonth} — {selectedMonthObj.line_count} paychecks</h2>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3">
+              <button
+                className="btn-secondary text-xs"
+                onClick={() => { setSelectedMonth(null); setSelectedLineId(null); }}
+              >← Back to 12-month list</button>
+              <h2 className="text-lg font-bold">{selectedMonth} — {selectedMonthObj.line_count} paychecks</h2>
+            </div>
             <div className="flex gap-2">
               <button className="btn-secondary text-xs" onClick={() => exportMonth(selectedMonth)}>Export preview CSV</button>
-              <button className="btn-secondary text-xs" onClick={() => setSelectedMonth(null)}>Close</button>
             </div>
           </div>
+
+          {/* Month totals header — reconciled from payroll_months */}
+          {(() => {
+            const bookedTotal = Number(selectedMonthObj.existing_booked_total || 0)
+              || (Number(selectedMonthObj.existing_plug_amount || 0) + Number(selectedMonthObj.existing_fragment_amount || 0));
+            const variance = Number(selectedMonthObj.total_loaded || 0) - bookedTotal;
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2 text-xs bg-white rounded border border-gray-200 p-3">
+                <div><div className="text-gray-500">Lines</div><div className="font-semibold tabular-nums">{selectedMonthObj.line_count}</div></div>
+                <div><div className="text-gray-500">Gross</div><div className="font-semibold tabular-nums">{usd(selectedMonthObj.total_gross)}</div></div>
+                <div><div className="text-gray-500">EE tax</div><div className="tabular-nums">{usd(selectedMonthObj.total_ee_tax)}</div></div>
+                <div><div className="text-gray-500">Net</div><div className="font-semibold tabular-nums">{usd(selectedMonthObj.total_net)}</div></div>
+                <div><div className="text-gray-500">ER tax (est)</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.total_er_tax)}</div></div>
+                <div><div className="text-gray-500">Loaded</div><div className="tabular-nums">{usd(selectedMonthObj.total_loaded)}</div></div>
+                <div><div className="text-gray-500">Plug</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.existing_plug_amount)}</div></div>
+                <div><div className="text-gray-500">Fragments</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.existing_fragment_amount)}</div></div>
+                <div><div className="text-gray-500">Booked total</div><div className="font-semibold tabular-nums">{usd(bookedTotal)}</div></div>
+                <div><div className="text-gray-500">Variance</div><div className={`font-semibold tabular-nums ${variance > 0 ? 'text-red-600' : 'text-green-700'}`}>{usd(variance)}</div></div>
+              </div>
+            );
+          })()}
 
           {/* Filters */}
           <div className="flex gap-3 items-center text-sm">
@@ -293,47 +338,71 @@ export default function PayrollPage() {
           </div>
 
           {/* Paycheck list */}
-          <div className="rounded border border-gray-200 bg-white max-h-96 overflow-y-auto">
+          <div className="rounded border border-gray-200 bg-white max-h-[28rem] overflow-y-auto">
             <table className="w-full text-xs">
               <thead className="bg-gray-100 sticky top-0">
                 <tr>
                   {[
                     ['pay_date', 'Pay date'], ['employee_name', 'Employee'],
                     ['gross_pay', 'Gross'], ['employee_taxes', 'EE tax'], ['net_pay', 'Net'],
-                    ['match_status', 'Match'], [null, 'Linked'],
+                    ['employer_taxes', 'ER tax (est)'],
+                    ['match_status', 'Match'], [null, 'Linked check / txn'],
+                    [null, 'Returned'],
                   ].map(([k, label]) => (
-                    <th key={label} className="px-2 py-1 text-left cursor-pointer" onClick={() => k && (setSortDir(sortKey === k && sortDir === 'asc' ? 'desc' : 'asc'), setSortKey(k))}>
+                    <th key={label} className={`px-2 py-1 text-left ${k ? 'cursor-pointer hover:bg-gray-200' : ''}`}
+                        onClick={() => k && (setSortDir(sortKey === k && sortDir === 'asc' ? 'desc' : 'asc'), setSortKey(k))}>
                       {label} {sortKey === k ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredSortedLines.map(l => (
-                  <tr
-                    key={l.id}
-                    className={`hover:bg-blue-50 cursor-pointer ${selectedLineId === l.id ? 'bg-blue-100' : ''}`}
-                    onClick={() => setSelectedLineId(l.id === selectedLineId ? null : l.id)}
-                  >
-                    <td className="px-2 py-1">{l.pay_date}</td>
-                    <td className="px-2 py-1">{l.employee_name} {l.is_starred ? '★' : ''}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{usd(l.gross_pay)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{usd(l.employee_taxes)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums font-semibold">{usd(l.net_pay)}</td>
-                    <td className="px-2 py-1">
-                      {l.match_status === 'matched_check' && <span className="text-green-700">check {l.match_confidence ? `(${l.match_confidence})` : ''}</span>}
-                      {l.match_status === 'matched_txn' && <span className="text-green-700">txn {l.match_confidence ? `(${l.match_confidence})` : ''}</span>}
-                      {l.match_status === 'unmatched' && <span className="text-amber-700">unmatched</span>}
-                      {l.match_status === 'no_disbursement' && <span className="text-gray-500">no disbursement</span>}
-                    </td>
-                    <td className="px-2 py-1 text-xs text-gray-600">
-                      {l.matched_check_id ? `check ${l.matched_check_id.slice(0, 8)}` : (l.matched_transaction_id ? `txn ${l.matched_transaction_id.slice(0, 8)}` : '—')}
-                      {(l.matched_check_id || l.matched_transaction_id) && (
-                        <button className="ml-2 text-red-600" onClick={(e) => { e.stopPropagation(); unlink(l); }}>unlink</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {filteredSortedLines.map(l => {
+                  const linkedCheck = l.matched_check_id ? checksById.get(l.matched_check_id) : null;
+                  const returned = linkedCheck?.returned_flag === true;
+                  return (
+                    <tr
+                      key={l.id}
+                      className={`hover:bg-blue-50 cursor-pointer ${selectedLineId === l.id ? 'bg-blue-100' : ''} ${returned ? 'bg-red-50' : ''}`}
+                      onClick={() => setSelectedLineId(l.id === selectedLineId ? null : l.id)}
+                    >
+                      <td className="px-2 py-1">{l.pay_date}</td>
+                      <td className="px-2 py-1">{l.employee_name} {l.is_starred ? '★' : ''}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{usd(l.gross_pay)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{usd(l.employee_taxes)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums font-semibold">{usd(l.net_pay)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums text-gray-600">{usd(l.employer_taxes)} <span className="text-[10px]">(est)</span></td>
+                      <td className="px-2 py-1">
+                        {l.match_status === 'matched_check' && <span className="text-green-700">check {l.match_confidence ? `(${l.match_confidence})` : ''}</span>}
+                        {l.match_status === 'matched_txn' && <span className="text-green-700">txn {l.match_confidence ? `(${l.match_confidence})` : ''}</span>}
+                        {l.match_status === 'unmatched' && <span className="text-amber-700">unmatched</span>}
+                        {l.match_status === 'no_disbursement' && <span className="text-gray-500">no disbursement</span>}
+                      </td>
+                      <td className="px-2 py-1 text-xs text-gray-700">
+                        {linkedCheck ? (
+                          <>
+                            <span className="font-medium">Ck#{linkedCheck.check_no}</span>
+                            <span className="text-gray-500 ml-1">cleared {linkedCheck.clear_date}</span>
+                          </>
+                        ) : l.matched_transaction_id ? (
+                          <>txn {l.matched_transaction_id.slice(0, 8)}</>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                        {(l.matched_check_id || l.matched_transaction_id) && (
+                          <button className="ml-2 text-red-600" onClick={(e) => { e.stopPropagation(); unlink(l); }}>unlink</button>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-center">
+                        {returned && (
+                          <span className="inline-flex px-1.5 py-0.5 rounded bg-red-100 text-red-800 text-[10px] font-semibold" title={`Bank returned this check on ${linkedCheck.returned_date}`}>
+                            RETURNED
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
