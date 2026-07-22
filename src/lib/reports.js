@@ -900,29 +900,39 @@ function renderCpaFormatSummary(doc, y, totals) {
 }
 
 function renderTaxReconSummary(doc, y, totals) {
-  // 1. TOTAL LIABILITIES & EQUITY (signed — credit balances are negative)
-  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES & EQUITY', formatCurrency(totals.totalLiabEquity), LIGHT_BG, BRAND_DARK);
+  // Liabilities are stored signed-negative (credit-natural); equity is
+  // stored signed. Display arithmetic:
+  //   L displayed as |totalLiabilities|  (natural positive)
+  //   E displayed as totalEquity          (signed; deficit prints negative)
+  //   L + E   = |L| + E_signed             (correct arithmetic sum)
+  //   Gap     = A − (L + E)                (positive ⇒ assets exceed L+E)
+  const A     = Number(totals.totalAssets) || 0;
+  const Lnat  = Math.abs(Number(totals.totalLiabilities) || 0);
+  const Esign = Number(totals.totalEquity) || 0;
+  const LplusE = Math.round((Lnat + Esign) * 100) / 100;
+  const gap    = Math.round((A - LplusE) * 100) / 100;
 
-  // 2. STRUCTURAL GAP — UNBOOKED ACTIVITY.
-  //    This was historically labeled "NET (INCOME)/LOSS" which was misleading:
-  //    in a fully-booked double-entry ledger this plug equals -NetIncome, but
-  //    in this codebase the in-period activity is mostly single-entry
-  //    (bank-imported P&L rows without offsetting cash legs). So the value
-  //    here is the unbalanced residual the BS needs to plug — NOT a real
-  //    net-income measurement. The actual P&L number is shown two bands
-  //    below as a separate REFERENCE.
-  y = drawSummaryBand(doc, y, 'STRUCTURAL GAP — UNBOOKED ACTIVITY', fmtIncomeLoss(totals.netIncomeLoss), LIGHT_BG, BRAND_DARK);
+  // 1. TOTAL LIABILITIES (natural positive) and TOTAL EQUITY (signed).
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES', formatCurrency(Lnat),  LIGHT_BG, BRAND_DARK);
+  y = drawSummaryBand(doc, y, 'TOTAL EQUITY',      formatCurrency(Esign), LIGHT_BG, BRAND_DARK);
 
-  // 3. Tax-recon tie: A + (L+E) + StructuralGap = 0 by construction. Always
-  //    green; we still print the literal sum so a future divergence (e.g.,
-  //    rounding regression) is visible at a glance.
-  const tie = Math.round(((Number(totals.totalAssets) || 0)
-                          + (Number(totals.totalLiabEquity) || 0)
-                          + (Number(totals.netIncomeLoss) || 0)) * 100) / 100;
+  // 2. LIABILITIES + EQUITY (arithmetic sum — deficit reduces).
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES + EQUITY', formatCurrency(LplusE), LIGHT_BG, BRAND_DARK);
+
+  // 3. UNRECONCILED DIFFERENCE. Not a plug; sign shown so it does not
+  //    read as a booked figure. Positive: assets exceed L+E.
+  //    Negative: assets short of L+E.
+  const gapLabel = gap >= 0
+    ? 'UNRECONCILED DIFFERENCE — assets exceed liabilities plus equity'
+    : 'UNRECONCILED DIFFERENCE — assets short of liabilities plus equity';
+  y = drawSummaryBand(doc, y, gapLabel, fmtSigned(gap), LIGHT_BG, BRAND_DARK);
+
+  // 4. Identity print: A − (L + E) − gap = 0 by construction.
+  const tie = Math.round((A - LplusE - gap) * 100) / 100;
   y = drawSummaryBand(
     doc, y,
-    'TAX-RECON BALANCE: TIES (sums to 0)',
-    `A + (L+E) + Structural Gap = ${formatCurrency(tie)}`,
+    'ARITHMETIC CHECK (sums to 0)',
+    `A − (L + E) − Unreconciled = ${formatCurrency(tie)}`,
     [217, 237, 227], BRAND_DARK, 10,
   );
 
@@ -959,25 +969,36 @@ function renderTaxReconSummary(doc, y, totals) {
 // and BALANCE CHECK reports the signed gap on Assets − |Liabilities| − |Equity|.
 // "TIES" when |gap| < $1; "OUT OF BALANCE by <signed gap>" otherwise.
 function renderLegacyBalanceSummary(doc, y, totals) {
-  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES + EQUITY', formatCurrency(totals.totalLiabPlusEquity), LIGHT_BG, BRAND_DARK);
+  // Legacy snapshots also render L displayed as natural positive and E as
+  // signed. Any legacy `totalLiabPlusEquity` / `balanceCheck` fields are
+  // ignored — they were the |L|+|E| convention which mis-signs equity.
+  const A     = Number(totals.totalAssets) || 0;
+  const Lnat  = Math.abs(Number(totals.totalLiabilities) || 0);
+  const Esign = Number(totals.totalEquity) || 0;
+  const LplusE = Math.round((Lnat + Esign) * 100) / 100;
+  const gap    = Math.round((A - LplusE) * 100) / 100;
 
-  const gap = Number(totals.balanceCheck) || 0;
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES', formatCurrency(Lnat),  LIGHT_BG, BRAND_DARK);
+  y = drawSummaryBand(doc, y, 'TOTAL EQUITY',      formatCurrency(Esign), LIGHT_BG, BRAND_DARK);
+  y = drawSummaryBand(doc, y, 'TOTAL LIABILITIES + EQUITY', formatCurrency(LplusE), LIGHT_BG, BRAND_DARK);
+
   const ties = Math.abs(gap) < 1.0;
   if (ties) {
     return drawSummaryBand(
       doc, y,
-      'BALANCE CHECK — TIES',
+      'ARITHMETIC CHECK — TIES',
       'Assets = Liabilities + Equity',
       [217, 237, 227], BRAND_DARK, 10,
     );
   }
+  const gapLabel = gap >= 0
+    ? 'UNRECONCILED DIFFERENCE — assets exceed liabilities plus equity'
+    : 'UNRECONCILED DIFFERENCE — assets short of liabilities plus equity';
   return drawSummaryBand(
     doc, y,
-    `BALANCE CHECK — OUT OF BALANCE by ${formatCurrency(gap)}`,
-    `Assets − Liabilities − Equity = ${formatCurrency(gap)}`,
-    [255, 230, 230],
-    [224, 49, 49],
-    10,
+    gapLabel,
+    fmtSigned(gap),
+    LIGHT_BG, BRAND_DARK, 11,
   );
 }
 
@@ -1160,13 +1181,14 @@ export function generateBookBalanceSheetPdf(input, periodArg, opts = {}) {
     }
 
     // Per-group totals: ASSETS shown signed (naturally positive on a healthy
-    // BS); LIABILITIES and EQUITY shown as magnitude — standard CPA BS
-    // presentation — so the L+E summary and balance check use a consistent
-    // positive-magnitude convention.
+    // BS); LIABILITIES shown as natural positive (credit balances are stored
+    // negative but displayed positive per standard BS presentation);
+    // EQUITY shown SIGNED so an accumulated deficit prints negative and
+    // matches the L21 subtotal on the same page.
     let groupTotal = 0;
     if (g.key === 'asset')     groupTotal = totals.totalAssets;
     if (g.key === 'liability') groupTotal = Math.abs(totals.totalLiabilities);
-    if (g.key === 'equity')    groupTotal = Math.abs(totals.totalEquity);
+    if (g.key === 'equity')    groupTotal = totals.totalEquity;
     y = renderGroupTotalBand(doc, y, g.label, groupTotal);
   }
 
