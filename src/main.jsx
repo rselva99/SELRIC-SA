@@ -26,6 +26,7 @@ import StatementReviewMatch from './pages/accountant/StatementReviewMatch';
 import BookBalanceSheetPage from './pages/accountant/BookBalanceSheetPage';
 import AssetsPage from './pages/assets/AssetsPage';
 import CashManagementPage from './pages/cash-management/CashManagementPage';
+import PayrollPage from './pages/payroll/PayrollPage';
 import PinGate from './components/PinGate';
 import './index.css';
 
@@ -70,6 +71,7 @@ function App() {
               <Route path="accounts" element={<ProtectedRoute adminOnly><AccountsPage /></ProtectedRoute>} />
               <Route path="assets"   element={<ProtectedRoute adminOnly><AssetsPage /></ProtectedRoute>} />
               <Route path="cash-management" element={<ProtectedRoute adminOnly><CashManagementPage /></ProtectedRoute>} />
+              <Route path="payroll" element={<ProtectedRoute adminOnly><PayrollPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
               <Route path="inventory" element={<InventoryPage />} />
               <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />

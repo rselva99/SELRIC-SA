@@ -1,0 +1,38 @@
+-- 2026-07-20 — Delete 9 junk test journal entries (Ricardo's manual UI test rows).
+-- Comment-only log. The actual deletion was executed via the whitelisted script
+-- scripts/delete_junk_jes_2026-07-20.mjs (service-role, autonomous). This file
+-- exists so the change is traceable in the migrations audit trail.
+--
+-- WHITELIST (references deleted, in whitelist order):
+--   JE-446  "Adj 1"                 (date 2026-07-18)
+--   JE-447  "Reversal of JE-446"    (date 2026-07-18)
+--   JE-448  "Adj1"                  (date 2024-12-18)
+--   JE-449  "Uniform Ajd"           (date 2024-12-18)
+--   JE-450  "adj 3"                 (date 2026-07-18)
+--   JE-451  "ajd 4"                 (date 2026-07-18)
+--   JE-452  "adj1 fix"              (date 2024-12-18)
+--   JE-453  "fix adj 2"             (date 2024-12-18)
+--   JE-454  "adj 3 off"             (date 2024-12-18)
+--
+-- Row counts removed:
+--   journal_entries       : 9
+--   journal_entry_lines   : 18
+--   transactions          : 18   (linked via journal_entry_id FK)
+--
+-- Net dollar impact removed: $0.00
+--   (All 9 rows had NULL total; journal_entry_lines abs(debit+credit) sum = $0.00.
+--    These were UI-created placeholder test entries with no financial content.)
+--
+-- Safety:
+--   - Full JSON backup at ~/Documents/selric-backups/junk_jes_backup_2026-07-20.json (22.7 KB).
+--   - Script self-gated on WHITELIST; any ref outside the list would have aborted before write.
+--   - Deletion order: transactions → journal_entry_lines → journal_entries (FK-safe).
+--   - Post-verify: 0 remaining JEs with those references, 0 orphan lines, 0 linked transactions.
+--
+-- Restore procedure (if ever needed):
+--   Re-insert the rows from junk_jes_backup_2026-07-20.json into their respective tables,
+--   parents first (journal_entries), then children (journal_entry_lines, transactions).
+--
+-- NOTE: intentionally NOT touched — SCENARIO Lewis / Meridian entries (references
+--       ADJ-2026-07-17-LEWIS-RM, ADJ-2026-07-17-MERIDIAN-EXP) and Lohr check entries
+--       remain in the ledger as-is. Scope was strictly the 9 refs above.
