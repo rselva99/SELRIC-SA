@@ -13,6 +13,7 @@ import BookkeepingPage from './pages/bookkeeping/BookkeepingPage';
 import ReconciliationPage from './pages/bookkeeping/ReconciliationPage';
 import AccountsPage from './pages/accounts/AccountsPage';
 import ReportsPage from './pages/reports/ReportsPage';
+import FY2024CorrectedClosePage from './pages/reports/FY2024CorrectedClosePage';
 import InventoryPage from './pages/inventory/InventoryPage';
 import ManageUsersPage from './pages/admin/ManageUsersPage';
 import LedgerPage from './pages/ledger/LedgerPage';
@@ -73,6 +74,7 @@ function App() {
               <Route path="cash-management" element={<ProtectedRoute adminOnly><CashManagementPage /></ProtectedRoute>} />
               <Route path="payroll" element={<ProtectedRoute adminOnly><PayrollPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
+              <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />
               <Route path="inventory" element={<InventoryPage />} />
               <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />
             </Route>
