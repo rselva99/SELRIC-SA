@@ -1469,7 +1469,9 @@ function StepGenerateBalanceSheet({ data, period, reload }) {
         <div className="grid grid-cols-3 gap-3">
           <StatPill label="Assets"      value={formatCurrency(preview.totalAssets || 0)} />
           <StatPill label="Liabilities" value={formatCurrency(preview.totalLiabilities || 0)} />
-          <StatPill label="Equity"      value={formatCurrency(preview.totalEquity || 0)} />
+          {/* aggregateForBS returns equity DR-natural (positive = deficit).
+              Negate for credit-natural display. See reports.js normalizeBSData. */}
+          <StatPill label="Equity"      value={formatCurrency(-(preview.totalEquity || 0))} />
         </div>
       </div>
     </div>

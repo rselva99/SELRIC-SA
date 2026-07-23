@@ -179,12 +179,20 @@ function normalizeBSData(input, periodArg) {
     const pnl = aggregateForPnL(input.transactions, input.categories);
     const netIncome = (Number(pnl.totalRevenue) || 0) - (Number(pnl.totalExpenses) || 0);
 
-    // aggregateForBS returns equity rows debit-natural: opening JE debits
-    // "Members' Equity - Opening" so it lands positive; member draws debit
-    // their equity category so they ALSO land positive. We surface Opening
-    // as its own line and lump every other equity row into Distributions —
-    // shown as negative on the report so the three lines arithmetic-add to
-    // Total Equity = Opening + NetIncome − Distributions.
+    // aggregateForBS returns equity rows debit-natural: the ledger opening JE
+    // DEBITS "Members' Equity - Opening" for the derived (Assets − Liabilities)
+    // amount, so aggregateForBS reports a POSITIVE number for what is actually
+    // a deficit (a debit balance on an equity account). Member draws also DR
+    // equity, so they too land positive.
+    //
+    // The display convention for equity is credit-natural (surplus positive,
+    // deficit in parentheses). To convert from the DR-natural aggregate, negate:
+    //   opening DR balance from aggregate  →  −opening for display and totals
+    //   draws (DR balance)                 →  −draws (equity reduction)
+    //   netIncome is already correctly signed for equity impact
+    //
+    // Prior bug: rendered opening as positive, so a $189,758.60 DR-balance
+    // deficit displayed as +$189,758.60 surplus. Fixed by negating.
     let opening = 0;
     let distributionsRaw = 0;
     for (const row of safeArray(agg.equity)) {
@@ -197,11 +205,11 @@ function normalizeBSData(input, periodArg) {
     const netIncomeLabel = yearMatch ? `Net Income — ${yearMatch[0]}` : 'Net Income';
 
     const equity = [
-      { account: "Members' Equity — Opening", amount: opening },
+      { account: "Members' Equity — Opening", amount: -opening },
       { account: netIncomeLabel,              amount: netIncome },
       { account: 'Distributions',             amount: -distributionsRaw },
     ];
-    const totalEquity = opening + netIncome - distributionsRaw;
+    const totalEquity = -opening + netIncome - distributionsRaw;
 
     return {
       assets:           safeArray(agg.assets),

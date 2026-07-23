@@ -1238,7 +1238,10 @@ function SnapshotModal({ view, period, onClose }) {
             <div className="grid grid-cols-3 gap-3">
               <StatTile label="Assets"      value={formatCurrency(data.totalAssets || 0)} />
               <StatTile label="Liabilities" value={formatCurrency(data.totalLiabilities || 0)} />
-              <StatTile label="Equity"      value={formatCurrency(data.totalEquity || 0)} />
+              {/* aggregateForBS returns equity DR-natural (positive = deficit).
+                  Negate for credit-natural display: surplus positive, deficit
+                  parenthesized. Same sign fix as reports.js normalizeBSData. */}
+              <StatTile label="Equity"      value={formatCurrency(-(data.totalEquity || 0))} />
             </div>
             <SnapshotBreakdown title="Assets"      rows={data.assets} />
             <SnapshotBreakdown title="Liabilities" rows={data.liabilities} />
