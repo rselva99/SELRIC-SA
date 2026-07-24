@@ -151,7 +151,7 @@ export const SEED_LINE_TITLES = {
 // contra lines in parentheses and SUBTRACTING them from their parent
 // group's total. The contra flag in BOOK_BS_STRUCTURE drives both pieces.
 
-import { debitOf, creditOf, aggregateForPnL } from './finance';
+import { debitOf, creditOf, aggregateForPnL } from './finance.js';
 
 export function lineActivityIsDebitNatural(section) {
   if (!section) return true;
@@ -545,6 +545,28 @@ export function buildBookBSSnapshot({ year, lines, mappingsByLineId, adjustments
       })),
     });
     sec.subtotal = Math.round((sec.subtotal + ending) * 100) / 100;
+  }
+
+  // LLC/partnership presentation: prior-year results close into member
+  // capital accounts annually, so the BS "Retained Earnings" line must
+  // display the current period's P&L net income only. Override the L21
+  // Retained Earnings ending balance in place (presentation only — no
+  // DB writes) so section subtotal, partnersCapital, totalLiabEquity,
+  // and netIncomeLoss all flow from the corrected value. Requires a
+  // chart of accounts and transactions to compute P&L; when either is
+  // missing (legacy callers) leave the stored figure intact.
+  if (Array.isArray(categories) && Array.isArray(transactions)) {
+    const l21 = sectionMap.get('L21');
+    if (l21) {
+      const reLine = l21.lines.find(l => /retained earnings/i.test(l.title || ''));
+      if (reLine) {
+        const pnl = aggregateForPnL(transactions, categories);
+        const ni = Math.round(((Number(pnl.totalRevenue) || 0) - (Number(pnl.totalExpenses) || 0)) * 100) / 100;
+        const prior = Number(reLine.ending) || 0;
+        l21.subtotal = Math.round((l21.subtotal - prior + ni) * 100) / 100;
+        reLine.ending = ni;
+      }
+    }
   }
 
   let totalAssets       = 0;
