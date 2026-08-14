@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/claude.js":           { "maxDuration": 60 },
+    "api/claude.js":           { "maxDuration": 300 },
     "api/marketing.js":        { "maxDuration": 60 },
     "api/sales-extract.js":    { "maxDuration": 30 },
     "api/calendar-predict.js": { "maxDuration": 15 }
