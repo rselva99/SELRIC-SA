@@ -37,3 +37,6 @@ docs/
 
 scripts/
 docs/
+
+# Bookkeeping import CSVs — real financial data, keep local
+data/import/
