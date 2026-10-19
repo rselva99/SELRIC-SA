@@ -72,7 +72,7 @@ export default function ProgramPage() {
             <a href="#what-you-get" className="btn-secondary text-base px-6 py-3">{t('landing.heroSecondary')}</a>
           </div>
           <p className="mt-5 text-sm text-surface-500">
-            {t(`programs.${key}.price`)} · {t(`programs.${key}.priceNote`)}
+            <span className="font-mono text-surface-800">{t(`programs.${key}.price`)}</span> {t('site.perMonth')} · {t(`programs.${key}.priceNote`)}
           </p>
         </div>
 
@@ -124,14 +124,21 @@ export default function ProgramPage() {
             <p className="mt-4 text-lg text-surface-700 max-w-[34rem]">{t('site.pricingBody')}</p>
             <div className={`mt-8 rounded-2xl ${a.dark} text-white p-6 sm:p-7 shadow-modal`}>
               <div className="text-white/60 text-sm">{name}</div>
-              <div className="font-display text-4xl mt-1">{t(`programs.${key}.price`)}</div>
-              <div className="text-white/70 text-sm mt-1">{t(`programs.${key}.priceNote`)}</div>
-              <p className="mt-5 pt-5 border-t border-white/15 text-[15px] leading-relaxed text-white/90">{t(`programs.${key}.includes`)}</p>
-              <p className="mt-5 text-sm text-white/60">{t('site.pricingNote')}</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="font-display text-5xl">{t(`programs.${key}.price`)}</span>
+                <span className="text-white/70">{t('site.perMonth')}</span>
+              </div>
+              <div className="text-white/60 text-sm mt-1">{t(`programs.${key}.priceNote`)}</div>
+              <ul className="mt-6 space-y-2.5">
+                {t(`programs.${key}.includes`).map((line) => (
+                  <li key={line} className="flex gap-3 text-[15px] leading-relaxed text-white/90">
+                    <Check size={18} className="text-white/60 shrink-0 mt-0.5" />
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-6 pt-5 border-t border-white/15 text-sm text-white/60">{t('site.pricingNote')}</p>
             </div>
-            <Link to="/#pricing" className="inline-flex items-center gap-1 mt-5 text-sm text-brand-700 font-medium hover:underline">
-              {t('site.navPricing')} — {t('site.backHome').toLowerCase()} <ArrowRight size={14} />
-            </Link>
           </div>
 
           <div id="waitlist" className="scroll-mt-24">

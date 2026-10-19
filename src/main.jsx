@@ -8,7 +8,8 @@ import { I18nProvider } from './i18n/I18nContext';
 import AppLayout from './components/layout/AppLayout';
 import LandingPage from './pages/public/LandingPage';
 import ProgramPage from './pages/public/ProgramPage';
-import HubPage from './pages/hub/HubPage';
+import ProgramPendingPage from './pages/public/ProgramPendingPage';
+import { getProgram } from './programs';
 import LoginPage from './pages/auth/LoginPage';
 import SignupPage from './pages/auth/SignupPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
@@ -51,12 +52,16 @@ function ProtectedRoute({ children, adminOnly = false, fullOnly = false }) {
 // "/" is the public landing page for visitors and the app for signed-in users.
 // Any other app path still bounces a visitor to /login as before.
 function RootGate() {
-  const { user, loading } = useAuth();
+  const { user, loading, primaryProgram } = useAuth();
   const location = useLocation();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) {
     return location.pathname === '/' ? <LandingPage /> : <Navigate to="/login" replace />;
   }
+  // A workspace whose program is not built yet (a Ganadería pilot invite used
+  // before phase 2 ships) gets a holding page instead of the Business app.
+  const program = primaryProgram ? getProgram(primaryProgram) : null;
+  if (program && program.status !== 'live') return <ProgramPendingPage program={program} />;
   return <AppLayout />;
 }
 
@@ -83,7 +88,6 @@ function App() {
 
             <Route path="/" element={<RootGate />}>
               <Route index element={<DashboardPage />} />
-              <Route path="hub" element={<ProtectedRoute><HubPage /></ProtectedRoute>} />
               {/* Full accounting package — hidden (and redirected) in simple mode */}
               <Route path="accountant" element={<ProtectedRoute adminOnly fullOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
               <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly fullOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />

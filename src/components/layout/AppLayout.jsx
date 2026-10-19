@@ -22,7 +22,6 @@ import {
   Users2,
   ArrowLeftRight,
   Settings,
-  ChevronsUpDown,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM } from '../../programs';
@@ -99,7 +98,7 @@ function monogram(name) {
 }
 
 export default function AppLayout() {
-  const { profile, organization, accountingMode, isAdmin, signOut } = useAuth();
+  const { profile, organization, accountingMode, primaryProgram, isAdmin, signOut } = useAuth();
   const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
@@ -107,9 +106,8 @@ export default function AppLayout() {
 
   const groups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? SIMPLE_GROUPS : FULL_GROUPS;
   const businessName = organization?.name || 'SelRic';
-  // Which program this URL belongs to: a program mounted under its own prefix,
-  // else Business (which keeps the root). The label links to the hub.
-  const currentProgram = PROGRAMS.find((p) => p.home !== '/' && location.pathname.startsWith(p.home))?.key || DEFAULT_PROGRAM;
+  // The program this workspace runs (each SelRic program is its own workspace).
+  const currentProgram = PROGRAMS.find((p) => p.key === primaryProgram)?.key || DEFAULT_PROGRAM;
 
   async function handleSignOut() {
     await signOut();
@@ -146,15 +144,12 @@ export default function AppLayout() {
                 <Link to="/" className="block font-display text-[17px] leading-tight truncate" title={businessName}>
                   {businessName}
                 </Link>
-                {/* Program label → the hub (switch programs, turn one on) */}
-                <Link to="/hub" onClick={() => setSidebarOpen(false)} title={t('nav.switchProgram')}
-                  className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-brand-300 hover:text-white">
-                  <span>SelRic · {t(`programs.${currentProgram}.short`)}</span>
-                  <ChevronsUpDown size={11} />
+                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-brand-300">
+                  <span>{t(`programs.${currentProgram}.name`)}</span>
                   {organization?.plan === 'pilot' && (
-                    <span className="ml-0.5 rounded px-1.5 py-px bg-brand-500/30 text-brand-100 text-[10px] tracking-wide">{t('common.pilot')}</span>
+                    <span className="rounded px-1.5 py-px bg-brand-500/30 text-brand-100 text-[10px] tracking-wide">{t('common.pilot')}</span>
                   )}
-                </Link>
+                </div>
               </div>
             </div>
             <button className="lg:hidden text-white/60 hover:text-white mt-1" onClick={() => setSidebarOpen(false)} aria-label={t('nav.menu')}>

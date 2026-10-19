@@ -8,8 +8,8 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [organization, setOrganization] = useState(null);
-  // Programs this workspace has turned on: [{ program, plan, enabled_at }].
-  // Falls back to Business alone when the org_programs table is not there yet.
+  // The program this workspace runs: [{ program, plan, enabled_at }] from
+  // org_programs. Falls back to Business when the table is not there yet.
   const [programs, setPrograms] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -99,16 +99,6 @@ export function AuthProvider({ children }) {
     setPrograms(data?.length ? data : FALLBACK_PROGRAMS);
   }
 
-  // Settings → Programs: turn a program on for this workspace (admins only, RLS).
-  async function enableProgram(program) {
-    if (!organization?.id) throw new Error('No organization loaded');
-    const { error } = await supabase
-      .from('org_programs')
-      .insert({ org_id: organization.id, program, plan: organization.plan || 'pilot' });
-    if (error && error.code !== '23505') throw error;   // already on = fine
-    await fetchPrograms(organization.id);
-  }
-
   // Settings page: change the business row (name, business_type,
   // accounting_mode). RLS only lets admins update their own organization.
   async function updateOrganization(patch) {
@@ -182,6 +172,9 @@ export function AuthProvider({ children }) {
   // A workspace created before the accounting_mode migration reads as 'full'.
   const accountingMode = organization ? (organization.accounting_mode || 'full') : null;
   const programKeys = programs.map((p) => p.program);
+  // Each SelRic program is its own workspace: the first (normally only) row
+  // is the program this workspace runs. null until the organization loads.
+  const primaryProgram = organization ? (programKeys[0] || 'business') : null;
 
   const value = {
     user,
@@ -190,10 +183,10 @@ export function AuthProvider({ children }) {
     accountingMode,
     programs,
     programKeys,
+    primaryProgram,
     loading,
     isAdmin,
     updateOrganization,
-    enableProgram,
     signUp,
     signIn,
     signOut,
