@@ -14,10 +14,16 @@ import toast from 'react-hot-toast';
 import {
   Plus, Package, Search, ArrowDown, ArrowUp, RotateCcw, ClipboardList,
   Edit3, Trash2, History, Camera, ChevronDown, ChevronRight,
-  Minus, Printer, TrendingDown, AlertTriangle, DollarSign, BarChart2,
+  Minus, Printer, TrendingDown, AlertTriangle, DollarSign, BarChart2, Check, X,
 } from 'lucide-react';
 
-const PRODUCT_CATEGORIES = ['Beer', 'Wine', 'Spirits', 'Soft Drinks', 'Mixers', 'Food', 'Snacks', 'Other'];
+// Product categories belong to the workspace: the dropdown lists whatever its
+// products already use, plus "+ New category…" to type one on the spot. A
+// restaurant / bar starts with the classic set; everyone else starts with
+// just "Other" and builds their own (a bakery: Bread, Cakes…).
+const BAR_CATEGORIES = ['Beer', 'Wine', 'Spirits', 'Soft Drinks', 'Mixers', 'Food', 'Snacks'];
+const DEFAULT_CATEGORY = 'Other';
+const NEW_CATEGORY = '__new__';
 const LOG_TYPES = [
   { value: 'received',   label: 'Received',   icon: ArrowDown,  color: 'text-green-600' },
   { value: 'sold',       label: 'Sold',        icon: ArrowUp,    color: 'text-blue-600' },
@@ -274,7 +280,7 @@ export default function InventoryPage() {
 
   // Product form
   const [productForm, setProductForm] = useState({
-    name: '', category: 'Beer', unit: 'units',
+    name: '', category: DEFAULT_CATEGORY, unit: 'units',
     cost_price: '', sell_price: '',
     reorder_level: '5', current_stock: '0', target_stock: '0',
   });
@@ -282,6 +288,24 @@ export default function InventoryPage() {
   const [imagePreview, setImagePreview] = useState('');
   const [uploadingImg, setUploadingImg] = useState(false);
   const imageInputRef = useRef(null);
+  const [newCategory, setNewCategory]   = useState('');
+
+  // The workspace's categories: what its products use (+ the bar starter set
+  // for a restaurant / bar), "Other" always last.
+  const categories = useMemo(() => {
+    const set = new Set();
+    if (organization?.business_type === 'restaurant_bar') BAR_CATEGORIES.forEach((c) => set.add(c));
+    products.forEach((p) => { const c = (p.category || '').trim(); if (c) set.add(c); });
+    set.delete(DEFAULT_CATEGORY);
+    return [...set].sort((a, b) => a.localeCompare(b)).concat(DEFAULT_CATEGORY);
+  }, [products, organization?.business_type]);
+
+  function commitNewCategory() {
+    const name = newCategory.trim();
+    if (!name) return;
+    setProductForm((f) => ({ ...f, category: name }));
+    setNewCategory('');
+  }
 
   // Log form
   const [logForm, setLogForm] = useState({
@@ -389,7 +413,8 @@ export default function InventoryPage() {
 
   function openAddProduct() {
     setEditingProduct(null);
-    setProductForm({ name:'', category:'Beer', unit:'units', cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
+    setProductForm({ name:'', category: categories[0] || DEFAULT_CATEGORY, unit:'units', cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
+    setNewCategory('');
     setImageFile(null);
     setImagePreview('');
     setShowProductModal(true);
@@ -398,12 +423,13 @@ export default function InventoryPage() {
   function openEditProduct(p) {
     setEditingProduct(p);
     setProductForm({
-      name: p.name, category: p.category || 'Beer', unit: p.unit || 'units',
+      name: p.name, category: p.category || DEFAULT_CATEGORY, unit: p.unit || 'units',
       cost_price: p.cost_price?.toString() || '', sell_price: p.sell_price?.toString() || '',
       reorder_level: p.reorder_level?.toString() || '5',
       current_stock: p.current_stock?.toString() || '0',
       target_stock: p.target_stock?.toString() || '0',
     });
+    setNewCategory('');
     setImageFile(null);
     setImagePreview('');
     setShowProductModal(true);
@@ -411,6 +437,11 @@ export default function InventoryPage() {
 
   async function handleSaveProduct(e) {
     e.preventDefault();
+    let category = productForm.category;
+    if (category === NEW_CATEGORY) {
+      category = newCategory.trim();
+      if (!category) { toast.error('Type a name for the new category'); return; }
+    }
     setSaving(true);
     try {
       let imageUrl = editingProduct?.image_url || '';
@@ -424,7 +455,7 @@ export default function InventoryPage() {
       }
       const payload = {
         name: productForm.name,
-        category: productForm.category,
+        category,
         unit: productForm.unit,
         cost_price: parseFloat(productForm.cost_price) || 0,
         sell_price: parseFloat(productForm.sell_price) || 0,
@@ -569,7 +600,7 @@ export default function InventoryPage() {
           <div className="flex items-center gap-3">
             <select value={dashCat} onChange={(e) => setDashCat(e.target.value)} className="input-field w-auto">
               <option value="">All Categories</option>
-              {PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <span className="text-xs text-surface-400">{dashProducts.length} products in view</span>
           </div>
@@ -689,7 +720,7 @@ export default function InventoryPage() {
             </div>
             <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="input-field w-auto min-w-[140px]">
               <option value="">All Categories</option>
-              {PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="input-field w-auto min-w-[150px]">
               <option value="">All Stock</option>
@@ -834,9 +865,25 @@ export default function InventoryPage() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Category</label>
-              <select value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} className="input-field">
-                {PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              {productForm.category === NEW_CATEGORY ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="input-field"
+                    placeholder="New category name" autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(); } }}
+                  />
+                  <button type="button" onClick={commitNewCategory} disabled={!newCategory.trim()} className="btn-primary px-3 shrink-0" aria-label="Add category"><Check size={16} /></button>
+                  <button type="button" onClick={() => { setProductForm({ ...productForm, category: categories[0] || DEFAULT_CATEGORY }); setNewCategory(''); }} className="btn-ghost px-2 shrink-0" aria-label="Cancel"><X size={16} /></button>
+                </div>
+              ) : (
+                <select value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} className="input-field">
+                  {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {productForm.category && !categories.includes(productForm.category) && (
+                    <option value={productForm.category}>{productForm.category}</option>
+                  )}
+                  <option value={NEW_CATEGORY}>+ New category…</option>
+                </select>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Unit</label>
