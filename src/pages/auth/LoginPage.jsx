@@ -38,10 +38,10 @@ export default function LoginPage() {
         </Link>
         <div>
           <h1 className="font-display text-4xl leading-tight">
-            Run the whole business<br />from one set of books.
+            Everything it takes to run<br />your business, in one place.
           </h1>
           <p className="text-brand-300 mt-4 text-lg max-w-md">
-            Bookkeeping, cash, payroll, inventory and reporting — in one place that balances.
+            Sales, cash, bills, payroll, inventory, your team — and the books underneath it all.
           </p>
         </div>
         <div className="text-xs text-brand-400">

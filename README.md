@@ -1,6 +1,6 @@
-# SelRic — Business management that balances
+# SelRic — Run your small business from one place
 
-A full-stack web app for owner-operators: bookkeeping, cash management, payroll, inventory and reporting in one set of books. Every business that signs up gets its own isolated workspace (see `migrations/2026-10-18-organizations-multi-business.sql`). Built with React, Supabase, and Claude AI.
+A full-stack web app for owner-operators: sales, cash, bills, payroll, inventory, team and the books underneath, in one workspace. Every business that signs up gets its own isolated workspace (see `migrations/2026-10-18-organizations-multi-business.sql`). Built with React, Supabase, and Claude AI.
 
 ## Features
 

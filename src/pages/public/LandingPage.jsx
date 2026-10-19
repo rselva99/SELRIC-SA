@@ -2,54 +2,68 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Check, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 
-// Illustrative numbers only — they add up (opening + rows = closing) so the
-// reconciliation on the page is honest, but they are not any customer's data.
-const LEDGER = {
-  opening: '29,338.10',
+// Illustrative numbers only — a fictional bakery's week. Not any customer's data.
+const WEEK = {
+  business: 'Lopez Bakery',
   rows: [
-    { date: 'Mar 02', label: 'Deposit — card settlement', amount: '+4,812.40' },
-    { date: 'Mar 05', label: 'Check #1187 — rent',        amount: '−7,500.00' },
-    { date: 'Mar 09', label: 'Payroll run',                amount: '−6,214.88' },
-    { date: 'Mar 14', label: 'Deposit — card settlement', amount: '+5,106.75' },
-    { date: 'Mar 21', label: 'Supplier invoice #4471',     amount: '−1,938.20' },
+    { label: 'Cash on hand',          value: '$23,604.17', note: 'operating checking' },
+    { label: 'Sales this week',       value: '$12,418.60', note: 'up 8% on last week', good: true },
+    { label: 'Bills due by Friday',   value: '$4,110.00',  note: '3 invoices' },
+    { label: 'Payroll',               value: '$6,214.88',  note: 'runs Friday' },
+    { label: 'Inventory',             value: '2 items',    note: 'below reorder point', warn: true },
+    { label: 'Open tasks',            value: '4',          note: 'next: renew food permit, Thu' },
   ],
-  closing: '23,604.17',
+  footer: 'Books reconciled through February',
 };
 
-const MODULES = [
+const GROUPS = [
   {
-    group: 'Money in and out',
+    title: 'Know where you stand',
     items: [
-      ['Bookkeeping',             'Upload bank statements and invoices. SelRic reads them and drafts the transactions; you confirm.'],
-      ['Cash management',         'Every check and statement tracked and reconciled to the penny.'],
-      ['General ledger & journal','Double-entry posting, with periods that lock once a month is closed.'],
-      ['Chart of accounts',       'Start from a sensible default, then rename, merge and archive as you grow.'],
+      ['Dashboard',       'Cash, sales and profit on one screen, the moment you open it.'],
+      ['Cash management', 'Every dollar in and out, every check, matched to the bank.'],
+      ['Reports',         'Profit & loss and balance sheet, as PDF, whenever someone asks for them.'],
     ],
   },
   {
-    group: 'Operations',
+    title: 'Run the day-to-day',
     items: [
-      ['Payroll',     'Bring in your payroll register and post it as one clean entry.'],
-      ['Inventory',   'Products, stock levels and reorder alerts.'],
-      ['Assets',      'Equipment, vehicles and their depreciation schedules.'],
-      ['Daily sales', 'Import your point-of-sale recaps instead of retyping them.'],
+      ['Daily sales',      'Import your point-of-sale recaps instead of retyping them.'],
+      ['Inventory',        'Products, stock levels and reorder alerts before you run out.'],
+      ['Payroll',          'Bring in the payroll register and post it in one step.'],
+      ['Calendar & tasks', 'Permits, filings, deliveries and deadlines, next to the numbers they affect.'],
     ],
   },
   {
-    group: 'Close and report',
+    title: 'Grow it and share the load',
     items: [
-      ['Reports',          'Profit & loss, balance sheet and a close package your accountant can open as PDF.'],
-      ['Calendar & tasks', 'The recurring deadlines a business lives by, next to the numbers they affect.'],
-      ['Marketing',        'Campaigns and assets kept with the spend they generate.'],
-      ['Team access',      'Admins see the books; limited users see only what they need.'],
+      ['Marketing',   'Campaigns and creative kept with the spend they generate.'],
+      ['Team access', 'Give staff the parts they need — inventory, tasks — without opening the books.'],
+      ['Assets',      'Equipment and vehicles, with their depreciation tracked for you.'],
+    ],
+  },
+  {
+    title: 'Books, done right',
+    items: [
+      ['Bookkeeping',           'Upload statements and invoices; SelRic drafts the entries, you confirm.'],
+      ['Ledger & journal',      'Double-entry underneath, with months that lock once they close.'],
+      ['Chart of accounts',     'A sensible starter set; rename, merge and archive as you grow.'],
     ],
   },
 ];
 
+const MADE_FOR = [
+  'Restaurants and bars',
+  'Shops and online stores',
+  'Contractors and trades',
+  'Clinics, studios and practices',
+  'Non-profits',
+];
+
 const STEPS = [
-  ['Create your workspace', 'Business name, email, password. You get a private workspace with a starter chart of accounts — nobody else can see it.'],
-  ['Bring in what you have', 'Drop in statements, invoices and payroll PDFs. SelRic extracts the lines; you review and post.'],
-  ['Close the month', 'Reconcile against the bank, lock the period and export the package. Then do it again next month, faster.'],
+  ['Create your workspace',  'Business name, email, password. You get a private workspace with a starter chart of accounts — nobody else can see it.'],
+  ['Bring in what you have', 'Drop in bank statements, invoices and payroll PDFs. SelRic pulls out the lines; you review and post.'],
+  ['Run the week',           'Open the dashboard Monday and see cash, sales and what is due. When month-end comes, close it in minutes instead of a weekend.'],
 ];
 
 export default function LandingPage() {
@@ -68,7 +82,7 @@ export default function LandingPage() {
 
           <nav className="hidden md:flex items-center gap-8 text-sm text-surface-700">
             <a href="#who-we-are" className="hover:text-brand-700">Who we are</a>
-            <a href="#what-it-does" className="hover:text-brand-700">What it does</a>
+            <a href="#what-you-get" className="hover:text-brand-700">What you get</a>
             <a href="#how-it-works" className="hover:text-brand-700">How it works</a>
           </nav>
 
@@ -90,7 +104,7 @@ export default function LandingPage() {
         {menuOpen && (
           <div className="md:hidden border-t border-surface-200 bg-white px-5 py-4 space-y-3 text-sm">
             <a href="#who-we-are" onClick={() => setMenuOpen(false)} className="block py-1">Who we are</a>
-            <a href="#what-it-does" onClick={() => setMenuOpen(false)} className="block py-1">What it does</a>
+            <a href="#what-you-get" onClick={() => setMenuOpen(false)} className="block py-1">What you get</a>
             <a href="#how-it-works" onClick={() => setMenuOpen(false)} className="block py-1">How it works</a>
             <div className="pt-3 flex gap-3">
               <Link to="/login" className="btn-secondary flex-1">Sign in</Link>
@@ -104,19 +118,19 @@ export default function LandingPage() {
       <section className="max-w-6xl mx-auto px-5 sm:px-8 pt-16 pb-20 lg:pt-24 lg:pb-28 grid lg:grid-cols-[1.1fr_0.9fr] gap-12 lg:gap-16 items-center">
         <div>
           <h1 className="font-display text-[2.6rem] leading-[1.05] sm:text-5xl lg:text-[3.6rem] text-brand-950">
-            Run the whole business from one set of books.
+            Everything it takes to run your business, in one place.
           </h1>
           <p className="mt-6 text-lg sm:text-xl text-surface-700 leading-relaxed max-w-[34rem]">
-            SelRic is where your bank statements, invoices, payroll, inventory and reports
-            live together — so the numbers tie out every month and your accountant gets a
-            clean package instead of a shoebox.
+            Sales, cash, bills, payroll, inventory, your team — and the books underneath it all.
+            SelRic is the one screen an owner opens in the morning to know exactly where the
+            business stands.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link to="/signup" className="btn-primary text-base px-6 py-3">
               Create your account <ArrowRight size={18} />
             </Link>
-            <a href="#how-it-works" className="btn-secondary text-base px-6 py-3">
-              See how it works
+            <a href="#what-you-get" className="btn-secondary text-base px-6 py-3">
+              See what's inside
             </a>
           </div>
           <p className="mt-5 text-sm text-surface-500">
@@ -124,46 +138,33 @@ export default function LandingPage() {
           </p>
         </div>
 
-        {/* The reconciliation — rows post in once on load, then stay. */}
-        <figure className="bg-brand-950 text-white rounded-2xl p-6 sm:p-7 shadow-modal" aria-label="Example month reconciliation">
-          <div className="flex items-baseline justify-between">
-            <figcaption className="font-display text-xl">March reconciliation</figcaption>
-            <span className="text-xs text-brand-300">Operating checking</span>
+        {/* The owner's week — lines post in once on load, then stay. */}
+        <figure className="bg-brand-950 text-white rounded-2xl p-6 sm:p-7 shadow-modal" aria-label="Example owner dashboard for one week">
+          <div className="flex items-baseline justify-between gap-4">
+            <figcaption className="font-display text-xl">This week</figcaption>
+            <span className="text-xs text-brand-300 truncate">{WEEK.business}</span>
           </div>
 
-          <dl className="mt-5 font-mono text-[13px] sm:text-sm">
-            <div className="flex justify-between py-2 text-brand-300">
-              <dt>Opening balance</dt>
-              <dd>{LEDGER.opening}</dd>
-            </div>
-            {LEDGER.rows.map((r, i) => (
+          <dl className="mt-4">
+            {WEEK.rows.map((r, i) => (
               <div
-                key={`${r.date}-${r.label}`}
-                className="ledger-row flex items-baseline gap-3 py-2 border-t border-white/10"
-                style={{ animationDelay: `${0.25 + i * 0.18}s` }}
+                key={r.label}
+                className="week-row flex items-baseline justify-between gap-4 py-3 border-t border-white/10"
+                style={{ animationDelay: `${0.25 + i * 0.16}s` }}
               >
-                <dt className="flex-1 flex gap-3 min-w-0">
-                  <span className="text-brand-400 shrink-0">{r.date}</span>
-                  <span className="truncate font-body text-white/90">{r.label}</span>
+                <dt className="min-w-0">
+                  <div className="text-[15px] text-white/90">{r.label}</div>
+                  <div className={`text-xs mt-0.5 ${r.good ? 'text-brand-300' : r.warn ? 'text-amber-300' : 'text-brand-400'}`}>
+                    {r.note}
+                  </div>
                 </dt>
-                <dd className={r.amount.startsWith('+') ? 'text-brand-300' : 'text-white'}>{r.amount}</dd>
+                <dd className="font-mono text-[15px] sm:text-base text-white shrink-0">{r.value}</dd>
               </div>
             ))}
-            <div className="ledger-row flex justify-between pt-3 mt-1 border-t border-white/20" style={{ animationDelay: '1.3s' }}>
-              <dt className="font-body text-brand-200">Statement balance</dt>
-              <dd>{LEDGER.closing}</dd>
-            </div>
-            <div className="ledger-row flex justify-between py-1" style={{ animationDelay: '1.45s' }}>
-              <dt className="font-body text-brand-200">Book balance</dt>
-              <dd>{LEDGER.closing}</dd>
-            </div>
-            <div className="ledger-row flex justify-between items-center pt-3 mt-2 border-t border-white/20" style={{ animationDelay: '1.7s' }}>
-              <dt className="font-body text-white">Difference</dt>
-              <dd className="flex items-center gap-2 text-brand-300">
-                0.00
-                <span className="inline-flex items-center gap-1 rounded-full bg-brand-600 text-white font-body text-xs px-2 py-0.5">
-                  <Check size={12} /> Reconciled
-                </span>
+            <div className="week-row flex items-center justify-between gap-4 pt-4 mt-1 border-t border-white/20" style={{ animationDelay: '1.3s' }}>
+              <dt className="text-sm text-brand-200">{WEEK.footer}</dt>
+              <dd className="inline-flex items-center gap-1 rounded-full bg-brand-600 text-white text-xs px-2 py-0.5 shrink-0">
+                <Check size={12} /> Reconciled
               </dd>
             </div>
           </dl>
@@ -178,41 +179,42 @@ export default function LandingPage() {
           </h2>
           <div className="border-l-2 border-brand-500 pl-6 sm:pl-8 max-w-[62ch] text-lg leading-relaxed text-surface-800 space-y-5">
             <p>
-              SelRic is a small software company in St. Louis, Missouri. It started as the back
-              office of one restaurant: bank statements that didn't match the books, checks nobody
-              could name, tips and payroll tangled together, and an accountant waiting on a clean
-              year-end.
+              Running a small business means being the owner, the manager, the bookkeeper, the
+              buyer and the marketing department — usually before lunch. Every tool we tried was
+              built for one of those hats. SelRic is built for the person wearing all of them.
             </p>
             <p>
-              We built the tool we needed to close those books properly — statement by statement,
-              check by check — and then saw that a bakery, a contractor, a shop or a clinic needs
-              exactly the same thing. So SelRic became business management for any owner-operator:
-              the books, the cash, the people and the reporting, in one place that balances.
+              We are a small software company in St. Louis, Missouri. SelRic started inside one
+              restaurant, where the sales lived in the point-of-sale, the bills in a drawer, payroll
+              in a portal and the books nowhere in particular. We put it all in one place, got the
+              business to a clean year-end, and realized a bakery, a contractor, a shop or a clinic
+              needs exactly the same thing.
             </p>
             <p className="text-surface-600 text-base">
-              Built by a finance analyst, for people who would rather run their business than
-              reconcile it.
+              Built by a finance analyst who runs small ventures of his own, for people who would
+              rather build their business than chase it across five apps.
             </p>
           </div>
         </div>
       </section>
 
-      {/* ── What it does ────────────────────────────────────────────────── */}
-      <section id="what-it-does" className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
+      {/* ── What you get ────────────────────────────────────────────────── */}
+      <section id="what-you-get" className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
         <div className="max-w-[40rem]">
-          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">What it does</h2>
+          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">What you get</h2>
           <p className="mt-4 text-lg text-surface-700">
-            Every module reads from the same ledger, so a payroll run, a supplier invoice and a
-            card deposit end up in the same place your reports are built from.
+            One workspace for everything you juggle. Each part reads from the same numbers, so
+            a sale, a bill and a payroll run show up in your cash, your tasks and your reports
+            without you copying anything.
           </p>
         </div>
 
-        <div className="mt-12 grid md:grid-cols-3 gap-10 md:gap-8">
-          {MODULES.map((m) => (
-            <div key={m.group}>
-              <h3 className="font-display text-xl text-brand-800 pb-3 border-b-2 border-brand-900">{m.group}</h3>
+        <div className="mt-12 grid sm:grid-cols-2 lg:grid-cols-4 gap-10 sm:gap-8">
+          {GROUPS.map((g) => (
+            <div key={g.title}>
+              <h3 className="font-display text-xl text-brand-800 pb-3 border-b-2 border-brand-900">{g.title}</h3>
               <dl className="divide-y divide-surface-200">
-                {m.items.map(([name, desc]) => (
+                {g.items.map(([name, desc]) => (
                   <div key={name} className="py-4">
                     <dt className="font-semibold text-surface-900">{name}</dt>
                     <dd className="mt-1 text-[15px] leading-relaxed text-surface-600">{desc}</dd>
@@ -221,6 +223,18 @@ export default function LandingPage() {
               </dl>
             </div>
           ))}
+        </div>
+
+        <div className="mt-16 pt-8 border-t border-surface-200 flex flex-col lg:flex-row lg:items-baseline gap-4 lg:gap-10">
+          <h3 className="font-display text-xl text-brand-950 shrink-0">Made for owner-operators</h3>
+          <ul className="flex flex-wrap gap-x-8 gap-y-2 text-surface-700">
+            {MADE_FOR.map((m) => (
+              <li key={m} className="flex items-center gap-2">
+                <Check size={16} className="text-brand-600 shrink-0" />
+                {m}
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 
@@ -246,10 +260,10 @@ export default function LandingPage() {
       <section className="bg-brand-950 text-white">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-16 lg:py-20 flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-16">
           <div className="flex-1">
-            <h2 className="font-display text-3xl sm:text-4xl leading-tight">Start with the books you have.</h2>
+            <h2 className="font-display text-3xl sm:text-4xl leading-tight">Stop running the business out of five apps and a notebook.</h2>
             <p className="mt-4 text-lg text-brand-200 max-w-[36rem]">
               Your workspace is ready the moment you sign up. Bring last month's statement and
-              see it reconcile.
+              see the whole picture by tonight.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
