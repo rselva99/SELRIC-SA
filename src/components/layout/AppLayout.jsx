@@ -22,8 +22,10 @@ import {
   Users2,
   ArrowLeftRight,
   Settings,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { PROGRAMS, DEFAULT_PROGRAM } from '../../programs';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
 // Which groups show depends on the workspace's accounting mode
@@ -105,6 +107,9 @@ export default function AppLayout() {
 
   const groups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? SIMPLE_GROUPS : FULL_GROUPS;
   const businessName = organization?.name || 'SelRic';
+  // Which program this URL belongs to: a program mounted under its own prefix,
+  // else Business (which keeps the root). The label links to the hub.
+  const currentProgram = PROGRAMS.find((p) => p.home !== '/' && location.pathname.startsWith(p.home))?.key || DEFAULT_PROGRAM;
 
   async function handleSignOut() {
     await signOut();
@@ -133,22 +138,25 @@ export default function AppLayout() {
         {/* Business header */}
         <div className="px-4 pt-5 pb-4 border-b border-white/10">
           <div className="flex items-start justify-between gap-3">
-            <Link to="/" className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 shrink-0 rounded-xl bg-brand-500 flex items-center justify-center font-display text-base tracking-wide">
+            <div className="flex items-center gap-3 min-w-0">
+              <Link to="/" className="w-11 h-11 shrink-0 rounded-xl bg-brand-500 flex items-center justify-center font-display text-base tracking-wide">
                 {monogram(businessName)}
-              </div>
+              </Link>
               <div className="min-w-0">
-                <div className="font-display text-[17px] leading-tight truncate" title={businessName}>
+                <Link to="/" className="block font-display text-[17px] leading-tight truncate" title={businessName}>
                   {businessName}
-                </div>
-                <div className="text-[11px] text-brand-300 mt-0.5 flex items-center gap-1.5">
-                  SelRic
+                </Link>
+                {/* Program label → the hub (switch programs, turn one on) */}
+                <Link to="/hub" onClick={() => setSidebarOpen(false)} title={t('nav.switchProgram')}
+                  className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-brand-300 hover:text-white">
+                  <span>SelRic · {t(`programs.${currentProgram}.short`)}</span>
+                  <ChevronsUpDown size={11} />
                   {organization?.plan === 'pilot' && (
-                    <span className="rounded px-1.5 py-px bg-brand-500/30 text-brand-100 text-[10px] tracking-wide">{t('common.pilot')}</span>
+                    <span className="ml-0.5 rounded px-1.5 py-px bg-brand-500/30 text-brand-100 text-[10px] tracking-wide">{t('common.pilot')}</span>
                   )}
-                </div>
+                </Link>
               </div>
-            </Link>
+            </div>
             <button className="lg:hidden text-white/60 hover:text-white mt-1" onClick={() => setSidebarOpen(false)} aria-label={t('nav.menu')}>
               <X size={20} />
             </button>

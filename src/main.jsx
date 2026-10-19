@@ -7,6 +7,8 @@ import { DataProvider } from './contexts/DataContext';
 import { I18nProvider } from './i18n/I18nContext';
 import AppLayout from './components/layout/AppLayout';
 import LandingPage from './pages/public/LandingPage';
+import ProgramPage from './pages/public/ProgramPage';
+import HubPage from './pages/hub/HubPage';
 import LoginPage from './pages/auth/LoginPage';
 import SignupPage from './pages/auth/SignupPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
@@ -76,9 +78,12 @@ function App() {
             <Route path="/signup" element={<PublicRoute><SignupPage /></PublicRoute>} />
             <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
+            {/* Public page per program — readable signed in or out. */}
+            <Route path="/programs/:key" element={<ProgramPage />} />
 
             <Route path="/" element={<RootGate />}>
               <Route index element={<DashboardPage />} />
+              <Route path="hub" element={<ProtectedRoute><HubPage /></ProtectedRoute>} />
               {/* Full accounting package — hidden (and redirected) in simple mode */}
               <Route path="accountant" element={<ProtectedRoute adminOnly fullOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
               <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly fullOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />

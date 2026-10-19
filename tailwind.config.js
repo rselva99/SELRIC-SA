@@ -38,7 +38,26 @@ export default {
           red: '#e03131',
           blue: '#1971c2',
           teal: '#0c8599',
-        }
+        },
+        // Program accents (see src/programs/index.js). Batavia Ganadería:
+        // ranch green for cattle, clay for pigs — the prototype's own palette.
+        ranch: {
+          50: '#e2f2e8',
+          100: '#c6e6d2',
+          200: '#a6d6ba',
+          500: '#1e7a4c',
+          600: '#1a6a42',
+          700: '#155a38',
+          900: '#0e3d26',
+        },
+        clay: {
+          50: '#f8e6dd',
+          100: '#f0cdbc',
+          200: '#e6b7a0',
+          500: '#b4522a',
+          600: '#9e4624',
+          700: '#8c3d1d',
+        },
       },
       fontFamily: {
         display: ['"DM Serif Display"', 'Georgia', 'serif'],

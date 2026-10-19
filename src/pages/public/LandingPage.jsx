@@ -1,12 +1,16 @@
-import { Link } from 'react-router-dom';
-import { ArrowRight, Check, Menu, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { useT, LangToggle } from '../../i18n/I18nContext';
+import { useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { ArrowRight, Check, Plus } from 'lucide-react';
+import { useT } from '../../i18n/I18nContext';
+import { PROGRAMS, accentOf } from '../../programs';
+import SiteHeader from '../../components/public/SiteHeader';
+import SiteFooter from '../../components/public/SiteFooter';
+import WeekCard from '../../components/public/WeekCard';
 import WaitlistForm from '../../components/WaitlistForm';
 
+// SelRic home: one account, a program for each thing you run.
+// Each program also has its own page at /programs/<key> (ProgramPage).
 export default function LandingPage() {
-  const [menuOpen, setMenuOpen] = useState(false);
   const { t } = useT();
   const { hash } = useLocation();
 
@@ -17,205 +21,148 @@ export default function LandingPage() {
     const el = document.querySelector(hash);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [hash]);
-  const year = new Date().getFullYear();
-  const week = t('landing.week');
-  const groups = t('landing.groups');
-  const madeFor = t('landing.madeFor');
-  const steps = t('landing.steps');
+
+  const steps = t('site.steps');
+  const businessWeek = t('landing.week');
+  const ranchWeek = t('programs.ganaderia.page.week');
+  const statusLabel = (p) => t(p.status === 'live' ? 'site.statusLive' : p.status === 'pilot' ? 'site.statusPilot' : 'site.statusSoon');
 
   return (
     <div className="min-h-screen bg-white text-surface-900 font-body">
-      {/* ── Nav ─────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-surface-200">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 h-16 flex items-center justify-between gap-6">
-          <Link to="/" className="flex items-center gap-2.5" aria-label="SelRic home">
-            <span className="w-8 h-8 rounded-lg bg-brand-600 text-white font-display text-base flex items-center justify-center">S</span>
-            <span className="font-display text-xl text-brand-950">SelRic</span>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-8 text-sm text-surface-700">
-            <a href="#who-we-are" className="hover:text-brand-700">{t('landing.navWho')}</a>
-            <a href="#what-you-get" className="hover:text-brand-700">{t('landing.navWhat')}</a>
-            <a href="#how-it-works" className="hover:text-brand-700">{t('landing.navHow')}</a>
-            <a href="#pricing" className="hover:text-brand-700">{t('landing.navPricing')}</a>
-          </nav>
-
-          <div className="hidden md:flex items-center gap-3">
-            <LangToggle />
-            <Link to="/login" className="btn-ghost text-surface-700">{t('common.signIn')}</Link>
-            <a href="#waitlist" className="btn-primary">{t('landing.joinWaitlist')}</a>
-          </div>
-
-          <button
-            className="md:hidden p-2 text-surface-700"
-            onClick={() => setMenuOpen((o) => !o)}
-            aria-expanded={menuOpen}
-            aria-label="Menu"
-          >
-            {menuOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
-        </div>
-
-        {menuOpen && (
-          <div className="md:hidden border-t border-surface-200 bg-white px-5 py-4 space-y-3 text-sm">
-            <a href="#who-we-are" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navWho')}</a>
-            <a href="#what-you-get" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navWhat')}</a>
-            <a href="#how-it-works" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navHow')}</a>
-            <a href="#pricing" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navPricing')}</a>
-            <div className="pt-3 flex items-center gap-3">
-              <LangToggle />
-              <Link to="/login" className="btn-secondary flex-1">{t('common.signIn')}</Link>
-              <a href="#waitlist" onClick={() => setMenuOpen(false)} className="btn-primary flex-1">{t('landing.joinWaitlist')}</a>
-            </div>
-          </div>
-        )}
-      </header>
+      <SiteHeader />
 
       {/* ── Hero ────────────────────────────────────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-5 sm:px-8 pt-16 pb-20 lg:pt-24 lg:pb-28 grid lg:grid-cols-[1.1fr_0.9fr] gap-12 lg:gap-16 items-center">
+      <section className="max-w-6xl mx-auto px-5 sm:px-8 pt-16 pb-24 lg:pt-24 lg:pb-32 grid lg:grid-cols-[1.05fr_0.95fr] gap-14 lg:gap-16 items-center">
         <div>
-          <h1 className="font-display text-[2.6rem] leading-[1.05] sm:text-5xl lg:text-[3.6rem] text-brand-950">
-            {t('landing.heroTitle')}
+          <p className="text-sm font-semibold text-brand-700 tracking-wide">{t('site.heroEyebrow')}</p>
+          <h1 className="mt-4 font-display text-[2.6rem] leading-[1.05] sm:text-5xl lg:text-[3.6rem] text-brand-950">
+            {t('site.heroTitle')}
           </h1>
           <p className="mt-6 text-lg sm:text-xl text-surface-700 leading-relaxed max-w-[34rem]">
-            {t('landing.heroBody')}
+            {t('site.heroBody')}
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <a href="#waitlist" className="btn-primary text-base px-6 py-3">
               {t('landing.joinWaitlist')} <ArrowRight size={18} />
             </a>
-            <a href="#what-you-get" className="btn-secondary text-base px-6 py-3">
-              {t('landing.heroSecondary')}
+            <a href="#programs" className="btn-secondary text-base px-6 py-3">
+              {t('site.heroSecondary')}
             </a>
           </div>
-          <p className="mt-5 text-sm text-surface-500">
-            {t('landing.heroNoteWaitlist')}
-          </p>
+          <p className="mt-5 text-sm text-surface-500">{t('site.heroNote')}</p>
         </div>
 
-        {/* The owner's week — lines post in once on load, then stay. */}
-        <figure className="bg-brand-950 text-white rounded-2xl p-6 sm:p-7 shadow-modal" aria-label="Example owner dashboard for one week">
-          <div className="flex items-baseline justify-between gap-4">
-            <figcaption className="font-display text-xl">{week.title}</figcaption>
-            <span className="text-xs text-brand-300 truncate">{week.business}</span>
-          </div>
-
-          <dl className="mt-4">
-            {week.rows.map(([label, value, note], i) => (
-              <div
-                key={label}
-                className="week-row flex items-baseline justify-between gap-4 py-3 border-t border-white/10"
-                style={{ animationDelay: `${0.25 + i * 0.16}s` }}
-              >
-                <dt className="min-w-0">
-                  <div className="text-[15px] text-white/90">{label}</div>
-                  <div className={`text-xs mt-0.5 ${i === 1 ? 'text-brand-300' : i === 4 ? 'text-amber-300' : 'text-brand-400'}`}>
-                    {note}
-                  </div>
-                </dt>
-                <dd className="font-mono text-[15px] sm:text-base text-white shrink-0">{value}</dd>
-              </div>
-            ))}
-            <div className="week-row flex items-center justify-between gap-4 pt-4 mt-1 border-t border-white/20" style={{ animationDelay: '1.3s' }}>
-              <dt className="text-sm text-brand-200">{week.footer}</dt>
-              <dd className="inline-flex items-center gap-1 rounded-full bg-brand-600 text-white text-xs px-2 py-0.5 shrink-0">
-                <Check size={12} /> {week.badge}
-              </dd>
-            </div>
-          </dl>
-        </figure>
-      </section>
-
-      {/* ── Who we are ──────────────────────────────────────────────────── */}
-      <section id="who-we-are" className="bg-brand-50 border-y border-brand-100">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24 grid lg:grid-cols-[0.8fr_1.2fr] gap-10 lg:gap-16">
-          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">
-            {t('landing.whoTitle')}
-          </h2>
-          <div className="border-l-2 border-brand-500 pl-6 sm:pl-8 max-w-[62ch] text-lg leading-relaxed text-surface-800 space-y-5">
-            <p>{t('landing.who1')}</p>
-            <p>{t('landing.who2')}</p>
-            <p className="text-surface-600 text-base">{t('landing.who3')}</p>
-          </div>
+        {/* Two programs, one account: the finca's week sits behind the business's. */}
+        <div className="relative mt-6 lg:mt-0 sm:pt-14">
+          <WeekCard week={ranchWeek} tone="bg-ranch-900" animate={false} compact
+            className="hidden sm:block absolute top-0 left-5 right-5 -rotate-[1.5deg] origin-bottom-left" />
+          <WeekCard week={businessWeek} tone="bg-brand-950" className="relative" />
         </div>
       </section>
 
-      {/* ── What you get ────────────────────────────────────────────────── */}
-      <section id="what-you-get" className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
-        <div className="max-w-[40rem]">
-          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('landing.whatTitle')}</h2>
-          <p className="mt-4 text-lg text-surface-700">{t('landing.whatBody')}</p>
-        </div>
+      {/* ── Programs ────────────────────────────────────────────────────── */}
+      <section id="programs" className="scroll-mt-20 bg-surface-50 border-y border-surface-200">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
+          <div className="max-w-[40rem]">
+            <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('site.programsTitle')}</h2>
+            <p className="mt-4 text-lg text-surface-700">{t('site.programsBody')}</p>
+          </div>
 
-        <div className="mt-12 grid sm:grid-cols-2 lg:grid-cols-4 gap-10 sm:gap-8">
-          {groups.map((g) => (
-            <div key={g.title}>
-              <h3 className="font-display text-xl text-brand-800 pb-3 border-b-2 border-brand-900">{g.title}</h3>
-              <dl className="divide-y divide-surface-200">
-                {g.items.map(([name, desc]) => (
-                  <div key={name} className="py-4">
-                    <dt className="font-semibold text-surface-900">{name}</dt>
-                    <dd className="mt-1 text-[15px] leading-relaxed text-surface-600">{desc}</dd>
+          <div className="mt-12 grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {PROGRAMS.map((p) => {
+              const a = accentOf(p);
+              const bullets = t(`programs.${p.key}.bullets`);
+              return (
+                <article key={p.key} className={`rounded-2xl bg-white border ${a.border} p-6 sm:p-7 flex flex-col shadow-card`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className={`w-12 h-12 rounded-xl flex items-center justify-center ${a.tile}`}><p.icon size={24} /></span>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${p.status === 'live' ? 'bg-brand-100 text-brand-800' : 'bg-amber-100 text-amber-800'}`}>
+                      {statusLabel(p)}
+                    </span>
                   </div>
-                ))}
-              </dl>
-            </div>
-          ))}
-        </div>
+                  <h3 className="font-display text-2xl text-brand-950 mt-5">{t(`programs.${p.key}.name`)}</h3>
+                  <p className="text-surface-700 mt-2 leading-relaxed">{t(`programs.${p.key}.tagline`)}</p>
+                  <ul className="mt-5 space-y-2 flex-1">
+                    {bullets.map((b) => (
+                      <li key={b} className="flex gap-2.5 text-[15px] text-surface-700">
+                        <Check size={17} className={`${a.text} shrink-0 mt-0.5`} /> <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-6 pt-5 border-t border-surface-100 flex items-center justify-between gap-3">
+                    <span className="text-sm text-surface-600">{t(`programs.${p.key}.price`)}</span>
+                    <Link to={`/programs/${p.key}`} className={`inline-flex items-center gap-1 text-sm font-medium ${a.text} hover:underline`}>
+                      {t('site.seeProgram', { name: t(`programs.${p.key}.short`) })} <ArrowRight size={15} />
+                    </Link>
+                  </div>
+                </article>
+              );
+            })}
 
-        <div className="mt-16 pt-8 border-t border-surface-200 flex flex-col lg:flex-row lg:items-baseline gap-4 lg:gap-10">
-          <h3 className="font-display text-xl text-brand-950 shrink-0">{t('landing.madeForTitle')}</h3>
-          <ul className="flex flex-wrap gap-x-8 gap-y-2 text-surface-700">
-            {madeFor.map((m) => (
-              <li key={m} className="flex items-center gap-2">
-                <Check size={16} className="text-brand-600 shrink-0" />
-                {m}
-              </li>
-            ))}
-          </ul>
+            <article className="rounded-2xl border-2 border-dashed border-surface-300 p-6 sm:p-7 flex flex-col">
+              <span className="w-12 h-12 rounded-xl flex items-center justify-center bg-surface-100 text-surface-600"><Plus size={24} /></span>
+              <h3 className="font-display text-2xl text-brand-950 mt-5">{t('site.nextTitle')}</h3>
+              <p className="text-surface-700 mt-2 leading-relaxed flex-1">{t('site.nextBody')}</p>
+              <a href="#waitlist" className="btn-secondary mt-6 self-start">{t('site.nextCta')} <ArrowRight size={16} /></a>
+            </article>
+          </div>
         </div>
       </section>
 
       {/* ── How it works ────────────────────────────────────────────────── */}
-      <section id="how-it-works" className="border-t border-surface-200">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
-          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('landing.howTitle')}</h2>
-          <ol className="mt-12 grid md:grid-cols-3 gap-10 md:gap-8">
-            {steps.map(([title, desc], i) => (
-              <li key={title} className="relative pl-14">
-                <span className="absolute left-0 top-0 w-10 h-10 rounded-full bg-brand-950 text-white font-display text-lg flex items-center justify-center">
-                  {i + 1}
-                </span>
-                <h3 className="font-semibold text-lg text-surface-900 pt-1.5">{title}</h3>
-                <p className="mt-2 text-[15px] leading-relaxed text-surface-600">{desc}</p>
-              </li>
-            ))}
-          </ol>
+      <section id="how-it-works" className="scroll-mt-20 max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
+        <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('site.howTitle')}</h2>
+        <ol className="mt-12 grid md:grid-cols-3 gap-10 md:gap-8">
+          {steps.map(([title, desc], i) => (
+            <li key={title} className="relative pl-14">
+              <span className="absolute left-0 top-0 w-10 h-10 rounded-full bg-brand-950 text-white font-display text-lg flex items-center justify-center">
+                {i + 1}
+              </span>
+              <h3 className="font-semibold text-lg text-surface-900 pt-1.5">{title}</h3>
+              <p className="mt-2 text-[15px] leading-relaxed text-surface-600">{desc}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {/* ── Who we are ──────────────────────────────────────────────────── */}
+      <section id="who-we-are" className="scroll-mt-20 bg-brand-50 border-y border-brand-100">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24 grid lg:grid-cols-[0.8fr_1.2fr] gap-10 lg:gap-16">
+          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('site.whoTitle')}</h2>
+          <div className="border-l-2 border-brand-500 pl-6 sm:pl-8 max-w-[62ch] text-lg leading-relaxed text-surface-800 space-y-5">
+            <p>{t('site.who1')}</p>
+            <p className="text-surface-600 text-base">{t('site.who2')}</p>
+          </div>
         </div>
       </section>
 
       {/* ── Pricing + waitlist ──────────────────────────────────────────── */}
-      <section id="pricing" className="bg-brand-50 border-t border-brand-100">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24 grid lg:grid-cols-[0.9fr_1.1fr] gap-10 lg:gap-16 items-start">
+      <section id="pricing" className="scroll-mt-20">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24 grid lg:grid-cols-[1.1fr_0.9fr] gap-10 lg:gap-16 items-start">
           <div>
-            <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('pricing.title')}</h2>
-            <p className="mt-4 text-lg text-surface-700 max-w-[34rem]">{t('pricing.body')}</p>
+            <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('site.pricingTitle')}</h2>
+            <p className="mt-4 text-lg text-surface-700 max-w-[34rem]">{t('site.pricingBody')}</p>
 
-            <div className="mt-8 rounded-2xl bg-brand-950 text-white p-6 sm:p-7 shadow-modal">
-              <div className="text-brand-300 text-sm">{t('pricing.from')}</div>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="font-display text-5xl">{t('pricing.amount')}</span>
-                <span className="text-brand-200">{t('pricing.per')}</span>
+            <div className="mt-8 rounded-2xl bg-brand-950 text-white shadow-modal overflow-hidden">
+              <div className="hidden sm:grid grid-cols-[1.1fr_0.8fr_1.6fr] gap-4 px-6 py-3 text-[11px] font-semibold uppercase tracking-wider text-brand-300 border-b border-white/10">
+                <span>{t('site.pricingProgram')}</span><span>{t('site.pricingPrice')}</span><span>{t('site.pricingIncludes')}</span>
               </div>
-              <ul className="mt-6 space-y-2.5">
-                {t('pricing.includes').map((line) => (
-                  <li key={line} className="flex gap-3 text-[15px] leading-relaxed text-white/90">
-                    <Check size={18} className="text-brand-300 shrink-0 mt-0.5" />
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-6 pt-5 border-t border-white/15 text-sm text-brand-200">{t('pricing.note')}</p>
+              {PROGRAMS.map((p) => (
+                <div key={p.key} className="grid sm:grid-cols-[1.1fr_0.8fr_1.6fr] gap-1 sm:gap-4 px-6 py-5 border-b border-white/10">
+                  <div className="font-display text-xl">{t(`programs.${p.key}.name`)}</div>
+                  <div>
+                    <div className="font-mono text-[15px]">{t(`programs.${p.key}.price`)}</div>
+                    <div className="text-xs text-brand-300 mt-0.5">{t(`programs.${p.key}.priceNote`)}</div>
+                  </div>
+                  <div className="text-[15px] text-white/85 leading-relaxed">{t(`programs.${p.key}.includes`)}</div>
+                </div>
+              ))}
+              <div className="grid sm:grid-cols-[1.1fr_0.8fr_1.6fr] gap-1 sm:gap-4 px-6 py-5 border-b border-white/10">
+                <div className="font-display text-xl">{t('site.bundleName')}</div>
+                <div className="font-mono text-[15px] text-brand-200">{t('site.bundlePrice')}</div>
+                <div className="text-[15px] text-white/85 leading-relaxed">{t('site.bundleIncludes')}</div>
+              </div>
+              <p className="px-6 py-5 text-sm text-brand-200">{t('site.pricingNote')}</p>
             </div>
           </div>
 
@@ -229,8 +176,8 @@ export default function LandingPage() {
       <section className="bg-brand-950 text-white">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-16 lg:py-20 flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-16">
           <div className="flex-1">
-            <h2 className="font-display text-3xl sm:text-4xl leading-tight">{t('landing.ctaTitleWaitlist')}</h2>
-            <p className="mt-4 text-lg text-brand-200 max-w-[36rem]">{t('landing.ctaBodyWaitlist')}</p>
+            <h2 className="font-display text-3xl sm:text-4xl leading-tight">{t('site.ctaTitle')}</h2>
+            <p className="mt-4 text-lg text-brand-200 max-w-[36rem]">{t('site.ctaBody')}</p>
           </div>
           <div className="flex flex-wrap gap-3">
             <a href="#waitlist" className="btn-primary bg-brand-500 hover:bg-brand-400 text-base px-6 py-3">
@@ -243,21 +190,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Footer ──────────────────────────────────────────────────────── */}
-      <footer className="border-t border-surface-200">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-sm text-surface-500">
-          <div className="flex items-center gap-2.5">
-            <span className="w-6 h-6 rounded bg-brand-600 text-white font-display text-xs flex items-center justify-center">S</span>
-            <span>{t('landing.footerCompany')}</span>
-          </div>
-          <div className="flex gap-6">
-            <Link to="/login" className="hover:text-brand-700">{t('common.signIn')}</Link>
-            <a href="#waitlist" className="hover:text-brand-700">{t('landing.joinWaitlist')}</a>
-            <a href="#who-we-are" className="hover:text-brand-700">{t('landing.navWho')}</a>
-          </div>
-          <div>&copy; {year} SelRic LLC</div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

@@ -8,6 +8,9 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [organization, setOrganization] = useState(null);
+  // Programs this workspace has turned on: [{ program, plan, enabled_at }].
+  // Falls back to Business alone when the org_programs table is not there yet.
+  const [programs, setPrograms] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,6 +28,7 @@ export function AuthProvider({ children }) {
       else {
         setProfile(null);
         setOrganization(null);
+        setPrograms([]);
         setLoading(false);
       }
     });
@@ -74,6 +78,35 @@ export function AuthProvider({ children }) {
     }
     setOrganization(data);
     setReportBusinessName(data?.name);
+    await fetchPrograms(orgId);
+  }
+
+  const FALLBACK_PROGRAMS = [{ program: 'business', plan: 'pilot', enabled_at: null }];
+
+  async function fetchPrograms(orgId) {
+    if (!orgId) { setPrograms([]); return; }
+    const { data, error } = await supabase
+      .from('org_programs')
+      .select('program, plan, enabled_at')
+      .eq('org_id', orgId)
+      .order('enabled_at', { ascending: true });
+    if (error) {
+      // Table missing (migration not applied yet) or any read error: Business only.
+      if (error.code !== '42P01') console.warn('org_programs read failed:', error.message);
+      setPrograms(FALLBACK_PROGRAMS);
+      return;
+    }
+    setPrograms(data?.length ? data : FALLBACK_PROGRAMS);
+  }
+
+  // Settings → Programs: turn a program on for this workspace (admins only, RLS).
+  async function enableProgram(program) {
+    if (!organization?.id) throw new Error('No organization loaded');
+    const { error } = await supabase
+      .from('org_programs')
+      .insert({ org_id: organization.id, program, plan: organization.plan || 'pilot' });
+    if (error && error.code !== '23505') throw error;   // already on = fine
+    await fetchPrograms(organization.id);
   }
 
   // Settings page: change the business row (name, business_type,
@@ -125,6 +158,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setProfile(null);
     setOrganization(null);
+    setPrograms([]);
     setReportBusinessName(null);
   }
 
@@ -147,15 +181,19 @@ export function AuthProvider({ children }) {
   // it as "don't redirect, show everything" to avoid a flash on first paint).
   // A workspace created before the accounting_mode migration reads as 'full'.
   const accountingMode = organization ? (organization.accounting_mode || 'full') : null;
+  const programKeys = programs.map((p) => p.program);
 
   const value = {
     user,
     profile,
     organization,
     accountingMode,
+    programs,
+    programKeys,
     loading,
     isAdmin,
     updateOrganization,
+    enableProgram,
     signUp,
     signIn,
     signOut,

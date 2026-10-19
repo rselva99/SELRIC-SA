@@ -108,5 +108,10 @@ and safe to re-run.
 - `2026-10-19-accounting-mode.sql` — `organizations.accounting_mode` (`full`/`simple`, column default `full` so every
   existing workspace keeps the full package) and `handle_new_user()` creates new self-serve workspaces as `simple`.
   Settings → Accounting switches it (existing admin UPDATE policy). Both modes write the same tables — the mode only
-  decides which pages the sidebar shows. Additive, idempotent, tested on the replica. **Not yet applied.**
+  decides which pages the sidebar shows. Additive, idempotent, tested on the replica. **Applied 2026-10-19.**
+- `2026-10-19-programs.sql` — SelRic as a platform: `org_programs` (one row per program a workspace runs; every
+  existing workspace backfilled with `business`), `waitlist.program`, `invite_codes.program`, and
+  `handle_new_user()` gives a new workspace its first program row (the invite's program, else `business`).
+  Admin-only writes through RLS. Additive, idempotent, tested on the replica. The app assumes `business` when the
+  table is absent. **Not yet applied.**
 

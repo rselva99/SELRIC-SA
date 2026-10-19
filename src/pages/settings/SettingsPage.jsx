@@ -5,15 +5,30 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { BUSINESS_TYPES } from '../auth/SignupPage';
 import Spinner from '../../components/ui/Spinner';
-import { Building2, BookOpen, ArrowLeftRight, Check, Languages, BadgeCheck, ArrowRight } from 'lucide-react';
+import { Building2, BookOpen, ArrowLeftRight, Check, Languages, BadgeCheck, ArrowRight, LayoutGrid } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { PROGRAMS, accentOf } from '../../programs';
 
-// Workspace settings (admins only): the business, how it keeps its books,
-// language and plan. Writes go to the organization row — RLS allows admins to
-// update only their own.
+// Workspace settings (admins only): the business, its programs, how it keeps
+// its books, language and plan. Writes go to the organization row and to
+// org_programs — RLS allows admins to update only their own.
 export default function SettingsPage() {
-  const { organization, accountingMode, updateOrganization } = useAuth();
+  const { organization, accountingMode, updateOrganization, programKeys, enableProgram } = useAuth();
   const { t } = useT();
+
+  // ── Programs ─────────────────────────────────────────────────────────────
+  const [busyProgram, setBusyProgram] = useState('');
+  async function turnOn(key) {
+    setBusyProgram(key);
+    try {
+      await enableProgram(key);
+      toast.success(t('settings.programEnabled', { name: t(`programs.${key}.name`) }));
+    } catch (err) {
+      toast.error(err.message || t('settings.saveFailed'));
+    } finally {
+      setBusyProgram('');
+    }
+  }
 
   // ── Business ─────────────────────────────────────────────────────────────
   const [biz, setBiz] = useState({ name: '', business_type: 'other' });
@@ -96,6 +111,42 @@ export default function SettingsPage() {
             </button>
           </div>
         </form>
+      </section>
+
+      {/* ── Programs ─────────────────────────────────────────────────── */}
+      <section className="card mt-6">
+        <header className="flex items-center gap-3 px-5 py-4 border-b border-surface-200">
+          <span className="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center"><LayoutGrid size={18} /></span>
+          <div>
+            <h2 className="section-title">{t('settings.programsTitle')}</h2>
+            <p className="text-xs text-surface-500">{t('settings.programsBody')}</p>
+          </div>
+        </header>
+        <ul className="divide-y divide-surface-100">
+          {PROGRAMS.map((p) => {
+            const a = accentOf(p);
+            const on = programKeys.includes(p.key);
+            const live = p.status === 'live';
+            return (
+              <li key={p.key} className="flex items-center gap-4 px-5 py-4">
+                <span className={cn('w-10 h-10 shrink-0 rounded-lg flex items-center justify-center', on ? a.tile : 'bg-surface-100 text-surface-500')}><p.icon size={20} /></span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-surface-900">{t(`programs.${p.key}.name`)}</div>
+                  <div className="text-sm text-surface-500 truncate">{t(`programs.${p.key}.tagline`)}</div>
+                </div>
+                {on ? (
+                  <span className="badge-green inline-flex items-center gap-1 shrink-0"><Check size={12} /> {t('settings.programOn')}</span>
+                ) : live ? (
+                  <button type="button" onClick={() => turnOn(p.key)} disabled={busyProgram === p.key} className="btn-secondary px-3 py-1.5 text-sm shrink-0">
+                    {busyProgram === p.key ? <Spinner size="sm" /> : t('settings.turnOn')}
+                  </button>
+                ) : (
+                  <span className="text-xs text-surface-500 text-right shrink-0 max-w-[10rem]">{t('settings.programPilot')}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       </section>
 
       {/* ── Accounting mode ──────────────────────────────────────────── */}

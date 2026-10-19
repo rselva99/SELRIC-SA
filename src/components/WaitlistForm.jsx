@@ -1,17 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useT } from '../i18n/I18nContext';
 import { BUSINESS_TYPES } from '../pages/auth/SignupPage';
+import { PROGRAMS } from '../programs';
 import Spinner from './ui/Spinner';
 import { ArrowRight, MailCheck } from 'lucide-react';
 
-// Public waitlist form (landing page). Writes one row to public.waitlist —
-// anyone may insert, nobody may read it through the API.
-export default function WaitlistForm({ className = '' }) {
+// Public waitlist form (home page and every program page). Writes one row to
+// public.waitlist — anyone may insert, nobody may read it through the API.
+// `program` presets the "Which program?" field (a program page passes its key).
+export default function WaitlistForm({ className = '', program = 'business' }) {
   const { t, lang } = useT();
-  const [form, setForm] = useState({ full_name: '', business_name: '', business_type: 'other', email: '' });
+  const [form, setForm] = useState({ full_name: '', business_name: '', business_type: 'other', email: '', program });
   const [state, setState] = useState('idle'); // idle | saving | done | already
   const [error, setError] = useState('');
+
+  useEffect(() => { setForm((f) => ({ ...f, program })); }, [program]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -19,14 +23,21 @@ export default function WaitlistForm({ className = '' }) {
     e.preventDefault();
     setError('');
     setState('saving');
-    const { error: err } = await supabase.from('waitlist').insert({
+    const row = {
       email: form.email.trim().toLowerCase(),
       full_name: form.full_name.trim(),
       business_name: form.business_name.trim(),
       business_type: form.business_type,
       locale: lang,
       source: 'landing',
-    });
+      program: form.program,
+    };
+    let { error: err } = await supabase.from('waitlist').insert(row);
+    if (err?.code === '42703') {
+      // waitlist.program not migrated yet — keep the sign-up, drop the field.
+      const { program: _omit, ...withoutProgram } = row;
+      ({ error: err } = await supabase.from('waitlist').insert(withoutProgram));
+    }
     if (!err) { setState('done'); return; }
     if (err.code === '23505') { setState('already'); return; }
     console.error('waitlist insert failed:', err);
@@ -63,12 +74,19 @@ export default function WaitlistForm({ className = '' }) {
           <input id="wl-biz" type="text" value={form.business_name} onChange={set('business_name')} className="input-field" autoComplete="organization" required />
         </div>
         <div>
+          <label htmlFor="wl-program" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('waitlist.program')}</label>
+          <select id="wl-program" value={form.program} onChange={set('program')} className="input-field">
+            {PROGRAMS.map((p) => <option key={p.key} value={p.key}>{t(`programs.${p.key}.name`)}</option>)}
+            <option value="other">{t('waitlist.programOther')}</option>
+          </select>
+        </div>
+        <div>
           <label htmlFor="wl-type" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessType')}</label>
           <select id="wl-type" value={form.business_type} onChange={set('business_type')} className="input-field">
             {BUSINESS_TYPES.map((v) => <option key={v} value={v}>{t(`auth.businessTypes.${v}`)}</option>)}
           </select>
         </div>
-        <div>
+        <div className="sm:col-span-2">
           <label htmlFor="wl-email" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.email')}</label>
           <input id="wl-email" type="email" value={form.email} onChange={set('email')} className="input-field" autoComplete="email" required />
         </div>
