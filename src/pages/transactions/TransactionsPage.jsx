@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth, addMonths, parseISO } from 'date-fns';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
@@ -11,7 +12,7 @@ import { formatCurrency, formatDate, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Download,
-  ArrowDownLeft, ArrowUpRight, Lock, Search, X, Check,
+  ArrowDownLeft, ArrowUpRight, Lock, Search, X, Check, ShoppingBag,
 } from 'lucide-react';
 
 // Simple mode: one tab for money in / money out.
@@ -23,6 +24,8 @@ import {
 //
 // Rows that came from a bank statement or a journal entry (full-mode work)
 // are shown read-only with a lock; they are managed from the full package.
+// Rows posted by the Sales tab (reference 'SALE-…') are locked too: the
+// amount belongs to the sale's items, so they are changed or deleted there.
 
 const NEW_CATEGORY = '__new__';
 
@@ -34,8 +37,12 @@ const emptyForm = (kind = 'out') => ({
   category: '',
 });
 
+function isSale(row) {
+  return typeof row.reference === 'string' && row.reference.startsWith('SALE-');
+}
+
 function isLocked(row) {
-  return !!(row.bank_statement_id || row.journal_entry_id);
+  return !!(row.bank_statement_id || row.journal_entry_id) || isSale(row);
 }
 
 export default function TransactionsPage() {
@@ -393,7 +400,13 @@ export default function TransactionsPage() {
                       </td>
                       <td className="table-cell text-right whitespace-nowrap">
                         {locked ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-surface-400" title={t('tx.lockedHint')}><Lock size={13} /></span>
+                          isSale(r) ? (
+                            <Link to="/sales" className="inline-flex items-center gap-1 text-xs text-surface-400 hover:text-brand-700" title={t('tx.saleHint')}>
+                              <ShoppingBag size={13} /> {t('tx.saleTag')}
+                            </Link>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs text-surface-400" title={t('tx.lockedHint')}><Lock size={13} /></span>
+                          )
                         ) : confirmId === r.id ? (
                           <span className="inline-flex items-center gap-1.5 text-xs">
                             <span className="text-surface-600">{t('tx.deleteConfirm')}</span>

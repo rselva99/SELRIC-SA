@@ -23,6 +23,7 @@ const LOG_TYPES = [
   { value: 'sold',       label: 'Sold',        icon: ArrowUp,    color: 'text-blue-600' },
   { value: 'used',       label: 'Used',        icon: Minus,      color: 'text-amber-600' },
   { value: 'adjustment', label: 'Adjustment',  icon: RotateCcw,  color: 'text-purple-600' },
+  { value: 'returned',   label: 'Returned',    icon: ArrowDown,  color: 'text-teal-600' },   // stock put back (a deleted sale, a customer return)
 ];
 const PIE_COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
 const STOCK_STATUS = (p) =>

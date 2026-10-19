@@ -113,5 +113,13 @@ and safe to re-run.
   existing workspace backfilled with `business`), `waitlist.program`, `invite_codes.program`, and
   `handle_new_user()` gives a new workspace its first program row (the invite's program, else `business`).
   Admin-only writes through RLS. Additive, idempotent, tested on the replica. The app assumes `business` when the
-  table is absent. **Not yet applied.**
+  table is absent. **Applied 2026-10-19.**
+- `2026-10-19-sales-and-customers.sql` — Simple mode's Sales tab and Customers tab: `customers`, `sales`
+  (per-workspace running number), `sale_items` (product, name snapshot, quantity, price as sold), `inventory_logs`
+  gains `sale_id` and the `waste`/`returned` types. `record_sale(jsonb)` does the whole sale in one transaction —
+  stock off `products`, a `sold` inventory log, the money-in row in `transactions` (credit, Sales Revenue, posted,
+  reference `SALE-<id>`), the customer filed/reused by name. `update_sale` edits the header and mirrors it onto the
+  money-in row; `void_sale` deletes the sale, the money-in row, and returns the stock. All three SECURITY INVOKER
+  (RLS + period lock apply). `customer_stats` view (security_invoker). Full mode's Daily Sales is untouched.
+  Additive, idempotent, tested on the replica. **Not yet applied.**
 

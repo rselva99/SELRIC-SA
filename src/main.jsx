@@ -26,6 +26,8 @@ import LedgerPage from './pages/ledger/LedgerPage';
 import JournalPage from './pages/journal/JournalPage';
 import TasksPage from './pages/tasks/TasksPage';
 import DailySalesPage from './pages/sales/DailySalesPage';
+import SalesPage from './pages/sales/SalesPage';
+import CustomersPage from './pages/customers/CustomersPage';
 import AccountantPage from './pages/accountant/AccountantPage';
 import StatementReviewMatch from './pages/accountant/StatementReviewMatch';
 import BookBalanceSheetPage from './pages/accountant/BookBalanceSheetPage';
@@ -65,6 +67,14 @@ function RootGate() {
   return <AppLayout />;
 }
 
+// /sales depends on the accounting mode: Simple records each sale with its
+// items (stock comes off inventory, money lands in Transactions); Full keeps
+// the Daily Sales page (POS totals + analytics).
+function SalesRoute() {
+  const { accountingMode } = useAuth();
+  return accountingMode === 'simple' ? <SalesPage /> : <DailySalesPage />;
+}
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
@@ -102,8 +112,9 @@ function App() {
               <Route path="payroll" element={<ProtectedRoute adminOnly fullOnly><PayrollPage /></ProtectedRoute>} />
               {/* Simple mode */}
               <Route path="transactions" element={<ProtectedRoute adminOnly><TransactionsPage /></ProtectedRoute>} />
-              {/* Both modes */}
-              <Route path="sales" element={<ProtectedRoute adminOnly><DailySalesPage /></ProtectedRoute>} />
+              {/* Both modes — /sales picks the page by mode (see SalesRoute) */}
+              <Route path="sales" element={<ProtectedRoute adminOnly><SalesRoute /></ProtectedRoute>} />
+              <Route path="customers" element={<ProtectedRoute adminOnly><CustomersPage /></ProtectedRoute>} />
               <Route path="tasks" element={<ProtectedRoute adminOnly><TasksPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
               <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />

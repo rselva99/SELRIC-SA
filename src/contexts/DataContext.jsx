@@ -357,7 +357,7 @@ export function DataProvider({ children }) {
       const product = productsRef.current.find((p) => p.id === log.product_id);
       if (product) {
         let newQty = product.current_stock;
-        if (log.type === 'received') newQty += log.quantity;
+        if (log.type === 'received' || log.type === 'returned') newQty += log.quantity;
         else if (['sold', 'used', 'waste'].includes(log.type)) newQty -= log.quantity;
         else if (log.type === 'adjustment') newQty = log.quantity;
         await updateProduct(log.product_id, { current_stock: Math.max(0, newQty) });

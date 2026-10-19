@@ -22,6 +22,7 @@ import {
   Users,
   Settings,
   ArrowLeftRight,
+  ShoppingBag,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -42,6 +43,7 @@ const COLORS = ['#368a67', '#276e52', '#55a683', '#84c3a7', '#f59f00', '#1971c2'
 const START_ICONS = {
   '/settings': Settings,
   '/transactions': ArrowLeftRight,
+  '/sales': ShoppingBag,
   '/bookkeeping': Upload,
   '/inventory': Package,
   '/accounts': FileText,

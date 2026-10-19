@@ -22,6 +22,8 @@ import {
   Users2,
   ArrowLeftRight,
   Settings,
+  ShoppingBag,
+  Contact,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM } from '../../programs';
@@ -70,9 +72,10 @@ const SIMPLE_GROUPS = [
     { key: 'reports',      icon: BarChart3,      path: '/reports' },
   ]},
   { key: 'operations', items: [
-    { key: 'sales',     icon: TrendingUp, path: '/sales' },
-    { key: 'inventory', icon: Package,    path: '/inventory' },
-    { key: 'tasks',     icon: ListChecks, path: '/tasks' },
+    { key: 'salesSimple', icon: ShoppingBag, path: '/sales' },
+    { key: 'customers',   icon: Contact,     path: '/customers' },
+    { key: 'inventory',   icon: Package,     path: '/inventory' },
+    { key: 'tasks',       icon: ListChecks,  path: '/tasks' },
   ]},
   { key: 'settings', items: [
     { key: 'users',    icon: Users,    path: '/users' },
