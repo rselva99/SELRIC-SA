@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import Spinner from '../../components/ui/Spinner';
@@ -30,36 +30,33 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex">
       <div className="hidden lg:flex lg:w-[45%] bg-brand-950 text-white flex-col justify-between p-12">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-brand-500 flex items-center justify-center font-display text-lg font-bold">
-              TB
-            </div>
-            <span className="font-display text-2xl">TheBar</span>
+        <Link to="/" className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-brand-500 flex items-center justify-center font-display text-lg">
+            S
           </div>
-          <p className="text-brand-300 text-sm mt-2 uppercase tracking-widest">SelRic SA — Finance & Inventory</p>
-        </div>
+          <span className="font-display text-2xl">SelRic</span>
+        </Link>
         <div>
           <h1 className="font-display text-4xl leading-tight">
-            Your bar's finances,<br />organized.
+            Run the whole business<br />from one set of books.
           </h1>
           <p className="text-brand-300 mt-4 text-lg max-w-md">
-            Bookkeeping, inventory tracking, and financial reporting — all in one place.
+            Bookkeeping, cash, payroll, inventory and reporting — in one place that balances.
           </p>
         </div>
         <div className="text-xs text-brand-400">
-          &copy; {new Date().getFullYear()} TheBar by SelRic SA. Built for efficiency.
+          &copy; {new Date().getFullYear()} SelRic LLC, St. Louis, Missouri
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center px-6 py-12 bg-white">
         <div className="w-full max-w-sm">
-          <div className="lg:hidden flex items-center gap-3 mb-10">
-            <div className="w-9 h-9 rounded-lg bg-brand-600 flex items-center justify-center font-display text-sm font-bold text-white">
-              TB
+          <Link to="/" className="lg:hidden flex items-center gap-3 mb-10">
+            <div className="w-9 h-9 rounded-lg bg-brand-600 flex items-center justify-center font-display text-sm text-white">
+              S
             </div>
-            <span className="font-display text-xl">TheBar</span>
-          </div>
+            <span className="font-display text-xl">SelRic</span>
+          </Link>
 
           <h2 className="font-display text-2xl">Sign in</h2>
           <p className="text-surface-500 text-sm mt-1">Enter your credentials to continue</p>
@@ -106,8 +103,13 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="text-center text-xs text-surface-400 mt-8">
-            Contact your administrator if you need an account.
+          <div className="mt-6 text-right">
+            <Link to="/forgot-password" className="text-xs text-surface-500 hover:text-brand-700">Forgot your password?</Link>
+          </div>
+
+          <p className="text-center text-sm text-surface-500 mt-8">
+            New to SelRic?{' '}
+            <Link to="/signup" className="text-brand-700 font-medium hover:underline">Create an account</Link>
           </p>
         </div>
       </div>

@@ -48,3 +48,52 @@ and safe to re-run.
   `bank-statements` storage bucket exists, and gates every read/write
   through `public.is_admin()`. Required for the Accountant Import &
   Match flow.
+- `2026-09-11-fy2025-batch2-fees-rent.sql` — FY2025 Batch 2: 78 Regions FEES-section rows into
+  transactions (Bank Fees, reference FEE, cash legs by trigger), new "Rent Payable" liability
+  category, 12 month-end rent accruals + 11 rent-check payment JEs (JE-RENT25-*) via
+  post_journal_entry. **Applied 2026-09-11** by scripts/fy2025_batch2/phase2_write.mjs; the SQL
+  file is the idempotent record. Rollback: scripts/fy2025_batch2/rollback_batch2.mjs.
+- `2026-09-11-fy2025-batch3-payroll-ccfees.sql` — FY2025 Batch 3: "Payroll Taxes Payable" (liability) +
+  "Payroll Clearing" (expense, see note in file) categories; 206 Venmo/Cash App bank rows reclassed
+  Payroll → Payroll Clearing; 12 month-end payroll JVs from the 2025 Paycor register (JE-PR25-MM) and
+  12 CC-processing entries (JE-CCP25-MM) via post_journal_entry. **Applied 2026-09-11** by
+  scripts/fy2025_payroll/phase2_write.mjs. Rollback: scripts/fy2025_payroll/rollback_batch3.mjs.
+- `2026-09-11-fy2025-batch4-tips-lohr.sql` — FY2025 Batch 4: Lohr Distributing checks that cleared
+  Regions in Jan–Feb 2025 (document-supported, $19,794.36) posted DR Liquor / CR Cash & Bank as
+  JE-LOHR25-01/02. Tips part NOT executed (no L17 tips ledger account exists; 12 planned entries
+  listed in the file). **Applied 2026-09-11** by scripts/fy2025_batch4/phase2_write.mjs.
+  Rollback: scripts/fy2025_batch4/rollback_batch4.mjs.
+- `2026-09-11-fy2025-batch4b-tips-account.sql` — FY2025 Batch 4B: "Tips Payable" (liability) category +
+  book_bs_line_mappings row → 2024 L17 "Tips Payable" line (rolls into 2025 via Add Year); 12 tips
+  entries JE-TIPS25-MM (DR Tips Payable / CR Cash & Bank, $320,109.65). **Applied 2026-09-11** by
+  scripts/fy2025_batch4b/phase2_write.mjs. Rollback: scripts/fy2025_batch4b/rollback_batch4b.mjs.
+- `2026-09-14-fy2025-sanity-batch1.sql` — FY2025 Sanity Batch 1: 323 FY2025 bank rows reclassed per
+  reports/FY2025_sanity_flags.csv (Sales Tax Payable, Upstart Loan, both Due to Partners, Taxes, POS System,
+  Donations, Miscellaneous, Music & Entertainment, Licenses & Permits, Utilities, Amazon), tagged
+  [reclass:fy2025-sanity-batch1]; 202 trigger-voided cash legs restored (voided=false). Record only;
+  **Applied 2026-09-14** row by row by scripts/fy2025_sanity/batch1_apply.mjs. Rollback: batch1_rollback.mjs.
+- `2026-09-14-fy2025-batch5-da-loans.sql` — FY2025 Batch 5: 24 D&A entries (JE-DEP25-MM $6,823.93, JE-AMORT25-MM $11,704.29),
+  12 Southern Bank interest entries JE-GSBINT25-MM (DR Interest Expense / CR Loans $34,966.50), September return JE-GSBRET25-09
+  (DR Cash & Bank / CR Loans $5,588.19), 13 CASH-LEG mirrors for the Southern Bank Loans rows ($72,647.82, tagged [fy2025-batch5-cash-leg]
+  in the description). **Applied 2026-09-14** by scripts/fy2025_batch5/phase2_write.mjs. Rollback: scripts/fy2025_batch5/rollback_batch5.mjs.
+- `2026-09-14-fy2025-batch6-owner-answers.sql` — FY2025 Batch 6 (owner answers, John Harris Sep 9): Shamrock Sewer $6,240.00 and Polywood
+  $1,819.57 capitalized to Property & Equipment (mirrors restored live); FSP The Bounce $1,324.32 → Miscellaneous; Commercial Kitchen
+  $311.79 (unposted) → Repairs & Maintenance; all tagged [reclass:fy2025-batch6]. JE-CORONADO25-04 DR Rent Payable / CR Miscellaneous $7,500.00;
+  2 CASH-LEG mirrors for the $85.00 / $168.00 partner-account rows ([fy2025-batch6-cash-leg]). **Applied 2026-09-14** by
+  scripts/fy2025_batch6/phase2_write.mjs. Rollback: scripts/fy2025_batch6/rollback_batch6.mjs.
+- `2026-09-15-fy2025-batch7-revenue.sql` — FY2025 Batch 7: revenue from the SpotOn Daily Sales Recaps. Posted 2026-09-15 for
+  August, September, October and December; extended 2026-09-16 to all 12 months once the owner supplied the rest. 12 entries
+  JE-REV25-MM, month-end, DR Merchant Clearing / CR Bar Sales, Food Sales, Other, Sales Tax Payable, Tips Payable; net sales
+  $1,835,802.20, sales tax $177,034.08, non-cash tips $327,125.09. **Applied** by scripts/fy2025_revenue/phase2_write.mjs.
+  Rollback: scripts/fy2025_revenue/rollback_batch7.mjs.
+- `2026-10-18-organizations-multi-business.sql` — SelRic becomes multi-business: `organizations` + `org_invitations`
+  tables, `org_id` on profiles and every business-data table (metadata-only add, no row rewrite, `updated_at` untouched),
+  `aa_set_org_id` BEFORE-INSERT auto-fill, RESTRICTIVE `org_isolation` RLS on every table (existing policies unchanged),
+  global unique keys re-scoped to `(org_id, …)` (period_close.period, journal_entries.reference, close_checklist, checks,
+  payroll_months, close_scenarios, cpa_sourced_locks, book_bs_lines, transactions.import_key; book_bs_statements re-keyed to
+  (org_id, year)), `enforce_period_lock()` made org-aware, `handle_new_user()` now creates a workspace per self-serve sign-up
+  (or joins the inviting org when an invitation exists; client `role` still ignored), `seed_organization_defaults(org)`.
+  Humphrey's is the legacy org `00000000-0000-4000-8000-000000000001`; every existing row stays exactly where it is.
+  Idempotent, tested against a PostgreSQL 16 replica of the schema. **Not yet applied.**
+  Rollback: `ROLLBACK_organizations_multi_business.sql` (Stage A reversible; Stage B destructive, commented out).
+

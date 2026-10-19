@@ -141,6 +141,19 @@
   animation: scaleIn 0.2s ease-out forwards;
 }
 
+/* Landing page: ledger rows "post" once on load, then stay. */
+@keyframes ledgerPost {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ledger-row {
+  opacity: 0;
+  animation: ledgerPost 0.45s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ledger-row { opacity: 1; animation: none; }
+}
+
 /* Toast overrides */
 [data-sonner-toaster] {
   font-family: 'DM Sans', system-ui, sans-serif !important;

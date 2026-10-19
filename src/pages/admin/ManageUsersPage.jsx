@@ -13,7 +13,7 @@ const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
 export default function ManageUsersPage() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, profile: currentProfile, organization } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -82,6 +82,23 @@ export default function ManageUsersPage() {
     }
     setSaving(true);
     try {
+      // Invite first: the sign-up trigger looks the email up in org_invitations
+      // and places the new user in THIS workspace with the chosen role. Without
+      // it a sign-up creates a brand-new workspace of its own.
+      const orgId = currentProfile?.org_id || organization?.id;
+      if (!orgId) {
+        throw new Error('Your workspace is not ready yet — refresh the page and try again. If it keeps happening, the organizations migration has not been applied.');
+      }
+      const { error: inviteError } = await supabase
+        .from('org_invitations')
+        .insert({
+          org_id: orgId,
+          email: formData.email.trim().toLowerCase(),
+          role: formData.role,
+          invited_by: currentUser?.id ?? null,
+        });
+      if (inviteError) throw inviteError;
+
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,

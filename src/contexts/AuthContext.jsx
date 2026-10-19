@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { setReportBusinessName } from '../lib/reports';
 
 const AuthContext = createContext({});
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [organization, setOrganization] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -22,6 +24,7 @@ export function AuthProvider({ children }) {
       if (session?.user) fetchProfile(session.user.id);
       else {
         setProfile(null);
+        setOrganization(null);
         setLoading(false);
       }
     });
@@ -39,20 +42,52 @@ export function AuthProvider({ children }) {
 
       if (error) throw error;
       setProfile(data);
+      await fetchOrganization(data?.org_id);
     } catch (err) {
       console.error('Error fetching profile:', err);
       setProfile(null);
+      setOrganization(null);
+      setReportBusinessName(null);
     } finally {
       setLoading(false);
     }
   }
 
-  async function signUp(email, password, fullName, role = 'limited') {
+  // The business this user belongs to. Missing org_id (DB not migrated yet)
+  // just leaves organization null — nothing else depends on it.
+  async function fetchOrganization(orgId) {
+    if (!orgId) {
+      setOrganization(null);
+      setReportBusinessName(null);
+      return;
+    }
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching organization:', error);
+      setOrganization(null);
+      setReportBusinessName(null);
+      return;
+    }
+    setOrganization(data);
+    setReportBusinessName(data?.name);
+  }
+
+  // Self-serve sign-up. `details` = { full_name, org_name, business_type }.
+  // The database trigger (handle_new_user) turns org_name/business_type into a
+  // brand-new workspace with this user as its admin — unless an admin has
+  // already invited this email, in which case the user joins that workspace
+  // with the invited role. Any `role` sent from the client is ignored by the DB.
+  async function signUp(email, password, details = {}) {
+    const { full_name = '', org_name = '', business_type = 'other' } = details;
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { full_name: fullName, role },
+        data: { full_name, org_name, business_type },
       },
     });
     if (error) throw error;
@@ -73,11 +108,14 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     setUser(null);
     setProfile(null);
+    setOrganization(null);
+    setReportBusinessName(null);
   }
 
   async function resetPassword(email) {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/reset-password`,
+      // The reset page lives at /reset-password (see main.jsx).
+      redirectTo: `${window.location.origin}/reset-password`,
     });
     if (error) throw error;
   }
@@ -92,6 +130,7 @@ export function AuthProvider({ children }) {
   const value = {
     user,
     profile,
+    organization,
     loading,
     isAdmin,
     signUp,

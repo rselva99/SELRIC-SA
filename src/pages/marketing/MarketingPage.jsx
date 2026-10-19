@@ -163,7 +163,7 @@ export default function MarketingPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="page-title flex items-center gap-2"><Megaphone size={22} className="text-brand-600" /> Marketing</h1>
-          <p className="text-surface-500 text-sm mt-0.5">AI-generated flyers & social posts for TheBar</p>
+          <p className="text-surface-500 text-sm mt-0.5">AI-generated flyers & social posts for your business</p>
         </div>
       </div>
 

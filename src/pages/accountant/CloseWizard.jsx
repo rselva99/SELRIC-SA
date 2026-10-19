@@ -398,7 +398,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
       status,
       completed_by: user?.id,
       completed_at: new Date().toISOString(),
-    }, { onConflict: 'period,step_key' });
+    }, { onConflict: 'org_id,period,step_key' });
     await supabase.from('accountant_audit_log').insert({
       action: `wizard_step_${stepKey}_${status}`,
       description: `Wizard: "${currentStep.title}" marked ${status} for ${periodFullLabel(period)}`,

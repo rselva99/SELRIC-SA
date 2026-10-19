@@ -579,7 +579,7 @@ export default function BookBalanceSheetPage() {
         locked_at: nowIso,
         snapshot,
         updated_at: nowIso,
-      }, { onConflict: 'year' });
+      }, { onConflict: 'org_id,year' });
       if (error) throw error;
       toast.success(`${selectedYear} locked`);
       await loadYears();

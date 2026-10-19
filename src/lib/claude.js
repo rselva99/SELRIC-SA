@@ -357,7 +357,7 @@ Return ONLY valid JSON (no markdown, no backticks) in this exact format:
 }
 
 export async function suggestCategory(description, existingCategories) {
-  const systemPrompt = `You categorize business transactions for a college bar.
+  const systemPrompt = `You categorize transactions for a small owner-operated business (a restaurant, a shop, a contractor, a practice — any kind).
 Given the transaction description and existing category list, return the single best matching category name.
 If none fit well, suggest a new category name.
 Return ONLY the category name as plain text, nothing else.`;
@@ -393,7 +393,7 @@ export async function batchCategorize(transactions, knownMappings) {
     .map(t => `ID: ${t.id}\nDesc: ${(t.description || t.supplier || '').slice(0, 180)}`)
     .join('\n---\n');
 
-  const systemPrompt = `You are an expense categorizer for a college bar in St. Louis, MO.
+  const systemPrompt = `You are an expense categorizer for a small owner-operated business. The KNOWN VENDOR→CATEGORY MAPPINGS below are this business's own history and outrank the generic reference that follows.
 
 Bank statement descriptions are messy — they include card types, location codes, reference numbers, and abbreviated names. Identify the real vendor and assign the correct category.
 

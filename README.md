@@ -1,6 +1,6 @@
-# SelRic SA — Bar Finance & Inventory Management
+# SelRic — Business management that balances
 
-A full-stack web app for managing the finances and inventory of a college bar. Built with React, Supabase, and Claude AI.
+A full-stack web app for owner-operators: bookkeeping, cash management, payroll, inventory and reporting in one set of books. Every business that signs up gets its own isolated workspace (see `migrations/2026-10-18-organizations-multi-business.sql`). Built with React, Supabase, and Claude AI.
 
 ## Features
 
@@ -11,6 +11,7 @@ A full-stack web app for managing the finances and inventory of a college bar. B
 - **Inventory** — Track products (beer, wine, spirits, etc.), log received/sold/used/adjustment entries, reorder alerts
 - **Reports** — Generate and download P&L reports as PDF
 - **User Management** — Admin and limited-user roles; admins see financials, limited users see only inventory
+- **Workspaces** — public landing page and self-serve sign-up at `/signup`; each business gets a private workspace with a starter chart of accounts, and admins invite teammates from Manage Users
 
 ## Tech Stack
 

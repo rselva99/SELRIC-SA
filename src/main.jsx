@@ -1,11 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import AppLayout from './components/layout/AppLayout';
+import LandingPage from './pages/public/LandingPage';
 import LoginPage from './pages/auth/LoginPage';
+import SignupPage from './pages/auth/SignupPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
@@ -39,6 +41,18 @@ function ProtectedRoute({ children, adminOnly = false }) {
   return children;
 }
 
+// "/" is the public landing page for visitors and the app for signed-in users.
+// Any other app path still bounces a visitor to /login as before.
+function RootGate() {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
+  if (!user) {
+    return location.pathname === '/' ? <LandingPage /> : <Navigate to="/login" replace />;
+  }
+  return <AppLayout />;
+}
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
@@ -53,10 +67,11 @@ function App() {
         <DataProvider>
           <Routes>
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+            <Route path="/signup" element={<PublicRoute><SignupPage /></PublicRoute>} />
             <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-            <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+            <Route path="/" element={<RootGate />}>
               <Route index element={<DashboardPage />} />
               <Route path="accountant" element={<ProtectedRoute adminOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
               <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />

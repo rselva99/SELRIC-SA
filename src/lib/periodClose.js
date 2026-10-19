@@ -93,7 +93,7 @@ export async function closePeriod({ period, userId, categories, description }) {
     closed_at:    snapshotAt,
     snapshot,
     snapshot_at:  snapshotAt,
-  }, { onConflict: 'period' });
+  }, { onConflict: 'org_id,period' });
   if (error) throw error;
 
   try {

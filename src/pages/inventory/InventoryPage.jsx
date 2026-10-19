@@ -253,7 +253,7 @@ function MovementHistoryTab({ products }) {
 // ── Main page ─────────────────────────────────────────────────────────────
 export default function InventoryPage() {
   const { products, addProduct, updateProduct, deleteProduct, addInventoryLog } = useData();
-  const { isAdmin } = useAuth();
+  const { isAdmin, organization } = useAuth();
 
   // Core state
   const [activeTab, setActiveTab]         = useState('dashboard');
@@ -499,7 +499,7 @@ export default function InventoryPage() {
       <style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;margin-top:16px}
       th,td{padding:8px 12px;border:1px solid #ddd;text-align:left}th{background:#f5f5f5;font-weight:600}
       tfoot td{font-weight:700;background:#fafafa}</style></head>
-      <body><h2>Restock Shopping List — TheBar</h2>
+      <body><h2>Restock Shopping List — ${organization?.name || 'SelRic'}</h2>
       <p style="color:#666">Generated: ${new Date().toLocaleDateString('en-US', { weekday:'long',year:'numeric',month:'long',day:'numeric' })}</p>
       <table><thead><tr><th>Product</th><th>Category</th><th>Current</th><th>Target</th><th>Shortfall</th><th>Unit Cost</th><th>Restock Cost</th></tr></thead>
       <tbody>${rows}</tbody>

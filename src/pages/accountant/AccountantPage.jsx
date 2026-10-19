@@ -526,7 +526,7 @@ export default function AccountantPage() {
             status:       'done',
             completed_by: user?.id,
             completed_at: new Date().toISOString(),
-          }, { onConflict: 'period,step_key' });
+          }, { onConflict: 'org_id,period,step_key' });
           if (error) throw error;
           await supabase.from('accountant_audit_log').insert({
             action: `step_${step.key}_done`,

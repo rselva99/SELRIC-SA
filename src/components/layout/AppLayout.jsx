@@ -50,7 +50,7 @@ const limitedNav = [
 ];
 
 export default function AppLayout() {
-  const { profile, isAdmin, signOut } = useAuth();
+  const { profile, organization, isAdmin, signOut } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -78,14 +78,16 @@ export default function AppLayout() {
         )}
       >
         <div className="flex items-center justify-between px-5 py-5 border-b border-white/10">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-brand-500 flex items-center justify-center font-display text-sm font-bold">
-              TB
+          <Link to="/" className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 shrink-0 rounded-lg bg-brand-500 flex items-center justify-center font-display text-sm">
+              S
             </div>
-            <div>
-              <div className="font-display text-lg leading-none">TheBar</div>
+            <div className="min-w-0">
+              <div className="font-display text-lg leading-none truncate" title={organization?.name || 'SelRic'}>
+                {organization?.name || 'SelRic'}
+              </div>
               <div className="text-[10px] text-brand-300 uppercase tracking-widest mt-0.5">
-                SelRic SA
+                SelRic
               </div>
             </div>
           </Link>
@@ -147,7 +149,7 @@ export default function AppLayout() {
           <button onClick={() => setSidebarOpen(true)} className="text-surface-600">
             <Menu size={22} />
           </button>
-          <div className="font-display text-lg">TheBar</div>
+          <div className="font-display text-lg truncate">{organization?.name || 'SelRic'}</div>
         </header>
 
         <main className="flex-1 overflow-y-auto">

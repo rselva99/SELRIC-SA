@@ -87,7 +87,7 @@ export default function DailySalesPage() {
       };
       const { error } = editingId
         ? await supabase.from('daily_sales').update(payload).eq('id', editingId)
-        : await supabase.from('daily_sales').upsert(payload, { onConflict: 'date' });
+        : await supabase.from('daily_sales').upsert(payload, { onConflict: 'org_id,date' });
       if (error) throw error;
       toast.success(editingId ? 'Entry updated' : 'Sales saved');
       setForm(EMPTY_FORM);

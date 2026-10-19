@@ -286,7 +286,7 @@ export default function StatementReviewMatch() {
           status:       'done',
           completed_by: user?.id,
           completed_at: new Date().toISOString(),
-        }, { onConflict: 'period,step_key' });
+        }, { onConflict: 'org_id,period,step_key' });
       }
       toast.success(nextStatus === 'matched' ? 'Matched to the cent' : 'Confirmed manually');
       setStmt(s => ({ ...s, match_status: nextStatus }));
