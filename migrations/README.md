@@ -121,5 +121,8 @@ and safe to re-run.
   reference `SALE-<id>`), the customer filed/reused by name. `update_sale` edits the header and mirrors it onto the
   money-in row; `void_sale` deletes the sale, the money-in row, and returns the stock. All three SECURITY INVOKER
   (RLS + period lock apply). `customer_stats` view (security_invoker). Full mode's Daily Sales is untouched.
-  Additive, idempotent, tested on the replica. **Not yet applied.**
+  Additive, idempotent, tested on the replica. **Applied 2026-10-19.**
+- `2026-10-19-sale-item-cost.sql` — `sale_items.unit_cost` (the product's cost at the moment of the sale, for the
+  Simple-mode margin reports), backfill of earlier lines from the product's current cost, and `record_sale()`
+  storing it. Additive, idempotent, tested on the replica. **Not yet applied.**
 

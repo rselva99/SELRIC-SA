@@ -19,6 +19,7 @@ import BookkeepingPage from './pages/bookkeeping/BookkeepingPage';
 import ReconciliationPage from './pages/bookkeeping/ReconciliationPage';
 import AccountsPage from './pages/accounts/AccountsPage';
 import ReportsPage from './pages/reports/ReportsPage';
+import SimpleReportsPage from './pages/reports/SimpleReportsPage';
 import FY2024CorrectedClosePage from './pages/reports/FY2024CorrectedClosePage';
 import InventoryPage from './pages/inventory/InventoryPage';
 import ManageUsersPage from './pages/admin/ManageUsersPage';
@@ -75,6 +76,13 @@ function SalesRoute() {
   return accountingMode === 'simple' ? <SalesPage /> : <DailySalesPage />;
 }
 
+// /reports likewise: Simple gets the owner's reports (P&L, products, trends,
+// customers, inventory, cash); Full keeps the accountant reports page.
+function ReportsRoute() {
+  const { accountingMode } = useAuth();
+  return accountingMode === 'simple' ? <SimpleReportsPage /> : <ReportsPage />;
+}
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
@@ -116,7 +124,7 @@ function App() {
               <Route path="sales" element={<ProtectedRoute adminOnly><SalesRoute /></ProtectedRoute>} />
               <Route path="customers" element={<ProtectedRoute adminOnly><CustomersPage /></ProtectedRoute>} />
               <Route path="tasks" element={<ProtectedRoute adminOnly><TasksPage /></ProtectedRoute>} />
-              <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
+              <Route path="reports" element={<ProtectedRoute adminOnly><ReportsRoute /></ProtectedRoute>} />
               <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />
               <Route path="inventory" element={<InventoryPage />} />
               <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />
