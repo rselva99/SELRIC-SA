@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import toast from 'react-hot-toast';
 import Spinner from '../../components/ui/Spinner';
-import { Eye, EyeOff, UserPlus, MailCheck } from 'lucide-react';
+import { Eye, EyeOff, UserPlus, MailCheck, Ticket, Lock } from 'lucide-react';
 
 export const BUSINESS_TYPES = ['restaurant_bar', 'retail', 'services', 'contractor', 'health', 'nonprofit', 'other'];
 
@@ -14,6 +15,37 @@ export default function SignupPage() {
   const { signUp } = useAuth();
   const { t, lang } = useT();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const inviteCode = (params.get('invite') || '').trim().toUpperCase();
+
+  // Gate: 'checking' → 'open' | 'invited' | 'invalid' | 'closed'.
+  //   open     — public sign-up (payments live, or the gate migration not applied yet)
+  //   invited  — invite-only mode and this link's code is valid
+  //   invalid  — invite-only mode, a code was given but it is used/expired/unknown
+  //   closed   — invite-only mode, no code: send them to the waitlist
+  const [gate, setGate] = useState('checking');
+  const [inviteLabel, setInviteLabel] = useState('');
+  const [invitePlan, setInvitePlan] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: mode, error } = await supabase.rpc('get_signup_mode');
+      if (cancelled) return;
+      if (error || mode !== 'invite') { setGate('open'); return; }   // RPC missing = gate not deployed = open
+      if (!inviteCode) { setGate('closed'); return; }
+      const { data: res } = await supabase.rpc('check_invite', { p_code: inviteCode });
+      if (cancelled) return;
+      if (res?.valid) {
+        setInviteLabel(res.label || '');
+        setInvitePlan(res.plan || '');
+        setGate('invited');
+      } else {
+        setGate('invalid');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [inviteCode]);
   const [form, setForm] = useState({
     full_name: '',
     org_name: '',
@@ -42,6 +74,7 @@ export default function SignupPage() {
         org_name: form.org_name.trim(),
         business_type: form.business_type,
         locale: lang,
+        invite_code: inviteCode,
       });
       if (data?.session) {
         toast.success(t('auth.welcomeNew', { name: form.full_name.trim().split(' ')[0] || '' }));
@@ -79,7 +112,24 @@ export default function SignupPage() {
             <span className="font-display text-xl">SelRic</span>
           </Link>
 
-          {needsConfirm ? (
+          {gate === 'checking' ? (
+            <div className="flex items-center gap-3 text-surface-500 text-sm"><Spinner size="sm" /> {t('common.loading')}</div>
+          ) : gate === 'closed' || gate === 'invalid' ? (
+            <div>
+              <div className="w-12 h-12 rounded-full bg-surface-100 text-surface-600 flex items-center justify-center">
+                <Lock size={22} />
+              </div>
+              <h2 className="font-display text-2xl mt-5">{t('auth.inviteOnlyTitle')}</h2>
+              <p className="text-surface-600 text-sm mt-2 leading-relaxed">
+                {gate === 'invalid' ? t('auth.inviteInvalid') : t('auth.inviteOnlyBody')}
+              </p>
+              <Link to="/#waitlist" className="btn-primary w-full mt-8">{t('landing.joinWaitlist')}</Link>
+              <p className="text-center text-sm text-surface-500 mt-6">
+                {t('auth.haveAccount')}{' '}
+                <Link to="/login" className="text-brand-700 font-medium hover:underline">{t('common.signIn')}</Link>
+              </p>
+            </div>
+          ) : needsConfirm ? (
             <div>
               <div className="w-12 h-12 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center">
                 <MailCheck size={22} />
@@ -94,6 +144,15 @@ export default function SignupPage() {
             <>
               <h2 className="font-display text-2xl">{t('common.createYourAccount')}</h2>
               <p className="text-surface-500 text-sm mt-1">{t('auth.signupSub')}</p>
+              {gate === 'invited' && (
+                <div className="mt-4 flex items-start gap-3 rounded-xl bg-brand-50 border border-brand-100 px-4 py-3">
+                  <Ticket size={18} className="text-brand-700 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <div className="font-medium text-brand-900">{t('auth.invitedAs', { label: inviteLabel || inviteCode })}</div>
+                    {invitePlan === 'pilot' && <div className="text-brand-700 mt-0.5">{t('auth.pilotNote')}</div>}
+                  </div>
+                </div>
+              )}
 
               <form onSubmit={handleSubmit} className="mt-8 space-y-5">
                 <div>

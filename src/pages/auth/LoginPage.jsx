@@ -83,8 +83,8 @@ export default function LoginPage() {
           </div>
 
           <p className="text-center text-sm text-surface-500 mt-8">
-            {t('auth.newHere')}{' '}
-            <Link to="/signup" className="text-brand-700 font-medium hover:underline">{t('auth.createOne')}</Link>
+            {t('auth.newHereWaitlist')}{' '}
+            <Link to="/#waitlist" className="text-brand-700 font-medium hover:underline">{t('landing.joinWaitlist')}</Link>
           </p>
         </div>
       </div>

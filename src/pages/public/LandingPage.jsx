@@ -1,11 +1,22 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check, Menu, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useT, LangToggle } from '../../i18n/I18nContext';
+import WaitlistForm from '../../components/WaitlistForm';
 
 export default function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { t } = useT();
+  const { hash } = useLocation();
+
+  // Links like /#waitlist from other pages: the router does not scroll to the
+  // hash on its own, so do it once the page has rendered.
+  useEffect(() => {
+    if (!hash) return;
+    const el = document.querySelector(hash);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [hash]);
   const year = new Date().getFullYear();
   const week = t('landing.week');
   const groups = t('landing.groups');
@@ -26,12 +37,13 @@ export default function LandingPage() {
             <a href="#who-we-are" className="hover:text-brand-700">{t('landing.navWho')}</a>
             <a href="#what-you-get" className="hover:text-brand-700">{t('landing.navWhat')}</a>
             <a href="#how-it-works" className="hover:text-brand-700">{t('landing.navHow')}</a>
+            <a href="#pricing" className="hover:text-brand-700">{t('landing.navPricing')}</a>
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
             <LangToggle />
             <Link to="/login" className="btn-ghost text-surface-700">{t('common.signIn')}</Link>
-            <Link to="/signup" className="btn-primary">{t('common.createAccount')}</Link>
+            <a href="#waitlist" className="btn-primary">{t('landing.joinWaitlist')}</a>
           </div>
 
           <button
@@ -49,10 +61,11 @@ export default function LandingPage() {
             <a href="#who-we-are" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navWho')}</a>
             <a href="#what-you-get" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navWhat')}</a>
             <a href="#how-it-works" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navHow')}</a>
+            <a href="#pricing" onClick={() => setMenuOpen(false)} className="block py-1">{t('landing.navPricing')}</a>
             <div className="pt-3 flex items-center gap-3">
               <LangToggle />
               <Link to="/login" className="btn-secondary flex-1">{t('common.signIn')}</Link>
-              <Link to="/signup" className="btn-primary flex-1">{t('common.createAccount')}</Link>
+              <a href="#waitlist" onClick={() => setMenuOpen(false)} className="btn-primary flex-1">{t('landing.joinWaitlist')}</a>
             </div>
           </div>
         )}
@@ -68,15 +81,15 @@ export default function LandingPage() {
             {t('landing.heroBody')}
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link to="/signup" className="btn-primary text-base px-6 py-3">
-              {t('landing.heroCta')} <ArrowRight size={18} />
-            </Link>
+            <a href="#waitlist" className="btn-primary text-base px-6 py-3">
+              {t('landing.joinWaitlist')} <ArrowRight size={18} />
+            </a>
             <a href="#what-you-get" className="btn-secondary text-base px-6 py-3">
               {t('landing.heroSecondary')}
             </a>
           </div>
           <p className="mt-5 text-sm text-surface-500">
-            {t('landing.heroNote')}
+            {t('landing.heroNoteWaitlist')}
           </p>
         </div>
 
@@ -181,17 +194,48 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Pricing + waitlist ──────────────────────────────────────────── */}
+      <section id="pricing" className="bg-brand-50 border-t border-brand-100">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24 grid lg:grid-cols-[0.9fr_1.1fr] gap-10 lg:gap-16 items-start">
+          <div>
+            <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('pricing.title')}</h2>
+            <p className="mt-4 text-lg text-surface-700 max-w-[34rem]">{t('pricing.body')}</p>
+
+            <div className="mt-8 rounded-2xl bg-brand-950 text-white p-6 sm:p-7 shadow-modal">
+              <div className="text-brand-300 text-sm">{t('pricing.from')}</div>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="font-display text-5xl">{t('pricing.amount')}</span>
+                <span className="text-brand-200">{t('pricing.per')}</span>
+              </div>
+              <ul className="mt-6 space-y-2.5">
+                {t('pricing.includes').map((line) => (
+                  <li key={line} className="flex gap-3 text-[15px] leading-relaxed text-white/90">
+                    <Check size={18} className="text-brand-300 shrink-0 mt-0.5" />
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-6 pt-5 border-t border-white/15 text-sm text-brand-200">{t('pricing.note')}</p>
+            </div>
+          </div>
+
+          <div id="waitlist" className="scroll-mt-24">
+            <WaitlistForm />
+          </div>
+        </div>
+      </section>
+
       {/* ── CTA ─────────────────────────────────────────────────────────── */}
       <section className="bg-brand-950 text-white">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-16 lg:py-20 flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-16">
           <div className="flex-1">
-            <h2 className="font-display text-3xl sm:text-4xl leading-tight">{t('landing.ctaTitle')}</h2>
-            <p className="mt-4 text-lg text-brand-200 max-w-[36rem]">{t('landing.ctaBody')}</p>
+            <h2 className="font-display text-3xl sm:text-4xl leading-tight">{t('landing.ctaTitleWaitlist')}</h2>
+            <p className="mt-4 text-lg text-brand-200 max-w-[36rem]">{t('landing.ctaBodyWaitlist')}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link to="/signup" className="btn-primary bg-brand-500 hover:bg-brand-400 text-base px-6 py-3">
-              {t('landing.heroCta')} <ArrowRight size={18} />
-            </Link>
+            <a href="#waitlist" className="btn-primary bg-brand-500 hover:bg-brand-400 text-base px-6 py-3">
+              {t('landing.joinWaitlist')} <ArrowRight size={18} />
+            </a>
             <Link to="/login" className="btn-secondary bg-transparent text-white border-white/30 hover:bg-white/10 text-base px-6 py-3">
               {t('common.signIn')}
             </Link>
@@ -208,7 +252,7 @@ export default function LandingPage() {
           </div>
           <div className="flex gap-6">
             <Link to="/login" className="hover:text-brand-700">{t('common.signIn')}</Link>
-            <Link to="/signup" className="hover:text-brand-700">{t('common.createAccount')}</Link>
+            <a href="#waitlist" className="hover:text-brand-700">{t('landing.joinWaitlist')}</a>
             <a href="#who-we-are" className="hover:text-brand-700">{t('landing.navWho')}</a>
           </div>
           <div>&copy; {year} SelRic LLC</div>

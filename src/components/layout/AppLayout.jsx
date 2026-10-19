@@ -119,7 +119,12 @@ export default function AppLayout() {
                 <div className="font-display text-[17px] leading-tight truncate" title={businessName}>
                   {businessName}
                 </div>
-                <div className="text-[11px] text-brand-300 mt-0.5">SelRic</div>
+                <div className="text-[11px] text-brand-300 mt-0.5 flex items-center gap-1.5">
+                  SelRic
+                  {organization?.plan === 'pilot' && (
+                    <span className="rounded px-1.5 py-px bg-brand-500/30 text-brand-100 text-[10px] tracking-wide">{t('common.pilot')}</span>
+                  )}
+                </div>
               </div>
             </Link>
             <button className="lg:hidden text-white/60 hover:text-white mt-1" onClick={() => setSidebarOpen(false)} aria-label={t('nav.menu')}>

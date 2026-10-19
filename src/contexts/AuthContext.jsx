@@ -76,18 +76,18 @@ export function AuthProvider({ children }) {
     setReportBusinessName(data?.name);
   }
 
-  // Self-serve sign-up. `details` = { full_name, org_name, business_type, locale }.
+  // Self-serve sign-up. `details` = { full_name, org_name, business_type, locale, invite_code }.
   // The database trigger (handle_new_user) turns org_name/business_type into a
   // brand-new workspace with this user as its admin — unless an admin has
   // already invited this email, in which case the user joins that workspace
   // with the invited role. Any `role` sent from the client is ignored by the DB.
   async function signUp(email, password, details = {}) {
-    const { full_name = '', org_name = '', business_type = 'other', locale = 'en' } = details;
+    const { full_name = '', org_name = '', business_type = 'other', locale = 'en', invite_code = '' } = details;
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { full_name, org_name, business_type, locale },
+        data: { full_name, org_name, business_type, locale, invite_code },
       },
     });
     if (error) throw error;
