@@ -11,17 +11,17 @@ import {
   TrendingUp,
   TrendingDown,
   Package,
-  AlertTriangle,
   ArrowRight,
   ArrowUpRight,
   ArrowDownRight,
   ListChecks,
   Receipt,
-  CalendarDays,
   CheckCircle2,
   Upload,
   FileText,
   Users,
+  Settings,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -38,7 +38,15 @@ import {
 } from 'recharts';
 
 const COLORS = ['#368a67', '#276e52', '#55a683', '#84c3a7', '#f59f00', '#1971c2', '#e03131'];
-const START_ICONS = [Upload, Package, FileText, Users];
+// Get-started tiles: icon per link target (the copy lives in translations, dash.start.*).
+const START_ICONS = {
+  '/settings': Settings,
+  '/transactions': ArrowLeftRight,
+  '/bookkeeping': Upload,
+  '/inventory': Package,
+  '/accounts': FileText,
+  '/users': Users,
+};
 
 function sameMonth(dateStr, ref) {
   const d = new Date(dateStr);
@@ -51,28 +59,25 @@ function pctChange(now, prev) {
 }
 
 export default function DashboardPage() {
-  const { profile, organization, isAdmin } = useAuth();
+  const { profile, organization, accountingMode, isAdmin } = useAuth();
   const { products, categories } = useData();
   const { t, tn, locale } = useT();
+  const simple = accountingMode === 'simple';
 
   const [transactions, setTransactions] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [bills, setBills] = useState([]);
-  const [events, setEvents] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
   // Six months of posted transactions (paginated — a 6-month window can pass
   // PostgREST's 1,000-row cap) plus the small "what needs you" lists.
   useEffect(() => {
-    const today = format(new Date(), 'yyyy-MM-dd');
     const inAWeek = format(addDays(new Date(), 7), 'yyyy-MM-dd');
     const sixMonthsAgo = format(startOfMonth(subMonths(new Date(), 5)), 'yyyy-MM-dd');
 
     const jobs = [
       supabase.from('tasks').select('id, title, due_date, status').eq('status', 'open').lte('due_date', inAWeek).order('due_date')
         .then(({ data }) => setTasks(data || []), () => setTasks([])),
-      supabase.from('calendar_events').select('id, name, date').gte('date', today).lte('date', inAWeek).order('date')
-        .then(({ data }) => setEvents(data || []), () => setEvents([])),
     ];
     if (isAdmin) {
       jobs.push(
@@ -135,15 +140,15 @@ export default function DashboardPage() {
     const weekTasks = tasks.length - overdueTasks;
     const overdueBills = bills.filter((b) => b.due_date && b.due_date < today).length;
     const weekBills = bills.length - overdueBills;
+    const billsTo = simple ? '/transactions' : '/bookkeeping';
     const items = [];
     if (overdueTasks) items.push({ icon: ListChecks, tone: 'red',   text: tn('dash.overdueTasks',  overdueTasks),  to: '/tasks' });
-    if (overdueBills) items.push({ icon: Receipt,    tone: 'red',   text: tn('dash.billsOverdue',  overdueBills),  to: '/bookkeeping' });
-    if (weekBills)    items.push({ icon: Receipt,    tone: 'amber', text: tn('dash.billsDue',      weekBills),     to: '/bookkeeping' });
+    if (overdueBills) items.push({ icon: Receipt,    tone: 'red',   text: tn('dash.billsOverdue',  overdueBills),  to: billsTo });
+    if (weekBills)    items.push({ icon: Receipt,    tone: 'amber', text: tn('dash.billsDue',      weekBills),     to: billsTo });
     if (weekTasks)    items.push({ icon: ListChecks, tone: 'amber', text: tn('dash.tasksThisWeek', weekTasks),     to: '/tasks' });
     if (stats.lowStock.length) items.push({ icon: Package, tone: 'amber', text: tn('dash.lowStockItems', stats.lowStock.length), to: '/inventory' });
-    if (events.length) items.push({ icon: CalendarDays, tone: 'brand', text: tn('dash.upcomingEvents', events.length), to: '/calendar' });
     return items;
-  }, [tasks, bills, events, stats.lowStock.length, tn]);
+  }, [tasks, bills, stats.lowStock.length, tn, simple]);
 
   const hour = new Date().getHours();
   const slot = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
@@ -208,8 +213,8 @@ export default function DashboardPage() {
           <h2 className="font-display text-xl text-brand-950">{t('dash.getStartedTitle')}</h2>
           <p className="text-surface-600 text-sm mt-1">{t('dash.getStartedBody')}</p>
           <ol className="mt-5 grid sm:grid-cols-2 gap-3">
-            {t('dash.start').map(([title, body, to], i) => {
-              const Icon = START_ICONS[i];
+            {t(simple ? 'dash.startSimple' : 'dash.start').map(([title, body, to]) => {
+              const Icon = START_ICONS[to] || FileText;
               return (
                 <li key={to}>
                   <Link to={to} className="flex gap-3 rounded-xl border border-surface-200 hover:border-brand-400 hover:bg-brand-50 px-4 py-3.5 transition-colors">
@@ -255,7 +260,7 @@ export default function DashboardPage() {
             <div className="card">
               <div className="flex items-center justify-between px-5 py-4 border-b border-surface-200">
                 <h3 className="section-title">{t('dash.recent')}</h3>
-                <Link to="/ledger" className="text-sm text-brand-700 hover:text-brand-800 font-medium flex items-center gap-1">
+                <Link to={simple ? '/transactions' : '/ledger'} className="text-sm text-brand-700 hover:text-brand-800 font-medium flex items-center gap-1">
                   {t('common.viewAll')} <ArrowRight size={14} />
                 </Link>
               </div>

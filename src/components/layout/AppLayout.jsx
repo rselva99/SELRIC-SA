@@ -14,19 +14,25 @@ import {
   Menu,
   X,
   TrendingUp,
-  CalendarDays,
   ListChecks,
-  Megaphone,
   BookText,
   Calculator,
   Wrench,
   Receipt,
   Users2,
+  ArrowLeftRight,
+  Settings,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
-const ADMIN_GROUPS = [
+// Which groups show depends on the workspace's accounting mode
+// (Settings → Accounting):
+//   full    — the complete package (bookkeeping, cash, ledger, journal,
+//             chart of accounts, accountant) plus payroll and assets.
+//   simple  — one Transactions tab instead of the accounting pages; payroll
+//             and assets stay out of the way too.
+const FULL_GROUPS = [
   { key: 'overview', items: [
     { key: 'dashboard', icon: LayoutDashboard, path: '/' },
   ]},
@@ -42,18 +48,34 @@ const ADMIN_GROUPS = [
     { key: 'inventory', icon: Package,      path: '/inventory' },
     { key: 'payroll',   icon: Users2,       path: '/payroll' },
     { key: 'assets',    icon: Wrench,       path: '/assets' },
-    { key: 'calendar',  icon: CalendarDays, path: '/calendar' },
     { key: 'tasks',     icon: ListChecks,   path: '/tasks' },
-  ]},
-  { key: 'growth', items: [
-    { key: 'marketing', icon: Megaphone, path: '/marketing' },
   ]},
   { key: 'close', items: [
     { key: 'accountant', icon: Calculator, path: '/accountant' },
     { key: 'reports',    icon: BarChart3,  path: '/reports' },
   ]},
   { key: 'settings', items: [
-    { key: 'users', icon: Users, path: '/users' },
+    { key: 'users',    icon: Users,    path: '/users' },
+    { key: 'settings', icon: Settings, path: '/settings' },
+  ]},
+];
+
+const SIMPLE_GROUPS = [
+  { key: 'overview', items: [
+    { key: 'dashboard', icon: LayoutDashboard, path: '/' },
+  ]},
+  { key: 'money', items: [
+    { key: 'transactions', icon: ArrowLeftRight, path: '/transactions' },
+    { key: 'reports',      icon: BarChart3,      path: '/reports' },
+  ]},
+  { key: 'operations', items: [
+    { key: 'sales',     icon: TrendingUp, path: '/sales' },
+    { key: 'inventory', icon: Package,    path: '/inventory' },
+    { key: 'tasks',     icon: ListChecks, path: '/tasks' },
+  ]},
+  { key: 'settings', items: [
+    { key: 'users',    icon: Users,    path: '/users' },
+    { key: 'settings', icon: Settings, path: '/settings' },
   ]},
 ];
 
@@ -75,13 +97,13 @@ function monogram(name) {
 }
 
 export default function AppLayout() {
-  const { profile, organization, isAdmin, signOut } = useAuth();
+  const { profile, organization, accountingMode, isAdmin, signOut } = useAuth();
   const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const groups = isAdmin ? ADMIN_GROUPS : LIMITED_GROUPS;
+  const groups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? SIMPLE_GROUPS : FULL_GROUPS;
   const businessName = organization?.name || 'SelRic';
 
   async function handleSignOut() {

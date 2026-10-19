@@ -99,10 +99,14 @@ and safe to re-run.
 - `2026-10-19-profiles-locale.sql` — `profiles.locale` (`en`/`es`, default `en`) for the UI language toggle, and
   `handle_new_user()` copies `locale` from the sign-up metadata so a Spanish sign-up lands in Spanish. Additive,
   idempotent, tested on the PostgreSQL 16 replica. The app tolerates the column being absent (toggle still works
-  per device; the profile save is skipped). **Not yet applied.**
+  per device; the profile save is skipped). **Applied 2026-10-19.**
 - `2026-10-19-waitlist-and-invites.sql` — paid product with free pilots: `waitlist` (public INSERT only), `invite_codes`,
   `app_settings.signup_mode` (`invite` now; set to `open` when payments go live), `organizations.plan` (`pilot`/`paid`,
   existing = pilot), RPCs `check_invite(code)` and `get_signup_mode()`, and `handle_new_user()` refuses self-serve
   sign-ups without a valid invite while in invite mode (team invitations from Manage Users unaffected). Additive,
-  idempotent, tested on the replica. Usage notes at the bottom of the file. **Not yet applied.**
+  idempotent, tested on the replica. Usage notes at the bottom of the file. **Applied 2026-10-19.**
+- `2026-10-19-accounting-mode.sql` — `organizations.accounting_mode` (`full`/`simple`, column default `full` so every
+  existing workspace keeps the full package) and `handle_new_user()` creates new self-serve workspaces as `simple`.
+  Settings → Accounting switches it (existing admin UPDATE policy). Both modes write the same tables — the mode only
+  decides which pages the sidebar shows. Additive, idempotent, tested on the replica. **Not yet applied.**
 

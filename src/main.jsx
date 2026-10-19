@@ -22,8 +22,6 @@ import ManageUsersPage from './pages/admin/ManageUsersPage';
 import LedgerPage from './pages/ledger/LedgerPage';
 import JournalPage from './pages/journal/JournalPage';
 import TasksPage from './pages/tasks/TasksPage';
-import CalendarPage from './pages/calendar/CalendarPage';
-import MarketingPage from './pages/marketing/MarketingPage';
 import DailySalesPage from './pages/sales/DailySalesPage';
 import AccountantPage from './pages/accountant/AccountantPage';
 import StatementReviewMatch from './pages/accountant/StatementReviewMatch';
@@ -31,14 +29,20 @@ import BookBalanceSheetPage from './pages/accountant/BookBalanceSheetPage';
 import AssetsPage from './pages/assets/AssetsPage';
 import CashManagementPage from './pages/cash-management/CashManagementPage';
 import PayrollPage from './pages/payroll/PayrollPage';
+import TransactionsPage from './pages/transactions/TransactionsPage';
+import SettingsPage from './pages/settings/SettingsPage';
 import PinGate from './components/PinGate';
 import './index.css';
 
-function ProtectedRoute({ children, adminOnly = false }) {
-  const { user, loading, isAdmin } = useAuth();
+// `fullOnly` pages belong to the full accounting package. A workspace in
+// simple mode is sent to its Transactions tab instead. While the organization
+// is still loading (accountingMode null) nothing is redirected.
+function ProtectedRoute({ children, adminOnly = false, fullOnly = false }) {
+  const { user, loading, isAdmin, accountingMode } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
+  if (fullOnly && accountingMode === 'simple') return <Navigate to="/transactions" replace />;
   return children;
 }
 
@@ -75,25 +79,29 @@ function App() {
 
             <Route path="/" element={<RootGate />}>
               <Route index element={<DashboardPage />} />
-              <Route path="accountant" element={<ProtectedRoute adminOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
-              <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />
-              <Route path="accountant/book-balance-sheet" element={<ProtectedRoute adminOnly><PinGate><BookBalanceSheetPage /></PinGate></ProtectedRoute>} />
-              <Route path="bookkeeping" element={<ProtectedRoute adminOnly><BookkeepingPage /></ProtectedRoute>} />
-              <Route path="bookkeeping/reconcile" element={<ProtectedRoute adminOnly><ReconciliationPage /></ProtectedRoute>} />
-              <Route path="ledger" element={<ProtectedRoute adminOnly><LedgerPage /></ProtectedRoute>} />
-              <Route path="journal" element={<ProtectedRoute adminOnly><JournalPage /></ProtectedRoute>} />
+              {/* Full accounting package — hidden (and redirected) in simple mode */}
+              <Route path="accountant" element={<ProtectedRoute adminOnly fullOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
+              <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly fullOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />
+              <Route path="accountant/book-balance-sheet" element={<ProtectedRoute adminOnly fullOnly><PinGate><BookBalanceSheetPage /></PinGate></ProtectedRoute>} />
+              <Route path="bookkeeping" element={<ProtectedRoute adminOnly fullOnly><BookkeepingPage /></ProtectedRoute>} />
+              <Route path="bookkeeping/reconcile" element={<ProtectedRoute adminOnly fullOnly><ReconciliationPage /></ProtectedRoute>} />
+              <Route path="ledger" element={<ProtectedRoute adminOnly fullOnly><LedgerPage /></ProtectedRoute>} />
+              <Route path="journal" element={<ProtectedRoute adminOnly fullOnly><JournalPage /></ProtectedRoute>} />
+              <Route path="accounts" element={<ProtectedRoute adminOnly fullOnly><AccountsPage /></ProtectedRoute>} />
+              <Route path="cash-management" element={<ProtectedRoute adminOnly fullOnly><CashManagementPage /></ProtectedRoute>} />
+              <Route path="assets"   element={<ProtectedRoute adminOnly fullOnly><AssetsPage /></ProtectedRoute>} />
+              <Route path="payroll" element={<ProtectedRoute adminOnly fullOnly><PayrollPage /></ProtectedRoute>} />
+              {/* Simple mode */}
+              <Route path="transactions" element={<ProtectedRoute adminOnly><TransactionsPage /></ProtectedRoute>} />
+              {/* Both modes */}
               <Route path="sales" element={<ProtectedRoute adminOnly><DailySalesPage /></ProtectedRoute>} />
-              <Route path="calendar" element={<ProtectedRoute adminOnly><CalendarPage /></ProtectedRoute>} />
               <Route path="tasks" element={<ProtectedRoute adminOnly><TasksPage /></ProtectedRoute>} />
-              <Route path="marketing" element={<ProtectedRoute adminOnly><MarketingPage /></ProtectedRoute>} />
-              <Route path="accounts" element={<ProtectedRoute adminOnly><AccountsPage /></ProtectedRoute>} />
-              <Route path="assets"   element={<ProtectedRoute adminOnly><AssetsPage /></ProtectedRoute>} />
-              <Route path="cash-management" element={<ProtectedRoute adminOnly><CashManagementPage /></ProtectedRoute>} />
-              <Route path="payroll" element={<ProtectedRoute adminOnly><PayrollPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
               <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />
               <Route path="inventory" element={<InventoryPage />} />
               <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />
+              <Route path="settings" element={<ProtectedRoute adminOnly><SettingsPage /></ProtectedRoute>} />
+              {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the dashboard. */}
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

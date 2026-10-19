@@ -76,6 +76,22 @@ export function AuthProvider({ children }) {
     setReportBusinessName(data?.name);
   }
 
+  // Settings page: change the business row (name, business_type,
+  // accounting_mode). RLS only lets admins update their own organization.
+  async function updateOrganization(patch) {
+    if (!organization?.id) throw new Error('No organization loaded');
+    const { data, error } = await supabase
+      .from('organizations')
+      .update(patch)
+      .eq('id', organization.id)
+      .select()
+      .single();
+    if (error) throw error;
+    setOrganization(data);
+    setReportBusinessName(data?.name);
+    return data;
+  }
+
   // Self-serve sign-up. `details` = { full_name, org_name, business_type, locale, invite_code }.
   // The database trigger (handle_new_user) turns org_name/business_type into a
   // brand-new workspace with this user as its admin — unless an admin has
@@ -127,12 +143,19 @@ export function AuthProvider({ children }) {
 
   const isAdmin = profile?.role === 'admin';
 
+  // 'full' | 'simple' | null (null = organization not loaded yet; pages treat
+  // it as "don't redirect, show everything" to avoid a flash on first paint).
+  // A workspace created before the accounting_mode migration reads as 'full'.
+  const accountingMode = organization ? (organization.accounting_mode || 'full') : null;
+
   const value = {
     user,
     profile,
     organization,
+    accountingMode,
     loading,
     isAdmin,
+    updateOrganization,
     signUp,
     signIn,
     signOut,
