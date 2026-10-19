@@ -96,4 +96,8 @@ and safe to re-run.
   Humphrey's is the legacy org `00000000-0000-4000-8000-000000000001`; every existing row stays exactly where it is.
   Idempotent, tested against a PostgreSQL 16 replica of the schema. **Not yet applied.**
   Rollback: `ROLLBACK_organizations_multi_business.sql` (Stage A reversible; Stage B destructive, commented out).
+- `2026-10-19-profiles-locale.sql` — `profiles.locale` (`en`/`es`, default `en`) for the UI language toggle, and
+  `handle_new_user()` copies `locale` from the sign-up metadata so a Spanish sign-up lands in Spanish. Additive,
+  idempotent, tested on the PostgreSQL 16 replica. The app tolerates the column being absent (toggle still works
+  per device; the profile save is skipped). **Not yet applied.**
 

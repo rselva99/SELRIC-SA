@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
+import { I18nProvider } from './i18n/I18nContext';
 import AppLayout from './components/layout/AppLayout';
 import LandingPage from './pages/public/LandingPage';
 import LoginPage from './pages/auth/LoginPage';
@@ -64,6 +65,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <I18nProvider>
         <DataProvider>
           <Routes>
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
@@ -104,6 +106,7 @@ function App() {
             }}
           />
         </DataProvider>
+        </I18nProvider>
       </AuthProvider>
     </BrowserRouter>
   );

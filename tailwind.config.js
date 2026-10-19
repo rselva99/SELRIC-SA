@@ -22,8 +22,8 @@ export default {
         },
         surface: {
           0: '#ffffff',
-          50: '#f8f9fa',
-          100: '#f1f3f5',
+          50: '#f6f5f1',
+          100: '#efede7',
           200: '#e9ecef',
           300: '#dee2e6',
           400: '#ced4da',
