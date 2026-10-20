@@ -16,7 +16,7 @@ import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
 import { aggregateForPnL } from '../../lib/finance';
 import { generatePnLPdf } from '../../lib/reports';
-import { formatCurrency, formatDate, cn } from '../../lib/utils';
+import { formatCurrency, formatDate, formatQty, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
 import {
   ChevronLeft, ChevronRight, Download, FileText, TrendingUp, TrendingDown, Package, Users, Wallet,
@@ -613,7 +613,7 @@ export default function SimpleReportsPage() {
           {/* ═══ 2. Products ══════════════════════════════════════════ */}
           {activeTab === 'products' && (noSales ? <div className="card"><Empty title={t('rep.noSalesTitle', { period: periodLabel })} body={t('rep.noSalesBody')} link={{ to: '/sales', label: t('crm.recordSale') }} /></div> : <>
             <div className="grid sm:grid-cols-3 gap-4">
-              {[['bestUnits', productHighlights.byUnits, (r) => tn('sales.itemsSold', r.units)], ['bestRevenue', productHighlights.byRevenue, (r) => money(r.revenue)], ['bestMargin', productHighlights.byMargin, (r) => `${money(r.margin)} · ${fmtPct(r.marginPct)}`]].map(([k, r, f]) => (
+              {[['bestUnits', productHighlights.byUnits, (r) => tn('sales.itemsSold', Number(formatQty(r.units).replace(/,/g, '')))], ['bestRevenue', productHighlights.byRevenue, (r) => money(r.revenue)], ['bestMargin', productHighlights.byMargin, (r) => `${money(r.margin)} · ${fmtPct(r.marginPct)}`]].map(([k, r, f]) => (
                 <div key={k} className="card p-5">
                   <div className="text-xs font-semibold uppercase tracking-wider text-surface-500">{t(`rep.${k}`)}</div>
                   {r ? (<><div className="font-display text-xl text-brand-950 mt-2 truncate" title={r.name}>{r.name}</div><div className="font-mono text-sm text-brand-700 mt-1">{f(r)}</div></>) : <div className="text-surface-400 mt-2">—</div>}
@@ -655,7 +655,7 @@ export default function SimpleReportsPage() {
                           <div className="font-medium text-surface-900">{r.name}</div>
                           {groupBy === 'product' && (r.category ? <div className="text-xs text-surface-400">{r.category}</div> : r.key.startsWith('custom:') && <div className="text-xs text-surface-400">{t('sales.customTag')}</div>)}
                         </td>
-                        <td className="table-cell text-right font-mono">{r.units}</td>
+                        <td className="table-cell text-right font-mono">{formatQty(r.units)}</td>
                         <td className="table-cell text-right font-mono text-brand-700">{money(r.revenue)}</td>
                         <td className="table-cell text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -671,7 +671,7 @@ export default function SimpleReportsPage() {
                   </tbody>
                   <tfoot><tr className="bg-surface-50">
                     <td className="table-cell font-semibold">{t('rep.total')}</td>
-                    <td className="table-cell text-right font-mono font-semibold">{margin.units}</td>
+                    <td className="table-cell text-right font-mono font-semibold">{formatQty(margin.units)}</td>
                     <td className="table-cell text-right font-mono font-semibold text-brand-700">{money(margin.revenue)}</td>
                     <td className="table-cell" />
                     <td className="table-cell text-right font-mono font-semibold">{money(margin.margin)}</td>
@@ -762,12 +762,12 @@ export default function SimpleReportsPage() {
                                 <div className={cn('h-7 rounded flex items-center justify-center font-mono', a > 0.55 ? 'text-white' : 'text-surface-700')}
                                   style={{ backgroundColor: v ? `rgba(54,138,103,${0.12 + a * 0.78})` : '#f6f5f1' }}
                                   title={`${monthLabel(m)}: ${heatMetric === 'units' ? v : money(v)}`}>
-                                  {v ? (heatMetric === 'units' ? v : (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))) : ''}
+                                  {v ? (heatMetric === 'units' ? formatQty(v) : (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))) : ''}
                                 </div>
                               </td>
                             );
                           })}
-                          <td className="px-4 py-1.5 text-right font-mono text-surface-700 whitespace-nowrap">{heatMetric === 'units' ? r.units : money(r.revenue)}</td>
+                          <td className="px-4 py-1.5 text-right font-mono text-surface-700 whitespace-nowrap">{heatMetric === 'units' ? formatQty(r.units) : money(r.revenue)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -906,8 +906,8 @@ export default function SimpleReportsPage() {
                     {inventoryRows.map((r) => (
                       <tr key={r.id} className="border-b border-surface-50 hover:bg-surface-50">
                         <td className="table-cell"><div className="font-medium text-surface-900">{r.name}{r.supply && <span className="badge bg-surface-100 text-surface-600 ml-1.5">{t('rep.supply')}</span>}</div>{r.category && <div className="text-xs text-surface-400">{r.category}</div>}</td>
-                        <td className={cn('table-cell text-right font-mono', r.stock <= r.reorder && 'text-red-600')}>{r.stock} <span className="text-xs text-surface-400 font-sans">{r.unit}</span></td>
-                        <td className="table-cell text-right font-mono">{r.sold30 == null ? <span className="text-surface-400">—</span> : r.sold30}</td>
+                        <td className={cn('table-cell text-right font-mono', r.stock <= r.reorder && 'text-red-600')}>{formatQty(r.stock)} <span className="text-xs text-surface-400 font-sans">{r.unit}</span></td>
+                        <td className="table-cell text-right font-mono">{r.sold30 == null ? <span className="text-surface-400">—</span> : formatQty(r.sold30)}</td>
                         <td className="table-cell text-right font-mono">{r.daysLeft == null ? <span className="text-surface-400">—</span> : r.daysLeft > 365 ? '365+' : Math.round(r.daysLeft)}</td>
                         <td className="table-cell font-mono text-xs">{r.last ? formatDate(r.last) : <span className="font-sans text-surface-400">{r.supply ? '—' : t('crm.never')}</span>}</td>
                         <td className="table-cell">

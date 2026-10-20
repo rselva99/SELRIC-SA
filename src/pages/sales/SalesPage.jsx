@@ -8,7 +8,7 @@ import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
-import { formatCurrency, formatDate, cn } from '../../lib/utils';
+import { formatCurrency, formatDate, formatQty, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, Trash2, Download, Search, X, Check,
@@ -49,7 +49,7 @@ const emptyForm = () => ({
 });
 
 const money = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;
-const lineTotal = (l) => money((parseInt(l.quantity, 10) || 0) * (parseFloat(l.unit_price) || 0));
+const lineTotal = (l) => money((parseFloat(l.quantity) || 0) * (parseFloat(l.unit_price) || 0));
 
 export default function SalesPage() {
   const { products, refresh } = useData();
@@ -288,7 +288,7 @@ export default function SalesPage() {
         for (const l of lines) {
           const custom = l.product_id === NOT_IN_INVENTORY || !l.product_id;
           if (custom && !l.name.trim()) { toast.error(t('sales.needProduct')); setSaving(false); return; }
-          if (!(parseInt(l.quantity, 10) > 0)) { toast.error(t('sales.needQty')); setSaving(false); return; }
+          if (!(parseFloat(l.quantity) > 0)) { toast.error(t('sales.needQty')); setSaving(false); return; }
           if (l.unit_price === '' || Number.isNaN(parseFloat(l.unit_price)) || parseFloat(l.unit_price) < 0) { toast.error(t('sales.needPrice')); setSaving(false); return; }
         }
         const { data, error } = await supabase.rpc('record_sale', {
@@ -300,7 +300,7 @@ export default function SalesPage() {
             items: lines.map((l) => ({
               product_id: l.product_id && l.product_id !== NOT_IN_INVENTORY ? l.product_id : null,
               name: l.name.trim(),
-              quantity: parseInt(l.quantity, 10),
+              quantity: Math.round(parseFloat(l.quantity) * 1000) / 1000,
               unit_price: money(l.unit_price),
             })),
           },
@@ -342,7 +342,7 @@ export default function SalesPage() {
     const header = [t('dash.date'), '#', t('sales.customer'), t('crm.email'), t('crm.phone'), t('sales.items'), t('sales.payment'), t('sales.total')];
     const lines = [header, ...rows.map((r) => {
       const c = customers.find((x) => x.id === r.customer_id);
-      const items = (itemsBySale[r.id] || []).map((it) => `${it.quantity}× ${it.product_name} @ ${Number(it.unit_price).toFixed(2)}`).join('; ');
+      const items = (itemsBySale[r.id] || []).map((it) => `${formatQty(it.quantity)}× ${it.product_name} @ ${Number(it.unit_price).toFixed(2)}`).join('; ');
       return [r.date, r.number, r.customer_name || '', c?.email || '', c?.phone || '', items, t(`sales.payments.${r.payment_method}`), Number(r.total).toFixed(2)];
     })].map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','));
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -389,7 +389,7 @@ export default function SalesPage() {
         </div>
         <div className="card p-5">
           <div className="flex items-center gap-2 text-sm text-surface-500"><Package size={15} className="text-brand-600" /> {tn('sales.countMonth', stats.count)}</div>
-          <div className="stat-value mt-2">{tn('sales.itemsSold', stats.items)}</div>
+          <div className="stat-value mt-2">{tn('sales.itemsSold', Number(formatQty(stats.items).replace(/,/g, '')))}</div>
         </div>
         <div className="card p-5">
           <div className="flex items-center gap-2 text-sm text-surface-500"><Users size={15} className="text-brand-600" /> {t('sales.avgSale')}</div>
@@ -463,7 +463,7 @@ export default function SalesPage() {
                 <ul className="divide-y divide-surface-200">
                   {(itemsBySale[editing.id] || []).map((it) => (
                     <li key={it.id} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
-                      <span className="text-surface-800"><span className="font-mono text-surface-500">{it.quantity}×</span> {it.product_name}</span>
+                      <span className="text-surface-800"><span className="font-mono text-surface-500">{formatQty(it.quantity)}×</span> {it.product_name}</span>
                       <span className="font-mono text-surface-700">{formatCurrency(it.line_total)}</span>
                     </li>
                   ))}
@@ -482,7 +482,7 @@ export default function SalesPage() {
                   {form.lines.map((l, i) => {
                     const custom = l.product_id === NOT_IN_INVENTORY;
                     const p = !custom && l.product_id ? productById[l.product_id] : null;
-                    const qty = parseInt(l.quantity, 10) || 0;
+                    const qty = parseFloat(l.quantity) || 0;
                     const stock = p ? (p.current_stock ?? 0) : null;
                     const over = p && qty > stock;
                     return (
@@ -511,7 +511,7 @@ export default function SalesPage() {
                           )}
                         </div>
                         <div className="col-span-4 lg:col-span-2">
-                          <input type="number" inputMode="numeric" min="1" step="1" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })}
+                          <input type="number" inputMode="decimal" min="0.001" step="any" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })}
                             className="input-field py-2 text-sm font-mono" aria-label={t('sales.qty')} />
                         </div>
                         <div className="col-span-5 lg:col-span-2">
@@ -619,7 +619,7 @@ export default function SalesPage() {
                 {visible.map((r) => {
                   const items = itemsBySale[r.id] || [];
                   const isOpen = open.has(r.id);
-                  const summary = items.slice(0, 2).map((it) => `${it.quantity}× ${it.product_name}`).join(', ') + (items.length > 2 ? ` +${items.length - 2}` : '');
+                  const summary = items.slice(0, 2).map((it) => `${formatQty(it.quantity)}× ${it.product_name}`).join(', ') + (items.length > 2 ? ` +${items.length - 2}` : '');
                   return [
                     <tr key={r.id} className={cn('border-b border-surface-50 transition group', editing?.id === r.id ? 'bg-brand-50/60' : 'hover:bg-surface-50')}>
                       <td className="table-cell pr-0">
@@ -630,7 +630,7 @@ export default function SalesPage() {
                       <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(r.date)}</td>
                       <td className="table-cell font-mono text-xs text-surface-500">{r.number}</td>
                       <td className="table-cell font-medium text-surface-900 max-w-[14rem] truncate">{r.customer_name || <span className="text-surface-400 font-normal">{t('sales.walkIn')}</span>}</td>
-                      <td className="table-cell text-surface-600 max-w-[18rem] truncate" title={items.map((it) => `${it.quantity}× ${it.product_name}`).join(', ')}>{summary || '—'}</td>
+                      <td className="table-cell text-surface-600 max-w-[18rem] truncate" title={items.map((it) => `${formatQty(it.quantity)}× ${it.product_name}`).join(', ')}>{summary || '—'}</td>
                       <td className="table-cell"><span className="badge bg-surface-100 text-surface-700">{t(`sales.payments.${r.payment_method}`)}</span></td>
                       <td className="table-cell text-right font-mono whitespace-nowrap text-brand-700">{formatCurrency(r.total)}</td>
                       <td className="table-cell text-right whitespace-nowrap">
@@ -656,11 +656,11 @@ export default function SalesPage() {
                             {items.map((it) => (
                               <li key={it.id} className="flex items-center justify-between gap-3">
                                 <span className="text-surface-700 truncate">
-                                  <span className="font-mono text-surface-500">{it.quantity}×</span> {it.product_name}
+                                  <span className="font-mono text-surface-500">{formatQty(it.quantity)}×</span> {it.product_name}
                                   {!it.product_id && <span className="ml-1.5 text-[11px] text-surface-400">{t('sales.customTag')}</span>}
                                 </span>
                                 <span className="font-mono text-surface-600 whitespace-nowrap">
-                                  {it.quantity > 1 && <span className="text-surface-400">{formatCurrency(it.unit_price)} {t('sales.each')} · </span>}{formatCurrency(it.line_total)}
+                                  {Number(it.quantity) !== 1 && <span className="text-surface-400">{formatCurrency(it.unit_price)} {t('sales.each')} · </span>}{formatCurrency(it.line_total)}
                                 </span>
                               </li>
                             ))}

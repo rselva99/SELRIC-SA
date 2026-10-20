@@ -10,6 +10,15 @@ export function formatDate(date, fmt = 'dd MMM yyyy') {
   return format(d, fmt);
 }
 
+// Quantities (stock, units sold, recipe amounts) can be fractional since the
+// decimal-quantities migration. Show up to 3 decimals, no trailing zeros:
+// 12 → "12", 2.5 → "2.5", 0.125 → "0.125".
+export function formatQty(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '0';
+  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+}
+
 export function formatCurrency(amount) {
   if (amount == null) return '—';
   return Number(amount).toLocaleString('en-US', {

@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
-import { formatCurrency, formatDate, cn } from '../../lib/utils';
+import { formatCurrency, formatDate, formatQty, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
 import {
   Plus, Pencil, Trash2, Search, X, Check, ChevronDown, Users, Repeat, CircleDollarSign,
@@ -385,7 +385,7 @@ export default function CustomersPage() {
                                 <li key={sale.id} className="flex items-center justify-between gap-4 px-3.5 py-2 text-sm">
                                   <div className="min-w-0">
                                     <span className="font-mono text-xs text-surface-500 mr-2">{formatDate(sale.date)} · #{sale.number}</span>
-                                    <span className="text-surface-700 truncate">{(h.items[sale.id] || []).map((it) => `${it.quantity}× ${it.product_name}`).join(', ')}</span>
+                                    <span className="text-surface-700 truncate">{(h.items[sale.id] || []).map((it) => `${formatQty(it.quantity)}× ${it.product_name}`).join(', ')}</span>
                                   </div>
                                   <span className="font-mono text-brand-700 whitespace-nowrap">{formatCurrency(sale.total)}</span>
                                 </li>

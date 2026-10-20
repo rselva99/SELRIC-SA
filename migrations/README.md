@@ -142,4 +142,8 @@ and safe to re-run.
   supplies are expensed when bought (receiving stock creates no transaction), so booking cost again at sale time
   would double-count — the cost reaches the margin, not the P&L. Quantities are whole units, because
   `products.current_stock` is integer and the UI parseInt()s it. Additive, idempotent. **Applied 2026-10-19.**
-
+- `2026-10-20-decimal-quantities.sql` — quantities become `numeric(12,3)` everywhere they were integers
+  (`products.current_stock/reorder_level/target_stock`, `product_components.quantity`, `inventory_logs.quantity`,
+  `sale_items.quantity` + its generated `line_total`, `sales.items_count`) so a recipe can say "0.5 kg of flour" and a
+  sale "2.25 lb". `record_sale` / `void_sale` re-created with numeric arithmetic; values are kept exactly. The front
+  parses with parseFloat and shows up to 3 decimals (`formatQty`). Idempotent, tested on the replica. **Applied 2026-10-19.**

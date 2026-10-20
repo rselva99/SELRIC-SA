@@ -6,7 +6,9 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatDate, formatCurrency } from '../../lib/utils';
+import { useT } from '../../i18n/I18nContext';
+import { useLabel } from '../../components/useLabel';
+import { formatDate, formatCurrency, formatQty } from '../../lib/utils';
 import Modal from '../../components/ui/Modal';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
@@ -21,23 +23,28 @@ import {
 // products already use, plus "+ New category…" to type one on the spot. A
 // restaurant / bar starts with the classic set; everyone else starts with
 // just "Other" and builds their own (a bakery: Bread, Cakes…).
+// "Other" is stored as-is and only *displayed* in the user's language (catName).
 const BAR_CATEGORIES = ['Beer', 'Wine', 'Spirits', 'Soft Drinks', 'Mixers', 'Food', 'Snacks'];
 const DEFAULT_CATEGORY = 'Other';
 const NEW_CATEGORY = '__new__';
+const catName = (t, c) => (c === DEFAULT_CATEGORY ? t('inv.other') : c);
 // What a product IS. 'sale' = something you sell (price, offered in Sales);
 // 'supply' = raw material or packaging you use up (stock and cost only).
+// Labels live in translations under inv.kind*.
 const KINDS = [
-  { value: 'sale',   label: 'For sale',  hint: 'You sell this to customers. Has a sell price and shows up in Sales.', icon: ShoppingBag },
-  { value: 'supply', label: 'Supply',    hint: 'Raw material, packaging, ingredients — things you use up. Stock and cost only.', icon: Boxes },
+  { value: 'sale',   labelKey: 'inv.kindSale',   hintKey: 'inv.kindSaleHint',   icon: ShoppingBag },
+  { value: 'supply', labelKey: 'inv.kindSupply', hintKey: 'inv.kindSupplyHint', icon: Boxes },
 ];
 const isSupply = (p) => p?.kind === 'supply';
+// Movement types; the label is t(`inv.types.${value}`).
 const LOG_TYPES = [
-  { value: 'received',   label: 'Received',   icon: ArrowDown,  color: 'text-green-600' },
-  { value: 'sold',       label: 'Sold',        icon: ArrowUp,    color: 'text-blue-600' },
-  { value: 'used',       label: 'Used',        icon: Minus,      color: 'text-amber-600' },
-  { value: 'adjustment', label: 'Adjustment',  icon: RotateCcw,  color: 'text-purple-600' },
-  { value: 'returned',   label: 'Returned',    icon: ArrowDown,  color: 'text-teal-600' },   // stock put back (a deleted sale, a customer return)
+  { value: 'received',   icon: ArrowDown,  color: 'text-green-600' },
+  { value: 'sold',       icon: ArrowUp,    color: 'text-blue-600' },
+  { value: 'used',       icon: Minus,      color: 'text-amber-600' },
+  { value: 'adjustment', icon: RotateCcw,  color: 'text-purple-600' },
+  { value: 'returned',   icon: ArrowDown,  color: 'text-teal-600' },   // stock put back (a deleted sale, a customer return)
 ];
+const typeLabel = (t, type) => (LOG_TYPES.some((lt) => lt.value === type) ? t(`inv.types.${type}`) : type);
 const PIE_COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
 const STOCK_STATUS = (p) =>
   (p.current_stock || 0) <= (p.reorder_level || 0) ? 'critical'
@@ -50,11 +57,12 @@ const STATUS_COLOR = { critical: '#dc2626', low: '#f59e0b', ok: '#22c55e' };
 // Sentence-case labels, and the hint always sits under the control so that
 // neighbouring fields in a grid row end at the same height.
 function Field({ label, hint, optional, children }) {
+  const { t } = useT();
   return (
     <div>
       <label className="block text-sm font-medium text-surface-700 mb-1.5">
         {label}
-        {optional && <span className="text-surface-400 font-normal"> · optional</span>}
+        {optional && <span className="text-surface-400 font-normal"> · {t('inv.optional')}</span>}
       </label>
       {children}
       {hint && <p className="text-xs text-surface-500 mt-1.5 leading-snug">{hint}</p>}
@@ -96,6 +104,7 @@ function ProductThumbnail({ imageUrl, size = 'sm' }) {
 
 // ── Expandable product row — fetches its own logs from DB on open ────────
 function ExpandedRow({ p, profileMap, onLog, onEdit }) {
+  const { t } = useT();
   const [logs, setLogs]         = useState([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [total, setTotal]       = useState(0);
@@ -133,55 +142,55 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
           <ProductThumbnail imageUrl={p.image_url} size="lg" />
           <div className="grid grid-cols-2 gap-1.5">
             {[
-              ['Category', p.category],
-              ['Unit', p.unit],
-              ['Cost', formatCurrency(p.cost_price || 0)],
-              ['Sell', formatCurrency(p.sell_price || 0)],
-              ['Current Stock', `${p.current_stock ?? 0} ${p.unit}`],
-              ['Target Stock', `${p.target_stock ?? 0} ${p.unit}`],
-              ['Reorder Level', `${p.reorder_level ?? 0} ${p.unit}`],
-              ['Stock Value', formatCurrency((p.current_stock || 0) * (p.cost_price || 0))],
-            ].map(([label, value]) => (
-              <div key={label} className="bg-white rounded-lg p-2 border border-surface-100">
-                <p className="text-[10px] text-surface-400 uppercase tracking-wider leading-none">{label}</p>
+              ['category', catName(t, p.category)],
+              ['unit', p.unit],
+              ['cost', formatCurrency(p.cost_price || 0)],
+              ['sell', formatCurrency(p.sell_price || 0)],
+              ['currentStock', `${formatQty(p.current_stock ?? 0)} ${p.unit}`],
+              ['targetStock', `${formatQty(p.target_stock ?? 0)} ${p.unit}`],
+              ['reorderLevel', `${formatQty(p.reorder_level ?? 0)} ${p.unit}`],
+              ['stockValue', formatCurrency((p.current_stock || 0) * (p.cost_price || 0))],
+            ].map(([key, value]) => (
+              <div key={key} className="bg-white rounded-lg p-2 border border-surface-100">
+                <p className="text-[10px] text-surface-400 uppercase tracking-wider leading-none">{t(`inv.${key}`)}</p>
                 <p className="text-sm font-medium mt-0.5 truncate">{value}</p>
               </div>
             ))}
           </div>
           <button onClick={onEdit} className="btn-secondary w-full text-sm flex items-center justify-center gap-2">
-            <Edit3 size={13} /> Edit Product
+            <Edit3 size={13} /> {t('inv.editProduct')}
           </button>
         </div>
 
         {/* Right — movement ledger */}
         <div className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="font-semibold text-sm text-surface-700">Movement Ledger</h4>
-            <span className="text-xs text-surface-400">{total} total entries</span>
+            <h4 className="font-semibold text-sm text-surface-700">{t('inv.ledger')}</h4>
+            <span className="text-xs text-surface-400">{t('inv.totalEntries', { n: total })}</span>
           </div>
 
           {total === 0 ? (
-            <p className="text-sm text-surface-400 text-center py-6">No movement history yet</p>
+            <p className="text-sm text-surface-400 text-center py-6">{t('inv.noHistory')}</p>
           ) : (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-100">
-                      {['Date','Type','Qty','Notes','By'].map(h => (
-                        <th key={h} className="text-left pb-2 text-xs font-semibold text-surface-500 uppercase tracking-wider pr-3">{h}</th>
+                      {['date','type','qty','notes','by'].map(h => (
+                        <th key={h} className="text-left pb-2 text-xs font-semibold text-surface-500 uppercase tracking-wider pr-3">{t(`inv.${h}`)}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {displayed.map((log) => {
-                      const lt = LOG_TYPES.find((t) => t.value === log.type);
+                      const lt = LOG_TYPES.find((x) => x.value === log.type);
                       return (
                         <tr key={log.id} className="border-b border-surface-50">
                           <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">{formatDate(log.date || log.created_at)}</td>
-                          <td className="py-2 pr-3"><span className={`text-xs font-medium ${lt?.color || ''}`}>{lt?.label || log.type}</span></td>
+                          <td className="py-2 pr-3"><span className={`text-xs font-medium ${lt?.color || ''}`}>{typeLabel(t, log.type)}</span></td>
                           <td className={`py-2 pr-3 font-mono text-xs font-semibold whitespace-nowrap ${log.quantity >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {log.quantity >= 0 ? '+' : ''}{log.quantity}
+                            {log.quantity >= 0 ? '+' : ''}{formatQty(log.quantity)}
                           </td>
                           <td className="py-2 pr-3 text-xs text-surface-500 max-w-[140px] truncate">{log.notes || '—'}</td>
                           <td className="py-2 text-xs text-surface-400">{profileMap[log.user_id] || '—'}</td>
@@ -194,14 +203,14 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
 
               {!showAll && total > 5 && (
                 <button onClick={() => setShowAll(true)} className="btn-ghost w-full text-xs mt-2">
-                  Show All ({total} entries)
+                  {t('inv.showAll', { n: total })}
                 </button>
               )}
               {showAll && totalPages > 1 && (
                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-surface-100">
-                  <button onClick={() => setPage((n) => Math.max(0, n - 1))} disabled={page === 0} className="btn-ghost text-xs disabled:opacity-40">← Prev</button>
-                  <span className="text-xs text-surface-400">Page {page + 1} of {totalPages}</span>
-                  <button onClick={() => setPage((n) => Math.min(totalPages - 1, n + 1))} disabled={page >= totalPages - 1} className="btn-ghost text-xs disabled:opacity-40">Next →</button>
+                  <button onClick={() => setPage((n) => Math.max(0, n - 1))} disabled={page === 0} className="btn-ghost text-xs disabled:opacity-40">{t('inv.prev')}</button>
+                  <span className="text-xs text-surface-400">{t('inv.pageOf', { page: page + 1, pages: totalPages })}</span>
+                  <button onClick={() => setPage((n) => Math.min(totalPages - 1, n + 1))} disabled={page >= totalPages - 1} className="btn-ghost text-xs disabled:opacity-40">{t('inv.next')}</button>
                 </div>
               )}
             </>
@@ -210,13 +219,13 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
           {/* Quick actions */}
           <div className="flex gap-2 mt-4 pt-4 border-t border-surface-100">
             <button onClick={() => onLog('received')} className="btn-secondary text-xs flex items-center justify-center gap-1.5 flex-1">
-              <ArrowDown size={13} className="text-green-600" /> Add Stock
+              <ArrowDown size={13} className="text-green-600" /> {t('inv.addStock')}
             </button>
             <button onClick={() => onLog('used')} className="btn-secondary text-xs flex items-center justify-center gap-1.5 flex-1">
-              <Minus size={13} className="text-amber-600" /> Log Usage
+              <Minus size={13} className="text-amber-600" /> {t('inv.logUsage')}
             </button>
             <button onClick={() => onLog('adjustment')} className="btn-secondary text-xs flex items-center justify-center gap-1.5 flex-1">
-              <RotateCcw size={13} className="text-purple-600" /> Adjust
+              <RotateCcw size={13} className="text-purple-600" /> {t('inv.adjust')}
             </button>
           </div>
         </div>
@@ -227,6 +236,7 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
 
 // ── Movement History tab — paginated, self-fetching ───────────────────────
 function MovementHistoryTab({ products }) {
+  const { t } = useT();
   const [logs, setLogs]   = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage]   = useState(0);
@@ -249,19 +259,19 @@ function MovementHistoryTab({ products }) {
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead><tr className="border-b border-surface-100">
-            <th className="table-header">Date</th><th className="table-header">Product</th>
-            <th className="table-header">Type</th><th className="table-header text-center">Qty</th>
-            <th className="table-header">Notes</th>
+            <th className="table-header">{t('inv.date')}</th><th className="table-header">{t('inv.product')}</th>
+            <th className="table-header">{t('inv.type')}</th><th className="table-header text-center">{t('inv.qty')}</th>
+            <th className="table-header">{t('inv.notes')}</th>
           </tr></thead>
           <tbody>
             {logs.map(log => {
-              const lt = LOG_TYPES.find(t => t.value === log.type);
+              const lt = LOG_TYPES.find(x => x.value === log.type);
               return (
                 <tr key={log.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
                   <td className="table-cell font-mono text-xs">{formatDate(log.date||log.created_at)}</td>
                   <td className="table-cell font-medium">{productMap[log.product_id]||'—'}</td>
-                  <td className="table-cell"><span className={`text-xs font-medium ${lt?.color||''}`}>{lt?.label||log.type}</span></td>
-                  <td className={`table-cell text-center font-mono text-sm font-semibold ${log.quantity>=0?'text-green-600':'text-red-600'}`}>{log.quantity>=0?'+':''}{log.quantity}</td>
+                  <td className="table-cell"><span className={`text-xs font-medium ${lt?.color||''}`}>{typeLabel(t, log.type)}</span></td>
+                  <td className={`table-cell text-center font-mono text-sm font-semibold ${log.quantity>=0?'text-green-600':'text-red-600'}`}>{log.quantity>=0?'+':''}{formatQty(log.quantity)}</td>
                   <td className="table-cell text-surface-500 text-xs max-w-[200px] truncate">{log.notes||'—'}</td>
                 </tr>
               );
@@ -269,10 +279,10 @@ function MovementHistoryTab({ products }) {
           </tbody>
         </table>
       </div>
-      {total === 0 && <div className="p-8 text-center text-sm text-surface-400">No movement history yet</div>}
+      {total === 0 && <div className="p-8 text-center text-sm text-surface-400">{t('inv.noHistory')}</div>}
       {pages > 1 && (
         <div className="flex items-center justify-between px-5 py-3 border-t border-surface-100 bg-surface-50 text-xs text-surface-500">
-          <span>{total.toLocaleString()} entries · page {page+1} / {pages}</span>
+          <span>{t('inv.entriesPage', { n: total.toLocaleString(), page: page + 1, pages })}</span>
           <div className="flex gap-1">
             {[['‹',page-1],['›',page+1]].map(([l,p]) => (
               <button key={l} onClick={() => setPage(p)} disabled={p<0||p>=pages} className="btn-ghost px-2 py-1 text-xs disabled:opacity-30">{l}</button>
@@ -288,6 +298,8 @@ function MovementHistoryTab({ products }) {
 export default function InventoryPage() {
   const { products, addProduct, updateProduct, deleteProduct, addInventoryLog, refresh } = useData();
   const { isAdmin, organization } = useAuth();
+  const { t, tn, locale } = useT();
+  const label = useLabel();
 
   // Core state
   const [activeTab, setActiveTab]         = useState('dashboard');
@@ -328,7 +340,7 @@ export default function InventoryPage() {
 
   const recipeCost = useMemo(() => recipe.reduce((sum, r) => {
     const sp = supplies.find((x) => x.id === r.component_id);
-    return sum + (Number(sp?.cost_price) || 0) * (parseInt(r.quantity, 10) || 0);
+    return sum + (Number(sp?.cost_price) || 0) * (parseFloat(r.quantity) || 0);
   }, 0), [recipe, supplies]);
 
   // The workspace's categories: what its products use (+ the bar starter set
@@ -365,14 +377,16 @@ export default function InventoryPage() {
       setCatEdits((e) => { const n = { ...e }; delete n[oldName]; return n; });
       if (filterCat === oldName) setFilterCat(next);
       if (productForm.category === oldName) setProductForm((f) => ({ ...f, category: next }));
-      toast.success(`Renamed to "${next}"`);
-    } catch (err) { toast.error(err.message || 'Could not rename'); }
+      toast.success(t('inv.renamedTo', { name: next }));
+    } catch (err) { toast.error(err.message || t('inv.couldNotRename')); }
     finally { setCatBusy(''); }
   }
 
   async function deleteProductCategory(oldName) {
     const n = countIn(oldName);
-    if (!window.confirm(n ? `Delete "${oldName}"? Its ${n} product${n === 1 ? '' : 's'} will move to "${DEFAULT_CATEGORY}".` : `Delete "${oldName}"?`)) return;
+    const vars = { name: oldName, n, other: t('inv.other') };
+    const msg = !n ? t('inv.confirmDeleteCatEmpty', vars) : n === 1 ? t('inv.confirmDeleteCatOne', vars) : t('inv.confirmDeleteCat', vars);
+    if (!window.confirm(msg)) return;
     setCatBusy(oldName);
     try {
       if (n) {
@@ -381,8 +395,8 @@ export default function InventoryPage() {
         await refresh();
       }
       if (filterCat === oldName) setFilterCat('');
-      toast.success(`"${oldName}" deleted`);
-    } catch (err) { toast.error(err.message || 'Could not delete'); }
+      toast.success(t('inv.catDeleted', { name: oldName }));
+    } catch (err) { toast.error(err.message || t('inv.couldNotDelete')); }
     finally { setCatBusy(''); }
   }
 
@@ -399,10 +413,10 @@ export default function InventoryPage() {
   useEffect(() => {
     supabase.from('profiles').select('id,full_name').then(({ data }) => {
       const m = {};
-      (data || []).forEach((p) => { m[p.id] = p.full_name || 'Unknown'; });
+      (data || []).forEach((p) => { m[p.id] = p.full_name || t('inv.unknownUser'); });
       setProfileMap(m);
     });
-  }, []);
+  }, []); // eslint-disable-line
 
   // When editing a product, load existing image preview
   useEffect(() => {
@@ -457,14 +471,14 @@ export default function InventoryPage() {
   const pieData = useMemo(() => {
     const m = {};
     products.forEach((p) => {
-      const k = p.category || 'Other';
+      const k = p.category || DEFAULT_CATEGORY;
       m[k] = (m[k] || 0) + (p.current_stock || 0) * (p.cost_price || 0);
     });
     return Object.entries(m)
       .filter(([, v]) => v > 0)
       .sort(([, a], [, b]) => b - a)
-      .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }));
-  }, [products]);
+      .map(([name, value]) => ({ name: catName(t, name), value: Math.round(value * 100) / 100 }));
+  }, [products, t]);
 
   const restockList = useMemo(() =>
     products
@@ -493,7 +507,8 @@ export default function InventoryPage() {
 
   function openAddProduct() {
     setEditingProduct(null);
-    setProductForm({ name:'', kind:'sale', category: categories[0] || DEFAULT_CATEGORY, unit:'units', cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
+    // Default unit in the user's language ("units" / "unidades"); it is just text on the product.
+    setProductForm({ name:'', kind:'sale', category: categories[0] || DEFAULT_CATEGORY, unit: t('inv.unitPh'), cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
     setNewCategory('');
     setRecipe([]);
     setImageFile(null);
@@ -525,8 +540,8 @@ export default function InventoryPage() {
   // upsert the rest. A supply never has one.
   async function saveRecipe(productId, rows) {
     const clean = rows
-      .filter((r) => r.component_id && (parseInt(r.quantity, 10) || 0) > 0)
-      .map((r) => ({ product_id: productId, component_id: r.component_id, quantity: parseInt(r.quantity, 10) }));
+      .filter((r) => r.component_id && (parseFloat(r.quantity) || 0) > 0)
+      .map((r) => ({ product_id: productId, component_id: r.component_id, quantity: parseFloat(r.quantity) }));
     let del = supabase.from('product_components').delete().eq('product_id', productId);
     if (clean.length) del = del.not('component_id', 'in', `(${clean.map((r) => r.component_id).join(',')})`);
     const { error: delErr } = await del;
@@ -543,7 +558,7 @@ export default function InventoryPage() {
     let category = productForm.category;
     if (category === NEW_CATEGORY) {
       category = newCategory.trim();
-      if (!category) { toast.error('Type a name for the new category'); return; }
+      if (!category) { toast.error(t('inv.typeCategoryName')); return; }
     }
     setSaving(true);
     try {
@@ -563,19 +578,19 @@ export default function InventoryPage() {
         unit: productForm.unit,
         cost_price: parseFloat(productForm.cost_price) || 0,
         sell_price: productForm.kind === 'supply' ? 0 : (parseFloat(productForm.sell_price) || 0),
-        reorder_level: parseInt(productForm.reorder_level) || 5,
-        current_stock: parseInt(productForm.current_stock) || 0,
-        target_stock: parseInt(productForm.target_stock) || 0,
+        reorder_level: parseFloat(productForm.reorder_level) || 0,
+        current_stock: parseFloat(productForm.current_stock) || 0,
+        target_stock: parseFloat(productForm.target_stock) || 0,
         image_url: imageUrl,
       };
       let productId = editingProduct?.id;
       if (editingProduct) { await updateProduct(editingProduct.id, payload); }
       else                { productId = (await addProduct(payload)).id; }
       await saveRecipe(productId, productForm.kind === 'supply' ? [] : recipe);
-      toast.success(editingProduct ? 'Product updated' : 'Product added');
+      toast.success(editingProduct ? t('inv.productUpdated') : t('inv.productAdded'));
       setShowProductModal(false);
       setEditingProduct(null);
-    } catch (err) { toast.error(err.message || 'Failed to save'); }
+    } catch (err) { toast.error(err.message || t('inv.saveFailed')); }
     finally { setSaving(false); setUploadingImg(false); }
   }
 
@@ -586,14 +601,14 @@ export default function InventoryPage() {
       await addInventoryLog({
         product_id: logForm.product_id,
         type: logForm.type,
-        quantity: parseInt(logForm.quantity) || 0,
+        quantity: parseFloat(logForm.quantity) || 0,
         notes: logForm.notes,
         date: logForm.date,
       });
-      toast.success('Inventory logged');
+      toast.success(t('inv.logged'));
       setShowLogModal(false);
       setLogForm({ product_id: '', type: 'received', quantity: '', notes: '', date: new Date().toISOString().slice(0, 10) });
-    } catch (err) { toast.error(err.message || 'Failed'); }
+    } catch (err) { toast.error(err.message || t('inv.failed')); }
     finally { setSaving(false); }
   }
 
@@ -612,37 +627,40 @@ export default function InventoryPage() {
     try {
       let n = 0;
       for (const entry of countEntries) {
-        const counted = parseInt(entry.counted);
+        const counted = parseFloat(entry.counted);
         if (isNaN(counted)) continue;
         const diff = counted - entry.system_stock;
         if (diff !== 0) {
           await addInventoryLog({ product_id: entry.product_id, type: 'adjustment', quantity: counted,
-            notes: `Count: system=${entry.system_stock}, actual=${counted}`, date: new Date().toISOString().slice(0, 10) });
+            notes: t('inv.countNote', { system: formatQty(entry.system_stock), actual: formatQty(counted) }), date: new Date().toISOString().slice(0, 10) });
           n++;
         }
       }
-      toast.success(`Count complete. ${n} adjustment(s) made.`);
+      toast.success(tn('inv.countDone', n));
       setShowCountModal(false);
-    } catch (err) { toast.error(err.message || 'Failed'); }
+    } catch (err) { toast.error(err.message || t('inv.failed')); }
     finally { setSaving(false); }
   }
 
   function printRestockList() {
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const rows = restockList.map((p) => `
-      <tr><td>${p.name}</td><td>${p.category}</td><td>${p.current_stock}</td>
-      <td>${p.target_stock || 0}</td><td>${p.shortfall}</td>
+      <tr><td>${esc(p.name)}</td><td>${esc(catName(t, p.category))}</td><td>${formatQty(p.current_stock)}</td>
+      <td>${formatQty(p.target_stock || 0)}</td><td>${formatQty(p.shortfall)}</td>
       <td>$${(p.cost_price || 0).toFixed(2)}</td><td>$${p.restockCost.toFixed(2)}</td></tr>`).join('');
     const win = window.open('', '_blank');
-    if (!win) { toast.error('Pop-up blocked'); return; }
-    win.document.write(`<!DOCTYPE html><html><head><title>Restock List</title>
+    if (!win) { toast.error(t('inv.popupBlocked')); return; }
+    const heads = ['product', 'category', 'current', 'target', 'shortfall', 'unitCost', 'restockCost'].map((k) => `<th>${esc(t(`inv.${k}`))}</th>`).join('');
+    const generated = new Date().toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    win.document.write(`<!DOCTYPE html><html lang="${locale.slice(0, 2)}"><head><meta charset="utf-8"><title>${esc(t('inv.printTitle'))}</title>
       <style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;margin-top:16px}
       th,td{padding:8px 12px;border:1px solid #ddd;text-align:left}th{background:#f5f5f5;font-weight:600}
       tfoot td{font-weight:700;background:#fafafa}</style></head>
-      <body><h2>Restock Shopping List — ${organization?.name || 'SelRic'}</h2>
-      <p style="color:#666">Generated: ${new Date().toLocaleDateString('en-US', { weekday:'long',year:'numeric',month:'long',day:'numeric' })}</p>
-      <table><thead><tr><th>Product</th><th>Category</th><th>Current</th><th>Target</th><th>Shortfall</th><th>Unit Cost</th><th>Restock Cost</th></tr></thead>
+      <body><h2>${esc(t('inv.restockList'))} — ${esc(organization?.name || 'SelRic')}</h2>
+      <p style="color:#666">${esc(t('inv.printGenerated', { date: generated }))}</p>
+      <table><thead><tr>${heads}</tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="6">Total Restock Cost</td><td>$${restockTotal.toFixed(2)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="6">${esc(t('inv.totalRestockCost'))}</td><td>$${restockTotal.toFixed(2)}</td></tr></tfoot>
       </table></body></html>`);
     win.document.close();
     setTimeout(() => win.print(), 500);
@@ -655,25 +673,25 @@ export default function InventoryPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="page-title">Inventory</h1>
+          <h1 className="page-title">{label('inventory')}</h1>
           <p className="text-surface-500 text-sm mt-0.5">
-            {products.length} products
-            {stats.lowCount > 0 && <span className="text-amber-600 ml-1">· {stats.lowCount} need attention</span>}
+            {tn('inv.productsCount', products.length)}
+            {stats.lowCount > 0 && <span className="text-amber-600 ml-1">{tn('inv.needAttention', stats.lowCount)}</span>}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={startCount} className="btn-secondary flex items-center gap-2"><ClipboardList size={16} /> Stock Count</button>
-          <button onClick={() => openLogModal()} className="btn-secondary flex items-center gap-2"><History size={16} /> Log Entry</button>
-          <button onClick={openAddProduct} className="btn-primary flex items-center gap-2"><Plus size={16} /> Add Product</button>
+          <button onClick={startCount} className="btn-secondary flex items-center gap-2"><ClipboardList size={16} /> {t('inv.stockCount')}</button>
+          <button onClick={() => openLogModal()} className="btn-secondary flex items-center gap-2"><History size={16} /> {t('inv.logEntry')}</button>
+          <button onClick={openAddProduct} className="btn-primary flex items-center gap-2"><Plus size={16} /> {t('inv.addProduct')}</button>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 bg-surface-100 rounded-lg p-1 mb-6 w-fit">
-        {[{ id:'dashboard', label:'Dashboard' }, { id:'products', label:'Products' }, { id:'history', label:'Movement History' }].map((t) => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition ${activeTab === t.id ? 'bg-white shadow-sm text-surface-900' : 'text-surface-500 hover:text-surface-700'}`}>
-            {t.label}
+        {['dashboard', 'products', 'history'].map((id) => (
+          <button key={id} onClick={() => setActiveTab(id)}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition ${activeTab === id ? 'bg-white shadow-sm text-surface-900' : 'text-surface-500 hover:text-surface-700'}`}>
+            {t(`inv.tabs.${id}`)}
           </button>
         ))}
       </div>
@@ -684,10 +702,10 @@ export default function InventoryPage() {
           {/* Summary cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { label:'Total Products',    value: stats.total,                      icon: Package,       color:'text-brand-600',  bg:'bg-brand-50' },
-              { label:'Inventory Value',   value: formatCurrency(stats.totalValue), icon: DollarSign,    color:'text-green-700',  bg:'bg-green-50' },
-              { label:'Restock Cost',      value: formatCurrency(stats.restockCost),icon: TrendingDown,  color:'text-amber-700',  bg:'bg-amber-50' },
-              { label:'Low / Critical',    value: stats.lowCount,                   icon: AlertTriangle, color:'text-red-600',    bg:'bg-red-50' },
+              { label: t('inv.stats.total'),   value: stats.total,                      icon: Package,       color:'text-brand-600',  bg:'bg-brand-50' },
+              { label: t('inv.stats.value'),   value: formatCurrency(stats.totalValue), icon: DollarSign,    color:'text-green-700',  bg:'bg-green-50' },
+              { label: t('inv.stats.restock'), value: formatCurrency(stats.restockCost),icon: TrendingDown,  color:'text-amber-700',  bg:'bg-amber-50' },
+              { label: t('inv.stats.low'),     value: stats.lowCount,                   icon: AlertTriangle, color:'text-red-600',    bg:'bg-red-50' },
             ].map((s) => (
               <div key={s.label} className="card p-4">
                 <div className="flex items-center gap-3">
@@ -706,24 +724,24 @@ export default function InventoryPage() {
           {/* Category filter for charts */}
           <div className="flex items-center gap-3">
             <select value={dashCat} onChange={(e) => setDashCat(e.target.value)} className="input-field w-auto">
-              <option value="">All Categories</option>
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value="">{t('inv.allCategories')}</option>
+              {categories.map((c) => <option key={c} value={c}>{catName(t, c)}</option>)}
             </select>
-            <span className="text-xs text-surface-400">{dashProducts.length} products in view</span>
+            <span className="text-xs text-surface-400">{tn('inv.inView', dashProducts.length)}</span>
           </div>
 
           {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Stock Level Bar Chart */}
             <div className="card p-5 lg:col-span-2">
-              <h3 className="section-title mb-1">Stock Levels</h3>
+              <h3 className="section-title mb-1">{t('inv.stockLevels')}</h3>
               <p className="text-xs text-surface-400 mb-4">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500 mr-1"></span>At/Above target
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 mx-1 ml-3"></span>Below target
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-600 mx-1 ml-3"></span>At/Below reorder
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500 mr-1"></span>{t('inv.legendOk')}
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 mx-1 ml-3"></span>{t('inv.legendLow')}
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-600 mx-1 ml-3"></span>{t('inv.legendCritical')}
               </p>
               {stockChartData.length === 0 ? (
-                <EmptyState icon={BarChart2} title="No products" description="Add products to see stock levels" />
+                <EmptyState icon={BarChart2} title={t('inv.noProducts')} description={t('inv.addToSee')} />
               ) : (
                 <ResponsiveContainer width="100%" height={Math.max(200, stockChartData.length * 36)}>
                   <BarChart data={stockChartData} layout="vertical" margin={{ top: 0, right: 40, left: 10, bottom: 0 }}>
@@ -732,12 +750,12 @@ export default function InventoryPage() {
                     <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v, n) => [v, n]} />
                     <Legend />
-                    <Bar dataKey="current" name="Current Stock" radius={[0, 4, 4, 0]}>
+                    <Bar dataKey="current" name={t('inv.chartCurrent')} radius={[0, 4, 4, 0]}>
                       {stockChartData.map((entry, i) => (
                         <Cell key={i} fill={STATUS_COLOR[entry.status]} />
                       ))}
                     </Bar>
-                    <Bar dataKey="target" name="Target Stock" fill="#cbd5e1" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="target" name={t('inv.chartTarget')} fill="#cbd5e1" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -745,16 +763,16 @@ export default function InventoryPage() {
 
             {/* Category Value Pie Chart */}
             <div className="card p-5">
-              <h3 className="section-title mb-4">Value by Category</h3>
+              <h3 className="section-title mb-4">{t('inv.valueByCategory')}</h3>
               {pieData.length === 0 ? (
-                <EmptyState icon={BarChart2} title="No data" description="Add products with cost prices" />
+                <EmptyState icon={BarChart2} title={t('inv.noData')} description={t('inv.addWithCost')} />
               ) : (
                 <ResponsiveContainer width="100%" height={280}>
                   <PieChart>
                     <Pie data={pieData} cx="50%" cy="45%" innerRadius={55} outerRadius={90} dataKey="value" nameKey="name" paddingAngle={2}>
                       {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                     </Pie>
-                    <Tooltip formatter={(v) => [formatCurrency(v), 'Value']} />
+                    <Tooltip formatter={(v) => [formatCurrency(v), t('inv.value')]} />
                     <Legend iconType="circle" iconSize={10} formatter={(v) => <span style={{ fontSize: 11 }}>{v}</span>} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -766,27 +784,27 @@ export default function InventoryPage() {
           <div className="card overflow-hidden">
             <div className="px-5 py-3 bg-surface-50 border-b border-surface-100 flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-sm">Restock Shopping List</h3>
-                <p className="text-xs text-surface-400 mt-0.5">{restockList.length} products below target</p>
+                <h3 className="font-semibold text-sm">{t('inv.restockList')}</h3>
+                <p className="text-xs text-surface-400 mt-0.5">{tn('inv.belowTarget', restockList.length)}</p>
               </div>
               {restockList.length > 0 && (
                 <button onClick={printRestockList} className="btn-secondary text-xs flex items-center gap-1.5">
-                  <Printer size={13} /> Print List
+                  <Printer size={13} /> {t('inv.printList')}
                 </button>
               )}
             </div>
 
             {restockList.length === 0 ? (
               <div className="p-8 text-center text-sm text-surface-400">
-                🎉 All products are at or above target stock levels
+                {t('inv.allGood')}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-surface-100">
-                      {['Product','Category','Current','Target','Shortfall','Unit Cost','Restock Cost'].map((h) => (
-                        <th key={h} className={`table-header ${h.includes('Cost') || h === 'Shortfall' || h === 'Current' || h === 'Target' ? 'text-right' : ''}`}>{h}</th>
+                      {['product','category','current','target','shortfall','unitCost','restockCost'].map((h, i) => (
+                        <th key={h} className={`table-header ${i >= 2 ? 'text-right' : ''}`}>{t(`inv.${h}`)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -794,10 +812,10 @@ export default function InventoryPage() {
                     {restockList.map((p) => (
                       <tr key={p.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
                         <td className="table-cell font-medium">{p.name}</td>
-                        <td className="table-cell"><span className="badge-green">{p.category}</span></td>
-                        <td className="table-cell text-right font-mono text-red-600">{p.current_stock}</td>
-                        <td className="table-cell text-right font-mono text-surface-600">{p.target_stock}</td>
-                        <td className="table-cell text-right font-mono font-semibold text-amber-700">{p.shortfall}</td>
+                        <td className="table-cell"><span className="badge-green">{catName(t, p.category)}</span></td>
+                        <td className="table-cell text-right font-mono text-red-600">{formatQty(p.current_stock)}</td>
+                        <td className="table-cell text-right font-mono text-surface-600">{formatQty(p.target_stock)}</td>
+                        <td className="table-cell text-right font-mono font-semibold text-amber-700">{formatQty(p.shortfall)}</td>
                         <td className="table-cell text-right font-mono text-sm">{formatCurrency(p.cost_price || 0)}</td>
                         <td className="table-cell text-right font-mono font-semibold">{formatCurrency(p.restockCost)}</td>
                       </tr>
@@ -805,7 +823,7 @@ export default function InventoryPage() {
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-surface-200 bg-surface-50">
-                      <td colSpan={6} className="table-cell font-semibold">Total Restock Cost</td>
+                      <td colSpan={6} className="table-cell font-semibold">{t('inv.totalRestockCost')}</td>
                       <td className="table-cell text-right font-mono font-bold text-surface-900">{formatCurrency(restockTotal)}</td>
                     </tr>
                   </tfoot>
@@ -823,30 +841,30 @@ export default function InventoryPage() {
           <div className="flex flex-col sm:flex-row gap-3 mb-4">
             <div className="relative flex-1">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
-              <input type="text" placeholder="Search products…" value={search} onChange={(e) => setSearch(e.target.value)} className="input-field pl-9" />
+              <input type="text" placeholder={t('inv.searchPh')} value={search} onChange={(e) => setSearch(e.target.value)} className="input-field pl-9" />
             </div>
             <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="input-field w-auto min-w-[140px]">
-              <option value="">All Categories</option>
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value="">{t('inv.allCategories')}</option>
+              {categories.map((c) => <option key={c} value={c}>{catName(t, c)}</option>)}
             </select>
             <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className="input-field w-auto min-w-[130px]">
-              <option value="">Products & supplies</option>
-              <option value="sale">For sale</option>
-              <option value="supply">Supplies</option>
+              <option value="">{t('inv.kindAll')}</option>
+              <option value="sale">{t('inv.kindSale')}</option>
+              <option value="supply">{t('inv.kindSupplies')}</option>
             </select>
-            <button type="button" onClick={() => { setCatEdits({}); setShowCatModal(true); }} className="btn-secondary px-3 text-sm whitespace-nowrap" title="Rename or delete categories">
-              <Tags size={15} /> Categories
+            <button type="button" onClick={() => { setCatEdits({}); setShowCatModal(true); }} className="btn-secondary px-3 text-sm whitespace-nowrap" title={t('inv.categoriesTip')}>
+              <Tags size={15} /> {t('inv.categories')}
             </button>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="input-field w-auto min-w-[150px]">
-              <option value="">All Stock</option>
-              <option value="low">Low / Critical</option>
-              <option value="out">Out of Stock</option>
-              <option value="restock">Needs Restock</option>
+              <option value="">{t('inv.allStock')}</option>
+              <option value="low">{t('inv.lowCritical')}</option>
+              <option value="out">{t('inv.outOfStock')}</option>
+              <option value="restock">{t('inv.needsRestock')}</option>
             </select>
           </div>
 
           {filteredProducts.length === 0 ? (
-            <EmptyState icon={Package} title="No products" description="Add your first product" action={{ label: 'Add Product', onClick: openAddProduct }} />
+            <EmptyState icon={Package} title={t('inv.noProducts')} description={t('inv.addFirst')} action={{ label: t('inv.addProduct'), onClick: openAddProduct }} />
           ) : (
             <div className="card overflow-hidden">
               <div className="overflow-x-auto">
@@ -854,10 +872,10 @@ export default function InventoryPage() {
                   <thead>
                     <tr className="border-b border-surface-100">
                       <th className="table-header w-14"></th>
-                      <th className="table-header">Product</th>
-                      <th className="table-header">Category</th>
-                      <th className="table-header text-center">Stock / Target</th>
-                      <th className="table-header text-right">Value</th>
+                      <th className="table-header">{t('inv.product')}</th>
+                      <th className="table-header">{t('inv.category')}</th>
+                      <th className="table-header text-center">{t('inv.stockTarget')}</th>
+                      <th className="table-header text-right">{t('inv.value')}</th>
                       <th className="table-header w-28"></th>
                     </tr>
                   </thead>
@@ -886,16 +904,16 @@ export default function InventoryPage() {
                               </div>
                             </td>
                             {/* Category */}
-                            <td className="table-cell"><span className="badge-green">{p.category}</span>{isSupply(p) && <span className="badge bg-surface-100 text-surface-600 ml-1.5">Supply</span>}</td>
+                            <td className="table-cell"><span className="badge-green">{catName(t, p.category)}</span>{isSupply(p) && <span className="badge bg-surface-100 text-surface-600 ml-1.5">{t('inv.kindSupply')}</span>}</td>
                             {/* Stock */}
                             <td className="table-cell text-center">
                               <span className={`font-mono font-semibold ${status === 'critical' ? 'text-red-600' : status === 'low' ? 'text-amber-600' : 'text-green-700'}`}>
-                                {p.current_stock ?? 0}
+                                {formatQty(p.current_stock ?? 0)}
                               </span>
                               <span className="text-xs text-surface-400 mx-1">/</span>
-                              <span className="font-mono text-xs text-surface-400">{p.target_stock ?? 0}</span>
+                              <span className="font-mono text-xs text-surface-400">{formatQty(p.target_stock ?? 0)}</span>
                               <span className="text-xs text-surface-400 ml-1">{p.unit}</span>
-                              {status === 'critical' && <span className="ml-1 text-xs text-red-500 font-medium">↓ Low</span>}
+                              {status === 'critical' && <span className="ml-1 text-xs text-red-500 font-medium">{t('inv.lowTag')}</span>}
                             </td>
                             {/* Value */}
                             <td className="table-cell text-right font-mono text-sm">
@@ -904,13 +922,13 @@ export default function InventoryPage() {
                             {/* Actions */}
                             <td className="table-cell" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1 justify-end">
-                                <button onClick={() => openLogModal(p.id, 'received')} className="p-1.5 text-surface-400 hover:text-green-600 transition" title="Add stock">
+                                <button onClick={() => openLogModal(p.id, 'received')} className="p-1.5 text-surface-400 hover:text-green-600 transition" title={t('inv.addStock')} aria-label={t('inv.addStock')}>
                                   <Plus size={14} />
                                 </button>
                                 {isAdmin && (
                                   <>
-                                    <button onClick={() => openEditProduct(p)} className="p-1.5 text-surface-400 hover:text-brand-600 transition"><Edit3 size={14} /></button>
-                                    <button onClick={() => { if (window.confirm(`Delete ${p.name}?`)) deleteProduct(p.id); }} className="p-1.5 text-surface-400 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                                    <button onClick={() => openEditProduct(p)} className="p-1.5 text-surface-400 hover:text-brand-600 transition" title={t('inv.editProduct')} aria-label={t('inv.editProduct')}><Edit3 size={14} /></button>
+                                    <button onClick={() => { if (window.confirm(t('inv.confirmDeleteProduct', { name: p.name }))) deleteProduct(p.id); }} className="p-1.5 text-surface-400 hover:text-red-500 transition" title={t('inv.delete')} aria-label={t('inv.confirmDeleteProduct', { name: p.name })}><Trash2 size={14} /></button>
                                   </>
                                 )}
                               </div>
@@ -935,7 +953,7 @@ export default function InventoryPage() {
                 </table>
               </div>
               <div className="px-5 py-3 bg-surface-50 border-t border-surface-100 flex items-center justify-between">
-                <span className="text-sm font-medium text-surface-600">Total Inventory Value</span>
+                <span className="text-sm font-medium text-surface-600">{t('inv.totalValue')}</span>
                 <span className="font-mono font-semibold">{formatCurrency(stats.totalValue)}</span>
               </div>
             </div>
@@ -950,14 +968,14 @@ export default function InventoryPage() {
       <Modal
         open={showProductModal}
         onClose={() => { setShowProductModal(false); setEditingProduct(null); }}
-        title={editingProduct ? 'Edit product' : 'Add product'}
-        description={productForm.kind === 'supply' ? 'Something you use up making what you sell.' : 'Something you sell to customers.'}
+        title={editingProduct ? t('inv.editTitle') : t('inv.addTitle')}
+        description={productForm.kind === 'supply' ? t('inv.descSupply') : t('inv.descSale')}
         size="lg"
         footer={
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => { setShowProductModal(false); setEditingProduct(null); }} className="btn-ghost">Cancel</button>
+            <button type="button" onClick={() => { setShowProductModal(false); setEditingProduct(null); }} className="btn-ghost">{t('common.cancel')}</button>
             <button type="submit" form="product-form" disabled={saving || uploadingImg} className="btn-primary">
-              {saving || uploadingImg ? <Spinner size="sm" className="text-white" /> : editingProduct ? 'Save changes' : 'Add product'}
+              {saving || uploadingImg ? <Spinner size="sm" className="text-white" /> : editingProduct ? t('inv.saveChanges') : t('inv.addProduct')}
             </button>
           </div>
         }
@@ -965,15 +983,15 @@ export default function InventoryPage() {
         <form id="product-form" onSubmit={handleSaveProduct}>
           {/* What is it — the answer changes which fields below make sense. */}
           <Section>
-            <Field label="What is it?">
-              <div className="grid grid-cols-2 gap-2.5" role="radiogroup" aria-label="Product kind">
-                {KINDS.map(({ value, label, hint, icon: Icon }) => {
+            <Field label={t('inv.whatIsIt')}>
+              <div className="grid grid-cols-2 gap-2.5" role="radiogroup" aria-label={t('inv.productKind')}>
+                {KINDS.map(({ value, labelKey, hintKey, icon: Icon }) => {
                   const on = productForm.kind === value;
                   return (
                     <button key={value} type="button" role="radio" aria-checked={on} onClick={() => setProductForm({ ...productForm, kind: value })}
                       className={`text-left rounded-xl border px-3.5 py-3 transition ${on ? 'border-brand-600 bg-brand-50 ring-1 ring-brand-600' : 'border-surface-200 hover:border-surface-400 bg-white'}`}>
-                      <div className={`flex items-center gap-2 text-sm font-semibold ${on ? 'text-brand-900' : 'text-surface-800'}`}><Icon size={15} /> {label}</div>
-                      <p className="text-xs text-surface-500 mt-1 leading-snug">{hint}</p>
+                      <div className={`flex items-center gap-2 text-sm font-semibold ${on ? 'text-brand-900' : 'text-surface-800'}`}><Icon size={15} /> {t(labelKey)}</div>
+                      <p className="text-xs text-surface-500 mt-1 leading-snug">{t(hintKey)}</p>
                     </button>
                   );
                 })}
@@ -983,41 +1001,41 @@ export default function InventoryPage() {
 
           {/* Identity */}
           <Section divider>
-            <Field label={productForm.kind === 'supply' ? 'Supply name' : 'Product name'}>
-              <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="input-field" placeholder={productForm.kind === 'supply' ? 'e.g., 100g bags, labels, chiles (lb)' : 'e.g., Chile en polvo 100g'} required />
+            <Field label={productForm.kind === 'supply' ? t('inv.supplyName') : t('inv.productName')}>
+              <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="input-field" placeholder={productForm.kind === 'supply' ? t('inv.supplyNamePh') : t('inv.productNamePh')} required />
             </Field>
 
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Category">
+              <Field label={t('inv.category')}>
                 {productForm.category === NEW_CATEGORY ? (
                   <div className="flex gap-2">
                     <input
                       type="text" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="input-field"
-                      placeholder="New category name" autoFocus
+                      placeholder={t('inv.newCategoryPh')} autoFocus
                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(); } }}
                     />
-                    <button type="button" onClick={commitNewCategory} disabled={!newCategory.trim()} className="btn-primary px-3 shrink-0" aria-label="Add category"><Check size={16} /></button>
-                    <button type="button" onClick={() => { setProductForm({ ...productForm, category: categories[0] || DEFAULT_CATEGORY }); setNewCategory(''); }} className="btn-ghost px-2 shrink-0" aria-label="Cancel"><X size={16} /></button>
+                    <button type="button" onClick={commitNewCategory} disabled={!newCategory.trim()} className="btn-primary px-3 shrink-0" aria-label={t('inv.addCategory')}><Check size={16} /></button>
+                    <button type="button" onClick={() => { setProductForm({ ...productForm, category: categories[0] || DEFAULT_CATEGORY }); setNewCategory(''); }} className="btn-ghost px-2 shrink-0" aria-label={t('common.cancel')}><X size={16} /></button>
                   </div>
                 ) : (
                   <select value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} className="input-field">
-                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {categories.map((c) => <option key={c} value={c}>{catName(t, c)}</option>)}
                     {productForm.category && !categories.includes(productForm.category) && (
                       <option value={productForm.category}>{productForm.category}</option>
                     )}
-                    <option value={NEW_CATEGORY}>+ New category…</option>
+                    <option value={NEW_CATEGORY}>{t('inv.newCategoryOpt')}</option>
                   </select>
                 )}
               </Field>
-              <Field label="Unit" hint="How you count it: bottles, cases, lb.">
-                <input type="text" value={productForm.unit} onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })} className="input-field" placeholder="units" />
+              <Field label={t('inv.unit')} hint={t('inv.unitHint')}>
+                <input type="text" value={productForm.unit} onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })} className="input-field" placeholder={t('inv.unitPh')} />
               </Field>
             </div>
 
-            <Field label="Photo" optional>
+            <Field label={t('inv.photo')} optional>
               <div className="flex items-center gap-4">
                 {imagePreview ? (
-                  <img src={imagePreview} alt="Preview" className="w-16 h-16 rounded-xl object-cover border border-surface-200 shrink-0" />
+                  <img src={imagePreview} alt="" className="w-16 h-16 rounded-xl object-cover border border-surface-200 shrink-0" />
                 ) : (
                   <div className="w-16 h-16 rounded-xl bg-surface-100 flex items-center justify-center border border-surface-200 shrink-0">
                     <Camera size={22} className="text-surface-300" />
@@ -1027,10 +1045,10 @@ export default function InventoryPage() {
                   {/* No `capture` attribute: on a phone the browser then offers camera OR gallery; on a computer it opens the file picker. */}
                   <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
                   <button type="button" onClick={() => imageInputRef.current?.click()} className="btn-secondary text-xs flex items-center gap-1.5">
-                    <Camera size={13} /> {imagePreview ? 'Change photo' : 'Upload or take a photo'}
+                    <Camera size={13} /> {imagePreview ? t('inv.changePhoto') : t('inv.uploadPhoto')}
                   </button>
                   {imagePreview && (
-                    <button type="button" onClick={() => { setImageFile(null); setImagePreview(''); }} className="btn-ghost text-xs block">Remove</button>
+                    <button type="button" onClick={() => { setImageFile(null); setImagePreview(''); }} className="btn-ghost text-xs block">{t('inv.removePhoto')}</button>
                   )}
                 </div>
               </div>
@@ -1041,13 +1059,16 @@ export default function InventoryPage() {
           <Section divider>
             <div className="grid grid-cols-2 gap-4">
               <Field
-                label={productForm.kind === 'supply' ? 'Cost per unit' : 'Cost price'}
-                hint={`What you pay${productForm.unit ? ` per ${productForm.unit}` : ''}. Used for stock value${productForm.kind === 'supply' ? '' : ' and margin'}.`}
+                label={productForm.kind === 'supply' ? t('inv.costPerUnit') : t('inv.costPrice')}
+                hint={t('inv.costHint', {
+                  per: productForm.unit ? t('inv.perUnit', { unit: productForm.unit }) : '',
+                  margin: productForm.kind === 'supply' ? '' : t('inv.andMargin'),
+                })}
               >
                 <input type="number" step="0.01" min="0" value={productForm.cost_price} onChange={(e) => setProductForm({ ...productForm, cost_price: e.target.value })} className="input-field" placeholder="0.00" />
               </Field>
               {productForm.kind !== 'supply' && (
-                <Field label="Sell price" hint="List price. A customer's agreed price overrides it for them.">
+                <Field label={t('inv.sellPrice')} hint={t('inv.sellHint')}>
                   <input type="number" step="0.01" min="0" value={productForm.sell_price} onChange={(e) => setProductForm({ ...productForm, sell_price: e.target.value })} className="input-field" placeholder="0.00" />
                 </Field>
               )}
@@ -1059,13 +1080,15 @@ export default function InventoryPage() {
           {productForm.kind !== 'supply' && (
             <Section divider>
               <Field
-                label="What it is made of"
-                hint="Each unit sold takes this much off your supplies, and adds their cost to this product's cost."
+                label={t('inv.madeOf')}
+                hint={t('inv.madeOfHint')}
               >
                 {supplies.length === 0 ? (
                   <p className="text-sm text-surface-500 bg-surface-50 rounded-lg px-3.5 py-2.5 leading-snug">
-                    No supplies yet. Add a product marked <span className="font-medium text-surface-700">Supply</span> — bags,
-                    labels, boxes — and it will be selectable here.
+                    {/* The sentence carries the kind's name in bold, wherever the language puts it. */}
+                    {t('inv.noSupplies').split('{supply}').map((part, i) => (
+                      <span key={i}>{i > 0 && <span className="font-medium text-surface-700">{t('inv.kindSupply')}</span>}{part}</span>
+                    ))}
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -1076,26 +1099,26 @@ export default function InventoryPage() {
                           onChange={(e) => setRecipe(recipe.map((x, j) => (j === i ? { ...x, component_id: e.target.value } : x)))}
                           className="input-field"
                         >
-                          <option value="">Choose a supply…</option>
+                          <option value="">{t('inv.chooseSupply')}</option>
                           {supplies.map((sp) => (
                             <option
                               key={sp.id}
                               value={sp.id}
                               disabled={sp.id !== r.component_id && recipe.some((x) => x.component_id === sp.id)}
                             >
-                              {sp.name}{Number(sp.cost_price) ? ` — ${formatCurrency(sp.cost_price)} / ${sp.unit || 'unit'}` : ''}
+                              {sp.name}{Number(sp.cost_price) ? ` — ${formatCurrency(sp.cost_price)} / ${sp.unit || t('inv.unitWord')}` : ''}
                             </option>
                           ))}
                         </select>
                         <input
-                          type="number" min="1" value={r.quantity}
+                          type="number" min="0.001" step="any" value={r.quantity}
                           onChange={(e) => setRecipe(recipe.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))}
-                          className="input-field w-20 text-center" aria-label="Quantity per unit sold"
+                          className="input-field w-20 text-center" aria-label={t('inv.qtyPerUnit')}
                         />
                         <button
                           type="button" onClick={() => setRecipe(recipe.filter((_, j) => j !== i))}
                           className="p-2 rounded-lg text-surface-400 hover:text-red-600 hover:bg-red-50 shrink-0"
-                          aria-label="Remove material"
+                          aria-label={t('inv.removeMaterial')}
                         >
                           <Trash2 size={15} />
                         </button>
@@ -1105,7 +1128,7 @@ export default function InventoryPage() {
                       type="button" onClick={() => setRecipe([...recipe, { component_id: '', quantity: '1' }])}
                       className="btn-secondary text-xs" disabled={recipe.length >= supplies.length}
                     >
-                      <Plus size={13} /> Add material
+                      <Plus size={13} /> {t('inv.addMaterial')}
                     </button>
                   </div>
                 )}
@@ -1113,7 +1136,7 @@ export default function InventoryPage() {
 
               {recipeCost > 0 && (
                 <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-brand-50 border border-brand-100 px-3.5 py-2.5">
-                  <span className="text-sm text-brand-900">Cost per unit, materials included</span>
+                  <span className="text-sm text-brand-900">{t('inv.costWithMaterials')}</span>
                   <span className="font-mono text-sm text-brand-900">
                     {formatCurrency(parseFloat(productForm.cost_price) || 0)} + {formatCurrency(recipeCost)} ={' '}
                     <span className="font-semibold">{formatCurrency((parseFloat(productForm.cost_price) || 0) + recipeCost)}</span>
@@ -1126,14 +1149,14 @@ export default function InventoryPage() {
           {/* Stock levels. Every field carries a hint so the three columns end level. */}
           <Section divider>
             <div className="grid grid-cols-3 gap-4">
-              <Field label="In stock now" hint="How many you have today.">
-                <input type="number" min="0" value={productForm.current_stock} onChange={(e) => setProductForm({ ...productForm, current_stock: e.target.value })} className="input-field" />
+              <Field label={t('inv.inStockNow')} hint={t('inv.inStockHint')}>
+                <input type="number" min="0" step="any" value={productForm.current_stock} onChange={(e) => setProductForm({ ...productForm, current_stock: e.target.value })} className="input-field" />
               </Field>
-              <Field label="Minimum" hint="Warn me at or below this.">
-                <input type="number" min="0" value={productForm.reorder_level} onChange={(e) => setProductForm({ ...productForm, reorder_level: e.target.value })} className="input-field" />
+              <Field label={t('inv.minimum')} hint={t('inv.minimumHint')}>
+                <input type="number" min="0" step="any" value={productForm.reorder_level} onChange={(e) => setProductForm({ ...productForm, reorder_level: e.target.value })} className="input-field" />
               </Field>
-              <Field label="Ideal quantity" hint="Below it, it joins the restock list.">
-                <input type="number" min="0" value={productForm.target_stock} onChange={(e) => setProductForm({ ...productForm, target_stock: e.target.value })} className="input-field" />
+              <Field label={t('inv.ideal')} hint={t('inv.idealHint')}>
+                <input type="number" min="0" step="any" value={productForm.target_stock} onChange={(e) => setProductForm({ ...productForm, target_stock: e.target.value })} className="input-field" />
               </Field>
             </div>
           </Section>
@@ -1144,12 +1167,12 @@ export default function InventoryPage() {
       <Modal
         open={showCatModal}
         onClose={() => setShowCatModal(false)}
-        title="Product categories"
-        description={`Rename a category and every product in it follows. Deleting one moves its products to "${DEFAULT_CATEGORY}".`}
-        footer={<div className="flex justify-end"><button type="button" onClick={() => setShowCatModal(false)} className="btn-ghost">Done</button></div>}
+        title={t('inv.catsTitle')}
+        description={t('inv.catsBody', { other: t('inv.other') })}
+        footer={<div className="flex justify-end"><button type="button" onClick={() => setShowCatModal(false)} className="btn-ghost">{t('inv.done')}</button></div>}
       >
         {categories.filter((c) => c !== DEFAULT_CATEGORY).length === 0 ? (
-          <p className="text-sm text-surface-500 py-6 text-center">No categories yet — add a product and pick "+ New category…".</p>
+          <p className="text-sm text-surface-500 py-6 text-center">{t('inv.catsNone')}</p>
         ) : (
           <ul className="divide-y divide-surface-100 border border-surface-200 rounded-lg">
             {categories.filter((c) => c !== DEFAULT_CATEGORY).map((c) => {
@@ -1160,12 +1183,12 @@ export default function InventoryPage() {
                 <li key={c} className="flex items-center gap-2 px-3 py-2">
                   <input type="text" value={draft} onChange={(e) => setCatEdits((x) => ({ ...x, [c]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProductCategory(c); } }}
-                    className="input-field py-1.5 text-sm" aria-label={`Rename ${c}`} />
-                  <span className="text-xs text-surface-400 whitespace-nowrap w-20 text-right">{countIn(c)} {countIn(c) === 1 ? 'product' : 'products'}</span>
-                  <button type="button" onClick={() => renameProductCategory(c)} disabled={!dirty || busy} className="btn-primary px-2.5 py-1.5 text-xs" aria-label="Save name">
+                    className="input-field py-1.5 text-sm" aria-label={t('inv.renameCat', { name: c })} />
+                  <span className="text-xs text-surface-400 whitespace-nowrap w-20 text-right">{tn('inv.productsCount', countIn(c))}</span>
+                  <button type="button" onClick={() => renameProductCategory(c)} disabled={!dirty || busy} className="btn-primary px-2.5 py-1.5 text-xs" aria-label={t('inv.saveName')}>
                     {busy ? <Spinner size="sm" className="text-white" /> : <Check size={14} />}
                   </button>
-                  <button type="button" onClick={() => deleteProductCategory(c)} disabled={busy} className="p-1.5 rounded text-surface-400 hover:text-red-600 hover:bg-red-50" aria-label={`Delete ${c}`}>
+                  <button type="button" onClick={() => deleteProductCategory(c)} disabled={busy} className="p-1.5 rounded text-surface-400 hover:text-red-600 hover:bg-red-50" aria-label={t('inv.deleteCat', { name: c })}>
                     <Trash2 size={14} />
                   </button>
                 </li>
@@ -1179,43 +1202,43 @@ export default function InventoryPage() {
       <Modal
         open={showLogModal}
         onClose={() => setShowLogModal(false)}
-        title="Log a stock movement"
+        title={t('inv.logTitle')}
         footer={
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setShowLogModal(false)} className="btn-ghost">Cancel</button>
+            <button type="button" onClick={() => setShowLogModal(false)} className="btn-ghost">{t('common.cancel')}</button>
             <button type="submit" form="log-form" disabled={saving} className="btn-primary">
-              {saving ? <Spinner size="sm" className="text-white" /> : 'Log entry'}
+              {saving ? <Spinner size="sm" className="text-white" /> : t('inv.logEntry')}
             </button>
           </div>
         }
       >
         <form id="log-form" onSubmit={handleLogEntry} className="space-y-4">
-          <Field label="Product">
+          <Field label={t('inv.product')}>
             <select value={logForm.product_id} onChange={(e) => setLogForm({ ...logForm, product_id: e.target.value })} className="input-field" required>
-              <option value="">Select product</option>
+              <option value="">{t('inv.selectProduct')}</option>
               {[...products].sort((a, b) => a.name.localeCompare(b.name)).map((p) => (
-                <option key={p.id} value={p.id}>{p.name} (Stock: {p.current_stock})</option>
+                <option key={p.id} value={p.id}>{t('inv.stockParen', { name: p.name, n: formatQty(p.current_stock) })}</option>
               ))}
             </select>
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Type">
+            <Field label={t('inv.type')}>
               <select value={logForm.type} onChange={(e) => setLogForm({ ...logForm, type: e.target.value })} className="input-field">
-                {LOG_TYPES.map((lt) => <option key={lt.value} value={lt.value}>{lt.label}</option>)}
+                {LOG_TYPES.map((lt) => <option key={lt.value} value={lt.value}>{typeLabel(t, lt.value)}</option>)}
               </select>
             </Field>
-            <Field label="Date">
+            <Field label={t('inv.date')}>
               <input type="date" value={logForm.date} onChange={(e) => setLogForm({ ...logForm, date: e.target.value })} className="input-field" />
             </Field>
           </div>
           <Field
-            label="Quantity"
-            hint={logForm.type === 'adjustment' ? 'The new total on hand, not the difference.' : logForm.type === 'received' ? 'Units received.' : 'Units removed.'}
+            label={t('inv.quantity')}
+            hint={logForm.type === 'adjustment' ? t('inv.qtyHintAdjust') : logForm.type === 'received' || logForm.type === 'returned' ? t('inv.qtyHintReceived') : t('inv.qtyHintRemoved')}
           >
-            <input type="number" value={logForm.quantity} onChange={(e) => setLogForm({ ...logForm, quantity: e.target.value })} className="input-field" placeholder="0" required />
+            <input type="number" step="any" min="0" value={logForm.quantity} onChange={(e) => setLogForm({ ...logForm, quantity: e.target.value })} className="input-field" placeholder="0" required />
           </Field>
-          <Field label="Notes" optional>
-            <input type="text" value={logForm.notes} onChange={(e) => setLogForm({ ...logForm, notes: e.target.value })} className="input-field" placeholder="e.g. Received from supplier" />
+          <Field label={t('inv.notes')} optional>
+            <input type="text" value={logForm.notes} onChange={(e) => setLogForm({ ...logForm, notes: e.target.value })} className="input-field" placeholder={t('inv.notesPh')} />
           </Field>
         </form>
       </Modal>
@@ -1224,14 +1247,14 @@ export default function InventoryPage() {
       <Modal
         open={showCountModal}
         onClose={() => setShowCountModal(false)}
-        title="Periodic stock count"
-        description="Enter what you actually counted. Only the rows you change are adjusted."
+        title={t('inv.countTitle')}
+        description={t('inv.countBody')}
         size="xl"
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowCountModal(false)} className="btn-ghost">Cancel</button>
+            <button onClick={() => setShowCountModal(false)} className="btn-ghost">{t('common.cancel')}</button>
             <button onClick={handleSubmitCount} disabled={saving} className="btn-primary">
-              {saving ? <Spinner size="sm" className="text-white" /> : 'Submit count'}
+              {saving ? <Spinner size="sm" className="text-white" /> : t('inv.submitCount')}
             </button>
           </div>
         }
@@ -1241,13 +1264,13 @@ export default function InventoryPage() {
           {countEntries.map((entry, idx) => (
             <div key={entry.product_id} className="flex items-center gap-3 px-3 py-2 bg-surface-50 rounded-lg">
               <span className="flex-1 text-sm font-medium">{entry.name}</span>
-              <span className="text-xs text-surface-400 w-28 text-right">System: {entry.system_stock}</span>
-              <input type="number" value={entry.counted}
+              <span className="text-xs text-surface-400 w-28 text-right">{t('inv.system', { n: formatQty(entry.system_stock) })}</span>
+              <input type="number" step="any" min="0" value={entry.counted}
                 onChange={(e) => { const u = [...countEntries]; u[idx] = { ...u[idx], counted: e.target.value }; setCountEntries(u); }}
-                className="input-field w-24 text-center" placeholder="Count" />
-              {entry.counted !== '' && parseInt(entry.counted) !== entry.system_stock && (
-                <span className={`text-xs font-mono w-14 text-right ${parseInt(entry.counted) > entry.system_stock ? 'text-green-600' : 'text-red-600'}`}>
-                  {parseInt(entry.counted) > entry.system_stock ? '+' : ''}{parseInt(entry.counted) - entry.system_stock}
+                className="input-field w-24 text-center" placeholder={t('inv.countPh')} />
+              {entry.counted !== '' && parseFloat(entry.counted) !== Number(entry.system_stock) && (
+                <span className={`text-xs font-mono w-14 text-right ${parseFloat(entry.counted) > Number(entry.system_stock) ? 'text-green-600' : 'text-red-600'}`}>
+                  {parseFloat(entry.counted) > Number(entry.system_stock) ? '+' : ''}{formatQty(parseFloat(entry.counted) - Number(entry.system_stock))}
                 </span>
               )}
             </div>
