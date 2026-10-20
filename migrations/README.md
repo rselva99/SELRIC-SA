@@ -2,6 +2,9 @@
 
 Every SQL change against the live Supabase database is checked in here as
 a numbered, dated file. Filename convention: `YYYY-MM-DD-short-description.sql`.
+The date in a file name is the UTC day it was written; the **Applied** date in
+the index below is St. Louis time — so a `2026-10-20-…` file applied late on
+the evening of the 19th is correct, not a typo.
 
 ## Rules
 
@@ -147,3 +150,10 @@ and safe to re-run.
   `sale_items.quantity` + its generated `line_total`, `sales.items_count`) so a recipe can say "0.5 kg of flour" and a
   sale "2.25 lb". `record_sale` / `void_sale` re-created with numeric arithmetic; values are kept exactly. The front
   parses with parseFloat and shows up to 3 decimals (`formatQty`). Idempotent, tested on the replica. **Applied 2026-10-19.**
+- `2026-10-20-custom-fields.sql` — the workspace's own fields (Settings → Your portal → "Your own fields"): adds
+  `extra jsonb NOT NULL DEFAULT '{}'` (CHECK: an object) to `products`, `customers` and `sales`; `record_sale` stores
+  `p->'extra'` on the new sale and `update_sale` replaces `sales.extra` when the call carries an object. The field
+  definitions live in `organizations.config.fields` (no schema change); `cleanExtra` in the front keeps the values
+  typed. A guard refuses to run before decimal-quantities, so that numeric `record_sale` body is never undone.
+  Additive, idempotent, tested on the replica (CHECK rejects arrays/scalars; another workspace cannot read or change
+  `extra`; period lock still applies). **Not yet applied.**

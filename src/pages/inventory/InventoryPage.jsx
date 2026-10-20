@@ -8,6 +8,8 @@ import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n/I18nContext';
 import { useLabel } from '../../components/useLabel';
+import { useFields, ExtraFieldInputs, ExtraFieldValues } from '../../components/ExtraFields';
+import { cleanExtra } from '../../lib/workspaceConfig';
 import { formatDate, formatCurrency, formatQty } from '../../lib/utils';
 import Modal from '../../components/ui/Modal';
 import EmptyState from '../../components/ui/EmptyState';
@@ -105,6 +107,7 @@ function ProductThumbnail({ imageUrl, size = 'sm' }) {
 // ── Expandable product row — fetches its own logs from DB on open ────────
 function ExpandedRow({ p, profileMap, onLog, onEdit }) {
   const { t } = useT();
+  const extraFields = useFields('products');
   const [logs, setLogs]         = useState([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [total, setTotal]       = useState(0);
@@ -156,6 +159,8 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
                 <p className="text-sm font-medium mt-0.5 truncate">{value}</p>
               </div>
             ))}
+            {/* The workspace's own fields (Settings → Your portal) */}
+            <ExtraFieldValues fields={extraFields} value={p.extra} variant="tiles" />
           </div>
           <button onClick={onEdit} className="btn-secondary w-full text-sm flex items-center justify-center gap-2">
             <Edit3 size={13} /> {t('inv.editProduct')}
@@ -300,6 +305,7 @@ export default function InventoryPage() {
   const { isAdmin, organization } = useAuth();
   const { t, tn, locale } = useT();
   const label = useLabel();
+  const extraFields = useFields('products');   // the workspace's own product fields
 
   // Core state
   const [activeTab, setActiveTab]         = useState('dashboard');
@@ -323,6 +329,7 @@ export default function InventoryPage() {
     name: '', kind: 'sale', category: DEFAULT_CATEGORY, unit: 'units',
     cost_price: '', sell_price: '',
     reorder_level: '5', current_stock: '0', target_stock: '0',
+    extra: {},
   });
   const [imageFile, setImageFile]       = useState(null);
   const [imagePreview, setImagePreview] = useState('');
@@ -508,7 +515,7 @@ export default function InventoryPage() {
   function openAddProduct() {
     setEditingProduct(null);
     // Default unit in the user's language ("units" / "unidades"); it is just text on the product.
-    setProductForm({ name:'', kind:'sale', category: categories[0] || DEFAULT_CATEGORY, unit: t('inv.unitPh'), cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
+    setProductForm({ name:'', kind:'sale', category: categories[0] || DEFAULT_CATEGORY, unit: t('inv.unitPh'), cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0', extra: {} });
     setNewCategory('');
     setRecipe([]);
     setImageFile(null);
@@ -524,6 +531,7 @@ export default function InventoryPage() {
       reorder_level: p.reorder_level?.toString() || '5',
       current_stock: p.current_stock?.toString() || '0',
       target_stock: p.target_stock?.toString() || '0',
+      extra: p.extra && typeof p.extra === 'object' ? { ...p.extra } : {},
     });
     setNewCategory('');
     setRecipe([]);
@@ -583,6 +591,11 @@ export default function InventoryPage() {
         target_stock: parseFloat(productForm.target_stock) || 0,
         image_url: imageUrl,
       };
+      // Written only when the workspace has fields or the row already carries
+      // the column (custom-fields migration): an older database would reject it.
+      if (extraFields.length || (editingProduct && 'extra' in editingProduct)) {
+        payload.extra = cleanExtra(extraFields, productForm.extra);
+      }
       let productId = editingProduct?.id;
       if (editingProduct) { await updateProduct(editingProduct.id, payload); }
       else                { productId = (await addProduct(payload)).id; }
@@ -1160,6 +1173,15 @@ export default function InventoryPage() {
               </Field>
             </div>
           </Section>
+
+          {/* The workspace's own fields — lot, expiry, whatever Settings → Your portal defined. */}
+          {extraFields.length > 0 && (
+            <Section divider>
+              <p className="text-xs font-semibold uppercase tracking-wider text-surface-500">{t('portal.extraTitle')}</p>
+              <ExtraFieldInputs fields={extraFields} value={productForm.extra} onChange={(extra) => setProductForm({ ...productForm, extra })} idPrefix="prod-xf"
+                labelClass="block text-sm font-medium text-surface-700 mb-1.5" cols="sm:grid-cols-2 gap-4" />
+            </Section>
+          )}
         </form>
       </Modal>
 

@@ -56,6 +56,69 @@ export const TEMPLATES = [
 
 export const DEFAULT_TEMPLATE = 'retail';
 
+// Custom fields (phase 2): per-workspace extra details on products, customers
+// and sales, stored in each table's `extra jsonb` column and defined here as
+// config.fields = { products: [...], customers: [...], sales: [...] }.
+// A definition is { key, label, type, options? }:
+//   key     — stable slug used in `extra` (made from the label once, never
+//             changed afterwards so renaming the label keeps the data)
+//   label   — what the user sees, ≤ 40 chars
+//   type    — 'text' | 'number' | 'date' | 'list'
+//   options — for 'list': the choices, ≤ 20 of ≤ 40 chars
+// Which module each entity belongs to (the editor only offers fields for
+// modules that are on).
+export const FIELD_ENTITIES = [
+  { key: 'products',  module: 'inventory' },
+  { key: 'customers', module: 'customers' },
+  { key: 'sales',     module: 'sales' },
+];
+export const FIELD_TYPES = ['text', 'number', 'date', 'list'];
+export const MAX_FIELDS = 10;
+export const MAX_OPTIONS = 20;
+
+// A slug for a label: "Fecha de vencimiento" → "fecha_de_vencimiento".
+// Unique among `taken` (suffix _2, _3…).
+export function fieldKey(label, taken = []) {
+  const base = String(label || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    .slice(0, 24) || 'field';
+  let k = base;
+  for (let i = 2; taken.includes(k); i++) k = `${base}_${i}`;
+  return k;
+}
+
+// Normalise one entity's field list: drop junk, cap lengths, assign keys to
+// new rows, keep existing keys, dedupe.
+export function cleanFields(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const taken = [];
+  for (const f of list) {
+    if (!f || typeof f !== 'object') continue;
+    const label = typeof f.label === 'string' ? f.label.trim().slice(0, 40) : '';
+    if (!label) continue;
+    const type = FIELD_TYPES.includes(f.type) ? f.type : 'text';
+    const key = typeof f.key === 'string' && /^[a-z0-9_]{1,32}$/.test(f.key) && !taken.includes(f.key) ? f.key : fieldKey(label, taken);
+    const def = { key, label, type };
+    if (type === 'list') {
+      const raw = Array.isArray(f.options) ? f.options : typeof f.options === 'string' ? f.options.split(',') : [];
+      def.options = raw.map((o) => String(o).trim().slice(0, 40)).filter(Boolean)
+        .filter((o, i, a) => a.indexOf(o) === i).slice(0, MAX_OPTIONS);
+    }
+    out.push(def);
+    taken.push(key);
+    if (out.length >= MAX_FIELDS) break;
+  }
+  return out;
+}
+
+function cleanFieldSets(stored) {
+  const fields = {};
+  for (const e of FIELD_ENTITIES) fields[e.key] = cleanFields(stored?.[e.key]);
+  return fields;
+}
+
 export function getTemplate(key) {
   return TEMPLATES.find((t) => t.key === key) || null;
 }
@@ -94,18 +157,50 @@ export function resolveConfig(organization) {
     const v = stored.labels?.[m.key];
     if (typeof v === 'string' && v.trim()) labels[m.key] = v.trim().slice(0, 40);
   }
-  return { v: CONFIG_VERSION, template: templateKey, modules, labels, dashboard, configured: isConfigured(organization) };
+  const fields = cleanFieldSets(stored.fields);
+  return { v: CONFIG_VERSION, template: templateKey, modules, labels, dashboard, fields, configured: isConfigured(organization) };
 }
 
 // What to store: only the fields the app knows, so a stale key can never
 // hang around in the row.
-export function serializeConfig({ template, modules, labels, dashboard }) {
-  const out = { v: CONFIG_VERSION, template: getTemplate(template) ? template : DEFAULT_TEMPLATE, modules: {}, labels: {}, dashboard: {} };
+export function serializeConfig({ template, modules, labels, dashboard, fields }) {
+  const out = { v: CONFIG_VERSION, template: getTemplate(template) ? template : DEFAULT_TEMPLATE, modules: {}, labels: {}, dashboard: {}, fields: {} };
   for (const m of MODULES) out.modules[m.key] = !!modules?.[m.key];
   for (const s of DASHBOARD_SECTIONS) out.dashboard[s] = dashboard?.[s] !== false;
   for (const m of MODULES) {
     const v = labels?.[m.key];
     if (typeof v === 'string' && v.trim()) out.labels[m.key] = v.trim().slice(0, 40);
+  }
+  out.fields = cleanFieldSets(fields);
+  return out;
+}
+
+// ── Values ──────────────────────────────────────────────────────────────────
+// What a row's `extra` should hold for these definitions: known keys typed
+// and trimmed, empties dropped. Keys the definitions no longer mention are
+// kept as they were — removing a field from the portal hides it, it never
+// deletes what was typed.
+export function cleanExtra(fields, raw) {
+  const out = {};
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const known = new Set((fields || []).map((f) => f.key));
+  for (const [k, v] of Object.entries(src)) if (!known.has(k) && v != null && v !== '') out[k] = v;
+  for (const f of fields || []) {
+    const v = src[f.key];
+    if (v == null || v === '') continue;
+    if (f.type === 'number') {
+      const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'));
+      if (Number.isFinite(n)) out[f.key] = n;
+    } else if (f.type === 'date') {
+      const s = String(v).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) out[f.key] = s;
+    } else if (f.type === 'list') {
+      const s = String(v).trim();
+      if (s && (!f.options?.length || f.options.includes(s))) out[f.key] = s;
+    } else {
+      const s = String(v).trim().slice(0, 200);
+      if (s) out[f.key] = s;
+    }
   }
   return out;
 }

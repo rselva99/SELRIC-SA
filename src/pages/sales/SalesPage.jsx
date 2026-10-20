@@ -7,6 +7,8 @@ import { fetchAll } from '../../lib/fetchAll';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLabel } from '../../components/useLabel';
+import { useFields, ExtraFieldInputs, ExtraFieldValues, formatExtra } from '../../components/ExtraFields';
+import { cleanExtra } from '../../lib/workspaceConfig';
 import { useT } from '../../i18n/I18nContext';
 import { formatCurrency, formatDate, formatQty, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
@@ -45,6 +47,7 @@ const emptyForm = () => ({
   customer_phone: '',
   payment_method: 'cash',
   notes: '',
+  extra: {},
   lines: [emptyLine()],
 });
 
@@ -56,6 +59,7 @@ export default function SalesPage() {
   const { config } = useAuth();
   const label = useLabel();
   const { t, tn, locale } = useT();
+  const extraFields = useFields('sales');   // the workspace's own sale fields
   // Services-style portal: the inventory module is off, so every line is a
   // named item with a price — no product picker.
   const noInventory = config?.modules?.inventory === false;
@@ -170,9 +174,10 @@ export default function SalesPage() {
     return rows.filter((r) =>
       (r.customer_name || '').toLowerCase().includes(q) ||
       String(r.number).includes(q) ||
-      (itemsBySale[r.id] || []).some((it) => (it.product_name || '').toLowerCase().includes(q))
+      (itemsBySale[r.id] || []).some((it) => (it.product_name || '').toLowerCase().includes(q)) ||
+      extraFields.some((f) => formatExtra(f, r.extra?.[f.key]).toLowerCase().includes(q))
     );
-  }, [rows, search, itemsBySale]);
+  }, [rows, search, itemsBySale, extraFields]);
 
   const productById = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
 
@@ -240,6 +245,7 @@ export default function SalesPage() {
       customer_phone: customers.find((c) => c.id === row.customer_id)?.phone || '',
       payment_method: row.payment_method || 'cash',
       notes: row.notes || '',
+      extra: row.extra && typeof row.extra === 'object' ? { ...row.extra } : {},
       lines: [],
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -276,7 +282,7 @@ export default function SalesPage() {
       if (editing) {
         const { data, error } = await supabase.rpc('update_sale', {
           p_sale_id: editing.id,
-          p: { date: form.date, customer: customerPayload(), payment_method: form.payment_method, notes: form.notes.trim() },
+          p: { date: form.date, customer: customerPayload(), payment_method: form.payment_method, notes: form.notes.trim(), extra: cleanExtra(extraFields, form.extra) },
         });
         if (error) throw error;
         toast.success(t('sales.updated', { n: data?.number ?? editing.number }));
@@ -297,6 +303,7 @@ export default function SalesPage() {
             customer: customerPayload(),
             payment_method: form.payment_method,
             notes: form.notes.trim(),
+            extra: cleanExtra(extraFields, form.extra),
             items: lines.map((l) => ({
               product_id: l.product_id && l.product_id !== NOT_IN_INVENTORY ? l.product_id : null,
               name: l.name.trim(),
@@ -339,11 +346,12 @@ export default function SalesPage() {
   }
 
   function exportCsv() {
-    const header = [t('dash.date'), '#', t('sales.customer'), t('crm.email'), t('crm.phone'), t('sales.items'), t('sales.payment'), t('sales.total')];
+    const header = [t('dash.date'), '#', t('sales.customer'), t('crm.email'), t('crm.phone'), t('sales.items'), t('sales.payment'), t('sales.total'), t('sales.notes'), ...extraFields.map((f) => f.label)];
     const lines = [header, ...rows.map((r) => {
       const c = customers.find((x) => x.id === r.customer_id);
       const items = (itemsBySale[r.id] || []).map((it) => `${formatQty(it.quantity)}× ${it.product_name} @ ${Number(it.unit_price).toFixed(2)}`).join('; ');
-      return [r.date, r.number, r.customer_name || '', c?.email || '', c?.phone || '', items, t(`sales.payments.${r.payment_method}`), Number(r.total).toFixed(2)];
+      return [r.date, r.number, r.customer_name || '', c?.email || '', c?.phone || '', items, t(`sales.payments.${r.payment_method}`), Number(r.total).toFixed(2), r.notes || '',
+        ...extraFields.map((f) => (f.type === 'date' ? String(r.extra?.[f.key] ?? '') : formatExtra(f, r.extra?.[f.key])))];
     })].map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','));
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -538,6 +546,11 @@ export default function SalesPage() {
             )}
           </div>
 
+          {/* The workspace's own sale fields (Settings → Your portal) */}
+          {extraFields.length > 0 && (
+            <ExtraFieldInputs fields={extraFields} value={form.extra} onChange={(extra) => setForm((f) => ({ ...f, extra }))} idPrefix="sale-xf" cols="sm:grid-cols-2 lg:grid-cols-4 gap-3" />
+          )}
+
           {/* Payment, notes, total */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
             <div className="lg:col-span-5">
@@ -629,7 +642,10 @@ export default function SalesPage() {
                       </td>
                       <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(r.date)}</td>
                       <td className="table-cell font-mono text-xs text-surface-500">{r.number}</td>
-                      <td className="table-cell font-medium text-surface-900 max-w-[14rem] truncate">{r.customer_name || <span className="text-surface-400 font-normal">{t('sales.walkIn')}</span>}</td>
+                      <td className="table-cell font-medium text-surface-900 max-w-[14rem]">
+                        <div className="truncate">{r.customer_name || <span className="text-surface-400 font-normal">{t('sales.walkIn')}</span>}</div>
+                        <ExtraFieldValues fields={extraFields} value={r.extra} className="font-normal" />
+                      </td>
                       <td className="table-cell text-surface-600 max-w-[18rem] truncate" title={items.map((it) => `${formatQty(it.quantity)}× ${it.product_name}`).join(', ')}>{summary || '—'}</td>
                       <td className="table-cell"><span className="badge bg-surface-100 text-surface-700">{t(`sales.payments.${r.payment_method}`)}</span></td>
                       <td className="table-cell text-right font-mono whitespace-nowrap text-brand-700">{formatCurrency(r.total)}</td>

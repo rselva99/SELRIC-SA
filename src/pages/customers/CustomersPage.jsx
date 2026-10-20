@@ -6,6 +6,8 @@ import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useLabel } from '../../components/useLabel';
+import { useFields, ExtraFieldInputs, ExtraFieldValues, formatExtra } from '../../components/ExtraFields';
+import { cleanExtra } from '../../lib/workspaceConfig';
 import { useT } from '../../i18n/I18nContext';
 import { formatCurrency, formatDate, formatQty, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
@@ -22,13 +24,14 @@ import {
 // Purchase totals come from the customer_stats view (security_invoker, so the
 // same RLS as the tables underneath).
 
-const emptyForm = () => ({ name: '', email: '', phone: '', notes: '' });
+const emptyForm = () => ({ name: '', email: '', phone: '', notes: '', extra: {} });
 
 export default function CustomersPage() {
   const { user } = useAuth();
   const { products } = useData();
   const label = useLabel();
   const { t, tn } = useT();
+  const extraFields = useFields('customers');   // the workspace's own customer fields
 
   const [customers, setCustomers] = useState([]);
   const [stats, setStats] = useState({});
@@ -151,7 +154,8 @@ export default function CustomersPage() {
           (c.name || '').toLowerCase().includes(q) ||
           (c.email || '').toLowerCase().includes(q) ||
           (c.phone || '').toLowerCase().includes(q) ||
-          (c.notes || '').toLowerCase().includes(q))
+          (c.notes || '').toLowerCase().includes(q) ||
+          extraFields.some((f) => formatExtra(f, c.extra?.[f.key]).toLowerCase().includes(q)))
       : customers.slice();
     const st = (c) => stats[c.id] || {};
     if (sort === 'name') list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -172,7 +176,7 @@ export default function CustomersPage() {
 
   function startEdit(c) {
     setEditingId(c.id);
-    setForm({ name: c.name || '', email: c.email || '', phone: c.phone || '', notes: c.notes || '' });
+    setForm({ name: c.name || '', email: c.email || '', phone: c.phone || '', notes: c.notes || '', extra: c.extra && typeof c.extra === 'object' ? { ...c.extra } : {} });
     setShowForm(true);
     setConfirmId(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -189,6 +193,10 @@ export default function CustomersPage() {
     const name = form.name.trim();
     if (!name) { toast.error(t('crm.nameRequired')); return; }
     const payload = { name, email: form.email.trim(), phone: form.phone.trim(), notes: form.notes.trim() };
+    // Custom fields — written only when the workspace has some or the row
+    // already carries the column (custom-fields migration).
+    const current = editingId ? customers.find((c) => c.id === editingId) : null;
+    if (extraFields.length || (current && 'extra' in current)) payload.extra = cleanExtra(extraFields, form.extra);
     setSaving(true);
     try {
       if (editingId) {
@@ -283,6 +291,12 @@ export default function CustomersPage() {
               <label htmlFor="cu-notes" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('crm.notes')}</label>
               <input id="cu-notes" type="text" value={form.notes} onChange={set('notes')} className="input-field" placeholder={t('crm.notesPlaceholder')} />
             </div>
+            {/* The workspace's own customer fields (Settings → Your portal) */}
+            {extraFields.length > 0 && (
+              <div className="sm:col-span-2 lg:col-span-12">
+                <ExtraFieldInputs fields={extraFields} value={form.extra} onChange={(extra) => setForm((f) => ({ ...f, extra }))} idPrefix="cu-xf" cols="sm:grid-cols-2 lg:grid-cols-4 gap-3" />
+              </div>
+            )}
           </form>
         </section>
       )}
@@ -344,6 +358,7 @@ export default function CustomersPage() {
                       <td className="table-cell">
                         <div className="font-medium text-surface-900">{c.name}</div>
                         {c.notes && <div className="text-xs text-surface-500 truncate max-w-[16rem]" title={c.notes}>{c.notes}</div>}
+                        <ExtraFieldValues fields={extraFields} value={c.extra} className="max-w-[20rem] mt-0.5" />
                       </td>
                       <td className="table-cell">
                         <div className="flex flex-col gap-0.5 text-xs text-surface-600">
