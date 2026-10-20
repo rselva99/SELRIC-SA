@@ -141,5 +141,5 @@ and safe to re-run.
   distort a reversal; `update_sale` keeps the component logs on the sale's date. **No COGS transaction is written:**
   supplies are expensed when bought (receiving stock creates no transaction), so booking cost again at sale time
   would double-count — the cost reaches the margin, not the P&L. Quantities are whole units, because
-  `products.current_stock` is integer and the UI parseInt()s it. Additive, idempotent. **Not yet applied.**
+  `products.current_stock` is integer and the UI parseInt()s it. Additive, idempotent. **Applied 2026-10-19.**
 
