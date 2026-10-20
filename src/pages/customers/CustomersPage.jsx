@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
+import { useData } from '../../contexts/DataContext';
 import { useT } from '../../i18n/I18nContext';
 import { formatCurrency, formatDate, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
@@ -24,6 +25,7 @@ const emptyForm = () => ({ name: '', email: '', phone: '', notes: '' });
 
 export default function CustomersPage() {
   const { user } = useAuth();
+  const { products } = useData();
   const { t, tn } = useT();
 
   const [customers, setCustomers] = useState([]);
@@ -40,6 +42,10 @@ export default function CustomersPage() {
 
   const [openId, setOpenId] = useState(null);
   const [history, setHistory] = useState({});       // customer_id → { loading, sales, items }
+  const [prices, setPrices] = useState({});         // customer_id → [{ product_id, unit_price, updated_at }]
+  const [priceDraft, setPriceDraft] = useState({}); // `${customer}:${product}` → draft price
+  const [newPrice, setNewPrice] = useState({ product_id: '', unit_price: '' });
+  const [priceBusy, setPriceBusy] = useState('');
 
   // ── Load ─────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -81,11 +87,50 @@ export default function CustomersPage() {
     }
   }
 
+  async function loadPrices(id) {
+    const { data, error } = await supabase.from('customer_prices').select('product_id, unit_price, updated_at').eq('customer_id', id);
+    if (error) { console.warn('customer_prices read failed:', error.message); return; }
+    setPrices((p) => ({ ...p, [id]: data || [] }));
+  }
+
+  // Agreed price for one product: upsert (also used to add a new one).
+  async function savePrice(customerId, productId, value) {
+    const unit_price = Math.round((parseFloat(value) || 0) * 100) / 100;
+    if (!productId || Number.isNaN(unit_price) || unit_price < 0) { toast.error(t('crm.priceInvalid')); return; }
+    setPriceBusy(`${customerId}:${productId}`);
+    try {
+      const { error } = await supabase.from('customer_prices')
+        .upsert({ customer_id: customerId, product_id: productId, unit_price, updated_at: new Date().toISOString() }, { onConflict: 'customer_id,product_id' });
+      if (error) throw error;
+      await loadPrices(customerId);
+      setPriceDraft((d) => { const n = { ...d }; delete n[`${customerId}:${productId}`]; return n; });
+      setNewPrice({ product_id: '', unit_price: '' });
+      toast.success(t('crm.priceSaved'));
+    } catch (err) { toast.error(err.message || t('settings.saveFailed')); }
+    finally { setPriceBusy(''); }
+  }
+
+  async function removePrice(customerId, productId) {
+    setPriceBusy(`${customerId}:${productId}`);
+    try {
+      const { error } = await supabase.from('customer_prices').delete().eq('customer_id', customerId).eq('product_id', productId);
+      if (error) throw error;
+      await loadPrices(customerId);
+      toast.success(t('crm.priceRemoved'));
+    } catch (err) { toast.error(err.message || t('settings.saveFailed')); }
+    finally { setPriceBusy(''); }
+  }
+
   function toggleOpen(id) {
     const next = openId === id ? null : id;
     setOpenId(next);
+    setNewPrice({ product_id: '', unit_price: '' });
     if (next && !history[next]) loadHistory(next);
+    if (next && !prices[next]) loadPrices(next);
   }
+
+  const productById = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
+  const sellable = useMemo(() => products.filter((p) => p.kind !== 'supply').sort((a, b) => a.name.localeCompare(b.name)), [products]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
   const summary = useMemo(() => {
@@ -346,6 +391,62 @@ export default function CustomersPage() {
                             </ul>
                           )}
                           {(s.sales_count || 0) > 8 && <p className="text-xs text-surface-400 mt-2">{tn('crm.moreSales', (s.sales_count || 0) - 8)}</p>}
+
+                          {/* Agreed prices — learned from sales, editable here */}
+                          <div className="text-xs font-semibold text-surface-500 uppercase tracking-wider mt-5 mb-1">{t('crm.pricesTitle')}</div>
+                          <p className="text-xs text-surface-500 mb-2">{t('crm.pricesBody')}</p>
+                          {(() => {
+                            const list = (prices[c.id] || []).map((r) => ({ ...r, product: productById[r.product_id] })).filter((r) => r.product).sort((a, b) => a.product.name.localeCompare(b.product.name));
+                            const available = sellable.filter((p) => !list.some((r) => r.product_id === p.id));
+                            return (
+                              <div className="rounded-lg border border-surface-200 bg-white">
+                                {list.length === 0 && <p className="px-3.5 py-3 text-sm text-surface-500">{t('crm.pricesEmpty')}</p>}
+                                {list.length > 0 && (
+                                  <ul className="divide-y divide-surface-100">
+                                    {list.map((r) => {
+                                      const key = `${c.id}:${r.product_id}`;
+                                      const draft = priceDraft[key] ?? Number(r.unit_price).toFixed(2);
+                                      const dirty = Math.abs((parseFloat(draft) || 0) - Number(r.unit_price)) > 0.005;
+                                      const listPrice = Number(r.product.sell_price) || 0;
+                                      return (
+                                        <li key={r.product_id} className="flex items-center gap-2 px-3.5 py-2 text-sm">
+                                          <div className="flex-1 min-w-0">
+                                            <div className="text-surface-900 truncate">{r.product.name}</div>
+                                            <div className="text-[11px] text-surface-400">{t('crm.listPrice', { price: formatCurrency(listPrice) })}{listPrice && Math.abs(Number(r.unit_price) - listPrice) > 0.005 ? ` · ${Number(r.unit_price) < listPrice ? '−' : '+'}${formatCurrency(Math.abs(Number(r.unit_price) - listPrice))}` : ''}</div>
+                                          </div>
+                                          <div className="relative w-28">
+                                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400 text-xs">$</span>
+                                            <input type="number" inputMode="decimal" min="0" step="0.01" value={draft} onChange={(e) => setPriceDraft((d) => ({ ...d, [key]: e.target.value }))}
+                                              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); savePrice(c.id, r.product_id, draft); } }}
+                                              className="input-field py-1.5 pl-6 text-sm font-mono" aria-label={r.product.name} />
+                                          </div>
+                                          <button type="button" onClick={() => savePrice(c.id, r.product_id, draft)} disabled={!dirty || priceBusy === key} className="btn-primary px-2.5 py-1.5 text-xs" aria-label={t('common.save')}>
+                                            {priceBusy === key ? <Spinner size="sm" className="text-white" /> : <Check size={14} />}
+                                          </button>
+                                          <button type="button" onClick={() => removePrice(c.id, r.product_id)} disabled={priceBusy === key} className="p-1.5 rounded text-surface-400 hover:text-red-600 hover:bg-red-50" aria-label={t('tx.delete')}>
+                                            <Trash2 size={14} />
+                                          </button>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                )}
+                                {available.length > 0 && (
+                                  <form onSubmit={(e) => { e.preventDefault(); savePrice(c.id, newPrice.product_id, newPrice.unit_price); }} className="flex items-center gap-2 px-3.5 py-2 border-t border-surface-100 bg-surface-50/60">
+                                    <select value={newPrice.product_id} onChange={(e) => { const p = productById[e.target.value]; setNewPrice({ product_id: e.target.value, unit_price: p && p.sell_price != null ? Number(p.sell_price).toFixed(2) : '' }); }} className="input-field py-1.5 text-sm flex-1" aria-label={t('sales.product')}>
+                                      <option value="">{t('crm.addPrice')}</option>
+                                      {available.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    </select>
+                                    <div className="relative w-28">
+                                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400 text-xs">$</span>
+                                      <input type="number" inputMode="decimal" min="0" step="0.01" value={newPrice.unit_price} onChange={(e) => setNewPrice((n) => ({ ...n, unit_price: e.target.value }))} className="input-field py-1.5 pl-6 text-sm font-mono" placeholder="0.00" aria-label={t('sales.price')} />
+                                    </div>
+                                    <button type="submit" disabled={!newPrice.product_id || newPrice.unit_price === '' || priceBusy === `${c.id}:${newPrice.product_id}`} className="btn-primary px-2.5 py-1.5 text-xs" aria-label={t('crm.add')}><Plus size={14} /></button>
+                                  </form>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ),

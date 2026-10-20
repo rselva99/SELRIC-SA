@@ -14,7 +14,7 @@ import toast from 'react-hot-toast';
 import {
   Plus, Package, Search, ArrowDown, ArrowUp, RotateCcw, ClipboardList,
   Edit3, Trash2, History, Camera, ChevronDown, ChevronRight,
-  Minus, Printer, TrendingDown, AlertTriangle, DollarSign, BarChart2, Check, X,
+  Minus, Printer, TrendingDown, AlertTriangle, DollarSign, BarChart2, Check, X, Tags, ShoppingBag, Boxes,
 } from 'lucide-react';
 
 // Product categories belong to the workspace: the dropdown lists whatever its
@@ -24,6 +24,13 @@ import {
 const BAR_CATEGORIES = ['Beer', 'Wine', 'Spirits', 'Soft Drinks', 'Mixers', 'Food', 'Snacks'];
 const DEFAULT_CATEGORY = 'Other';
 const NEW_CATEGORY = '__new__';
+// What a product IS. 'sale' = something you sell (price, offered in Sales);
+// 'supply' = raw material or packaging you use up (stock and cost only).
+const KINDS = [
+  { value: 'sale',   label: 'For sale',  hint: 'You sell this to customers. Has a sell price and shows up in Sales.', icon: ShoppingBag },
+  { value: 'supply', label: 'Supply',    hint: 'Raw material, packaging, ingredients — things you use up. Stock and cost only.', icon: Boxes },
+];
+const isSupply = (p) => p?.kind === 'supply';
 const LOG_TYPES = [
   { value: 'received',   label: 'Received',   icon: ArrowDown,  color: 'text-green-600' },
   { value: 'sold',       label: 'Sold',        icon: ArrowUp,    color: 'text-blue-600' },
@@ -259,7 +266,7 @@ function MovementHistoryTab({ products }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────
 export default function InventoryPage() {
-  const { products, addProduct, updateProduct, deleteProduct, addInventoryLog } = useData();
+  const { products, addProduct, updateProduct, deleteProduct, addInventoryLog, refresh } = useData();
   const { isAdmin, organization } = useAuth();
 
   // Core state
@@ -267,6 +274,7 @@ export default function InventoryPage() {
   const [search, setSearch]               = useState('');
   const [filterCat, setFilterCat]         = useState('');
   const [filterStatus, setFilterStatus]   = useState('');
+  const [filterKind, setFilterKind]       = useState('');
   const [expandedId, setExpandedId]       = useState(null);
   const [profileMap, setProfileMap]       = useState({});
 
@@ -280,7 +288,7 @@ export default function InventoryPage() {
 
   // Product form
   const [productForm, setProductForm] = useState({
-    name: '', category: DEFAULT_CATEGORY, unit: 'units',
+    name: '', kind: 'sale', category: DEFAULT_CATEGORY, unit: 'units',
     cost_price: '', sell_price: '',
     reorder_level: '5', current_stock: '0', target_stock: '0',
   });
@@ -305,6 +313,44 @@ export default function InventoryPage() {
     if (!name) return;
     setProductForm((f) => ({ ...f, category: name }));
     setNewCategory('');
+  }
+
+  // ── Category manager (rename / delete across this workspace's products) ──
+  const [showCatModal, setShowCatModal] = useState(false);
+  const [catEdits, setCatEdits] = useState({});          // old name → draft new name
+  const [catBusy, setCatBusy] = useState('');
+  const countIn = (cat) => products.filter((p) => (p.category || '').trim() === cat).length;
+
+  async function renameProductCategory(oldName) {
+    const next = (catEdits[oldName] || '').trim();
+    if (!next || next === oldName) return;
+    setCatBusy(oldName);
+    try {
+      const { error } = await supabase.from('products').update({ category: next, updated_at: new Date().toISOString() }).eq('category', oldName);
+      if (error) throw error;
+      await refresh();
+      setCatEdits((e) => { const n = { ...e }; delete n[oldName]; return n; });
+      if (filterCat === oldName) setFilterCat(next);
+      if (productForm.category === oldName) setProductForm((f) => ({ ...f, category: next }));
+      toast.success(`Renamed to "${next}"`);
+    } catch (err) { toast.error(err.message || 'Could not rename'); }
+    finally { setCatBusy(''); }
+  }
+
+  async function deleteProductCategory(oldName) {
+    const n = countIn(oldName);
+    if (!window.confirm(n ? `Delete "${oldName}"? Its ${n} product${n === 1 ? '' : 's'} will move to "${DEFAULT_CATEGORY}".` : `Delete "${oldName}"?`)) return;
+    setCatBusy(oldName);
+    try {
+      if (n) {
+        const { error } = await supabase.from('products').update({ category: DEFAULT_CATEGORY, updated_at: new Date().toISOString() }).eq('category', oldName);
+        if (error) throw error;
+        await refresh();
+      }
+      if (filterCat === oldName) setFilterCat('');
+      toast.success(`"${oldName}" deleted`);
+    } catch (err) { toast.error(err.message || 'Could not delete'); }
+    finally { setCatBusy(''); }
   }
 
   // Log form
@@ -339,11 +385,12 @@ export default function InventoryPage() {
     let list = [...products].sort((a, b) => a.name.localeCompare(b.name));
     if (search) { const q = search.toLowerCase(); list = list.filter((p) => p.name.toLowerCase().includes(q)); }
     if (filterCat) list = list.filter((p) => p.category === filterCat);
+    if (filterKind) list = list.filter((p) => (filterKind === 'supply') === isSupply(p));
     if (filterStatus === 'low')    list = list.filter((p) => STOCK_STATUS(p) !== 'ok');
     if (filterStatus === 'out')    list = list.filter((p) => (p.current_stock || 0) === 0);
     if (filterStatus === 'restock') list = list.filter((p) => (p.current_stock || 0) < (p.target_stock || 0));
     return list;
-  }, [products, search, filterCat, filterStatus]);
+  }, [products, search, filterCat, filterStatus, filterKind]);
 
   // ── Dashboard data ────────────────────────────────────────────────────────
 
@@ -413,7 +460,7 @@ export default function InventoryPage() {
 
   function openAddProduct() {
     setEditingProduct(null);
-    setProductForm({ name:'', category: categories[0] || DEFAULT_CATEGORY, unit:'units', cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
+    setProductForm({ name:'', kind:'sale', category: categories[0] || DEFAULT_CATEGORY, unit:'units', cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
     setNewCategory('');
     setImageFile(null);
     setImagePreview('');
@@ -423,7 +470,7 @@ export default function InventoryPage() {
   function openEditProduct(p) {
     setEditingProduct(p);
     setProductForm({
-      name: p.name, category: p.category || DEFAULT_CATEGORY, unit: p.unit || 'units',
+      name: p.name, kind: p.kind === 'supply' ? 'supply' : 'sale', category: p.category || DEFAULT_CATEGORY, unit: p.unit || 'units',
       cost_price: p.cost_price?.toString() || '', sell_price: p.sell_price?.toString() || '',
       reorder_level: p.reorder_level?.toString() || '5',
       current_stock: p.current_stock?.toString() || '0',
@@ -455,10 +502,11 @@ export default function InventoryPage() {
       }
       const payload = {
         name: productForm.name,
+        kind: productForm.kind === 'supply' ? 'supply' : 'sale',
         category,
         unit: productForm.unit,
         cost_price: parseFloat(productForm.cost_price) || 0,
-        sell_price: parseFloat(productForm.sell_price) || 0,
+        sell_price: productForm.kind === 'supply' ? 0 : (parseFloat(productForm.sell_price) || 0),
         reorder_level: parseInt(productForm.reorder_level) || 5,
         current_stock: parseInt(productForm.current_stock) || 0,
         target_stock: parseInt(productForm.target_stock) || 0,
@@ -722,6 +770,14 @@ export default function InventoryPage() {
               <option value="">All Categories</option>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+            <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className="input-field w-auto min-w-[130px]">
+              <option value="">Products & supplies</option>
+              <option value="sale">For sale</option>
+              <option value="supply">Supplies</option>
+            </select>
+            <button type="button" onClick={() => { setCatEdits({}); setShowCatModal(true); }} className="btn-secondary px-3 text-sm whitespace-nowrap" title="Rename or delete categories">
+              <Tags size={15} /> Categories
+            </button>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="input-field w-auto min-w-[150px]">
               <option value="">All Stock</option>
               <option value="low">Low / Critical</option>
@@ -771,7 +827,7 @@ export default function InventoryPage() {
                               </div>
                             </td>
                             {/* Category */}
-                            <td className="table-cell"><span className="badge-green">{p.category}</span></td>
+                            <td className="table-cell"><span className="badge-green">{p.category}</span>{isSupply(p) && <span className="badge bg-surface-100 text-surface-600 ml-1.5">Supply</span>}</td>
                             {/* Stock */}
                             <td className="table-cell text-center">
                               <span className={`font-mono font-semibold ${status === 'critical' ? 'text-red-600' : status === 'low' ? 'text-amber-600' : 'text-green-700'}`}>
@@ -846,9 +902,10 @@ export default function InventoryPage() {
                 </div>
               )}
               <div className="space-y-1.5">
-                <input ref={imageInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+                {/* No `capture` attribute: on a phone the browser then offers camera OR gallery; on a computer it opens the file picker. */}
+                <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
                 <button type="button" onClick={() => imageInputRef.current?.click()} className="btn-secondary text-xs flex items-center gap-1.5">
-                  <Camera size={13} /> {imagePreview ? 'Change Photo' : 'Take Photo / Upload'}
+                  <Camera size={13} /> {imagePreview ? 'Change photo' : 'Upload or take a photo'}
                 </button>
                 {imagePreview && (
                   <button type="button" onClick={() => { setImageFile(null); setImagePreview(''); }} className="btn-ghost text-xs block">Remove</button>
@@ -858,8 +915,24 @@ export default function InventoryPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Product Name</label>
-            <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="input-field" placeholder="e.g., Bud Light 12-pack" required />
+            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">What is it?</label>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Product kind">
+              {KINDS.map(({ value, label, hint, icon: Icon }) => {
+                const on = productForm.kind === value;
+                return (
+                  <button key={value} type="button" role="radio" aria-checked={on} onClick={() => setProductForm({ ...productForm, kind: value })}
+                    className={`text-left rounded-lg border-2 px-3 py-2.5 transition ${on ? 'border-brand-600 bg-brand-50/60' : 'border-surface-200 hover:border-surface-300 bg-white'}`}>
+                    <div className={`flex items-center gap-2 text-sm font-semibold ${on ? 'text-brand-900' : 'text-surface-800'}`}><Icon size={15} /> {label}</div>
+                    <p className="text-xs text-surface-500 mt-1 leading-snug">{hint}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">{productForm.kind === 'supply' ? 'Supply name' : 'Product Name'}</label>
+            <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="input-field" placeholder={productForm.kind === 'supply' ? 'e.g., 100g bags, labels, chiles (lb)' : 'e.g., Chile en polvo 100g'} required />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -893,13 +966,17 @@ export default function InventoryPage() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Cost Price</label>
+              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">{productForm.kind === 'supply' ? 'Cost per unit' : 'Cost Price'}</label>
               <input type="number" step="0.01" min="0" value={productForm.cost_price} onChange={(e) => setProductForm({ ...productForm, cost_price: e.target.value })} className="input-field" placeholder="0.00" />
+              <p className="text-[11px] text-surface-400 mt-1">What you pay for one {productForm.unit || 'unit'}. Used for stock value{productForm.kind === 'supply' ? '' : ' and margin'}.</p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Sell Price</label>
-              <input type="number" step="0.01" min="0" value={productForm.sell_price} onChange={(e) => setProductForm({ ...productForm, sell_price: e.target.value })} className="input-field" placeholder="0.00" />
-            </div>
+            {productForm.kind !== 'supply' && (
+              <div>
+                <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Sell Price</label>
+                <input type="number" step="0.01" min="0" value={productForm.sell_price} onChange={(e) => setProductForm({ ...productForm, sell_price: e.target.value })} className="input-field" placeholder="0.00" />
+                <p className="text-[11px] text-surface-400 mt-1">List price. A customer's agreed price, once used in a sale, overrides it for them.</p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -908,12 +985,14 @@ export default function InventoryPage() {
               <input type="number" min="0" value={productForm.current_stock} onChange={(e) => setProductForm({ ...productForm, current_stock: e.target.value })} className="input-field" />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Target Stock</label>
-              <input type="number" min="0" value={productForm.target_stock} onChange={(e) => setProductForm({ ...productForm, target_stock: e.target.value })} className="input-field" />
+              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Minimum</label>
+              <input type="number" min="0" value={productForm.reorder_level} onChange={(e) => setProductForm({ ...productForm, reorder_level: e.target.value })} className="input-field" />
+              <p className="text-[11px] text-surface-400 mt-1">Alert when stock is at or below this.</p>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Reorder Level</label>
-              <input type="number" min="0" value={productForm.reorder_level} onChange={(e) => setProductForm({ ...productForm, reorder_level: e.target.value })} className="input-field" />
+              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Ideal quantity</label>
+              <input type="number" min="0" value={productForm.target_stock} onChange={(e) => setProductForm({ ...productForm, target_stock: e.target.value })} className="input-field" />
+              <p className="text-[11px] text-surface-400 mt-1">What you like to have on hand. Below it = on the restock list.</p>
             </div>
           </div>
 
@@ -924,6 +1003,39 @@ export default function InventoryPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* ── CATEGORIES MODAL ── */}
+      <Modal open={showCatModal} onClose={() => setShowCatModal(false)} title="Product categories">
+        <p className="text-sm text-surface-500 mb-4">Rename a category and every product in it follows. Deleting one moves its products to "{DEFAULT_CATEGORY}". New categories are created from the product form.</p>
+        {categories.filter((c) => c !== DEFAULT_CATEGORY).length === 0 ? (
+          <p className="text-sm text-surface-500 py-6 text-center">No categories yet — add a product and pick "+ New category…".</p>
+        ) : (
+          <ul className="divide-y divide-surface-100 border border-surface-200 rounded-lg">
+            {categories.filter((c) => c !== DEFAULT_CATEGORY).map((c) => {
+              const draft = catEdits[c] ?? c;
+              const dirty = draft.trim() !== c && draft.trim() !== '';
+              const busy = catBusy === c;
+              return (
+                <li key={c} className="flex items-center gap-2 px-3 py-2">
+                  <input type="text" value={draft} onChange={(e) => setCatEdits((x) => ({ ...x, [c]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProductCategory(c); } }}
+                    className="input-field py-1.5 text-sm" aria-label={`Rename ${c}`} />
+                  <span className="text-xs text-surface-400 whitespace-nowrap w-20 text-right">{countIn(c)} {countIn(c) === 1 ? 'product' : 'products'}</span>
+                  <button type="button" onClick={() => renameProductCategory(c)} disabled={!dirty || busy} className="btn-primary px-2.5 py-1.5 text-xs" aria-label="Save name">
+                    {busy ? <Spinner size="sm" className="text-white" /> : <Check size={14} />}
+                  </button>
+                  <button type="button" onClick={() => deleteProductCategory(c)} disabled={busy} className="p-1.5 rounded text-surface-400 hover:text-red-600 hover:bg-red-50" aria-label={`Delete ${c}`}>
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div className="flex justify-end pt-4">
+          <button type="button" onClick={() => setShowCatModal(false)} className="btn-ghost">Done</button>
+        </div>
       </Modal>
 
       {/* ── LOG INVENTORY MODAL ── */}

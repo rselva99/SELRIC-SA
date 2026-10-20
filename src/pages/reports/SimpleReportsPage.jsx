@@ -394,11 +394,12 @@ export default function SimpleReportsPage() {
       const daysLeft = rate > 0 ? stock / rate : null;
       const last = lastSale[p.id] || null;
       const reorder = Number(p.reorder_level) || 0;
+      const supply = p.kind === 'supply';
       const status = stock <= 0 ? 'out'
-        : daysLeft != null && daysLeft <= RUNNING_OUT_DAYS ? 'running'
+        : !supply && daysLeft != null && daysLeft <= RUNNING_OUT_DAYS ? 'running'
         : stock <= reorder ? 'low'
-        : (!last || last < cutoff) ? 'dead' : 'ok';
-      return { id: p.id, name: p.name, category: p.category || '', stock, unit: p.unit || '', sold30: s30, rate, daysLeft, last, status, value: stock * (Number(p.cost_price) || 0), reorder };
+        : !supply && (!last || last < cutoff) ? 'dead' : 'ok';
+      return { id: p.id, name: p.name, category: p.category || '', supply, stock, unit: p.unit || '', sold30: supply ? null : s30, rate, daysLeft: supply ? null : daysLeft, last: supply ? null : last, status, value: stock * (Number(p.cost_price) || 0), reorder };
     }).sort((a, b) => {
       const order = { out: 0, running: 1, low: 2, ok: 3, dead: 4 };
       return order[a.status] - order[b.status] || ((a.daysLeft ?? 1e9) - (b.daysLeft ?? 1e9)) || b.value - a.value;
@@ -860,7 +861,7 @@ export default function SimpleReportsPage() {
                 </div>
                 <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => downloadCsv('selric-inventory.csv',
                   [t('sales.product'), t('dash.category'), t('rep.stock'), t('rep.sold30', { days: RATE_WINDOW_DAYS }), t('rep.daysLeft'), t('rep.lastSale'), t('rep.status'), t('rep.stockValue')],
-                  inventoryRows.map((r) => [r.name, r.category, r.stock, r.sold30, r.daysLeft == null ? '' : Math.round(r.daysLeft), r.last || '', t(`rep.statuses.${r.status}`), r.value.toFixed(2)]))}>
+                  inventoryRows.map((r) => [r.name, r.category, r.stock, r.sold30 ?? '', r.daysLeft == null ? '' : Math.round(r.daysLeft), r.last || '', t(`rep.statuses.${r.status}`), r.value.toFixed(2)]))}>
                   <Download size={15} /> CSV
                 </button>
               </header>
@@ -878,11 +879,11 @@ export default function SimpleReportsPage() {
                   <tbody>
                     {inventoryRows.map((r) => (
                       <tr key={r.id} className="border-b border-surface-50 hover:bg-surface-50">
-                        <td className="table-cell"><div className="font-medium text-surface-900">{r.name}</div>{r.category && <div className="text-xs text-surface-400">{r.category}</div>}</td>
+                        <td className="table-cell"><div className="font-medium text-surface-900">{r.name}{r.supply && <span className="badge bg-surface-100 text-surface-600 ml-1.5">{t('rep.supply')}</span>}</div>{r.category && <div className="text-xs text-surface-400">{r.category}</div>}</td>
                         <td className={cn('table-cell text-right font-mono', r.stock <= r.reorder && 'text-red-600')}>{r.stock} <span className="text-xs text-surface-400 font-sans">{r.unit}</span></td>
-                        <td className="table-cell text-right font-mono">{r.sold30}</td>
+                        <td className="table-cell text-right font-mono">{r.sold30 == null ? <span className="text-surface-400">—</span> : r.sold30}</td>
                         <td className="table-cell text-right font-mono">{r.daysLeft == null ? <span className="text-surface-400">—</span> : r.daysLeft > 365 ? '365+' : Math.round(r.daysLeft)}</td>
-                        <td className="table-cell font-mono text-xs">{r.last ? formatDate(r.last) : <span className="font-sans text-surface-400">{t('crm.never')}</span>}</td>
+                        <td className="table-cell font-mono text-xs">{r.last ? formatDate(r.last) : <span className="font-sans text-surface-400">{r.supply ? '—' : t('crm.never')}</span>}</td>
                         <td className="table-cell">
                           <span className={cn('badge', r.status === 'out' ? 'bg-red-100 text-red-800' : r.status === 'running' || r.status === 'low' ? 'bg-amber-100 text-amber-800' : r.status === 'dead' ? 'bg-surface-200 text-surface-700' : 'bg-brand-100 text-brand-800')}>
                             {t(`rep.statuses.${r.status}`)}

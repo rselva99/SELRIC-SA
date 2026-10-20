@@ -32,7 +32,9 @@ const PAYMENTS = [
   { key: 'other',    icon: CircleDollarSign },
 ];
 
-const emptyLine = () => ({ product_id: '', name: '', quantity: '1', unit_price: '' });
+// `auto` = the price was filled by us (list or agreed price) and may be
+// swapped when the customer changes; a hand-typed price is never overwritten.
+const emptyLine = () => ({ product_id: '', name: '', quantity: '1', unit_price: '', auto: true });
 const emptyForm = () => ({
   date: format(new Date(), 'yyyy-MM-dd'),
   customer_id: '',
@@ -64,6 +66,8 @@ export default function SalesPage() {
   const [saving, setSaving] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
   const [custOpen, setCustOpen] = useState(false);
+  // Agreed prices for the picked customer: product_id → unit_price.
+  const [agreed, setAgreed] = useState({});
   const custBox = useRef(null);
 
   // ── Load ─────────────────────────────────────────────────────────────────
@@ -110,6 +114,34 @@ export default function SalesPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
+
+  // The picked customer's agreed prices (learned from past sales, editable in
+  // Customers). Lines whose price we filled follow the customer; typed prices stay.
+  useEffect(() => {
+    let cancelled = false;
+    const cid = form.customer_id;
+    const apply = (map) => {
+      if (cancelled) return;
+      setAgreed(map);
+      setForm((f) => ({
+        ...f,
+        lines: f.lines.map((l) => {
+          if (!l.auto || !l.product_id || l.product_id === NOT_IN_INVENTORY) return l;
+          const p = productById[l.product_id];
+          const price = map[l.product_id] ?? (p && p.sell_price != null ? Number(p.sell_price) : null);
+          return price == null ? l : { ...l, unit_price: Number(price).toFixed(2) };
+        }),
+      }));
+    };
+    if (!cid) { apply({}); return () => { cancelled = true; }; }
+    supabase.from('customer_prices').select('product_id, unit_price').eq('customer_id', cid)
+      .then(({ data, error }) => {
+        if (error) { console.warn('customer_prices read failed:', error.message); apply({}); return; }
+        apply(Object.fromEntries((data || []).map((r) => [r.product_id, Number(r.unit_price)])));
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.customer_id]);
 
   // Close the customer suggestions when clicking elsewhere.
   useEffect(() => {
@@ -181,7 +213,8 @@ export default function SalesPage() {
   function pickProduct(i, value) {
     if (value === NOT_IN_INVENTORY) { setLine(i, { product_id: NOT_IN_INVENTORY, name: '', unit_price: '' }); return; }
     const p = productById[value];
-    setLine(i, { product_id: value, name: p?.name || '', unit_price: p && p.sell_price != null ? Number(p.sell_price).toFixed(2) : '' });
+    const price = agreed[value] ?? (p && p.sell_price != null ? Number(p.sell_price) : null);
+    setLine(i, { product_id: value, name: p?.name || '', unit_price: price == null ? '' : Number(price).toFixed(2), auto: true });
   }
 
   function addLine() { setForm((f) => ({ ...f, lines: [...f.lines, emptyLine()] })); }
@@ -312,7 +345,8 @@ export default function SalesPage() {
     URL.revokeObjectURL(url);
   }
 
-  const inventoryProducts = useMemo(() => [...products].sort((a, b) => a.name.localeCompare(b.name)), [products]);
+  // Supplies (raw materials, packaging) are stock-only — never sold.
+  const inventoryProducts = useMemo(() => products.filter((p) => p.kind !== 'supply').sort((a, b) => a.name.localeCompare(b.name)), [products]);
 
   return (
     <div className="animate-fade-in">
@@ -474,9 +508,12 @@ export default function SalesPage() {
                         <div className="col-span-5 lg:col-span-2">
                           <div className="relative">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 text-sm">$</span>
-                            <input type="number" inputMode="decimal" min="0" step="0.01" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })}
+                            <input type="number" inputMode="decimal" min="0" step="0.01" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value, auto: false })}
                               className="input-field py-2 pl-6 text-sm font-mono" placeholder="0.00" aria-label={t('sales.price')} />
                           </div>
+                          {p && agreed[l.product_id] != null && Math.abs(Number(l.unit_price) - agreed[l.product_id]) < 0.005 && (
+                            <p className="text-[11px] text-brand-700 mt-1 truncate" title={t('sales.agreedPrice', { name: form.customer_name })}>{t('sales.agreedPrice', { name: form.customer_name })}</p>
+                          )}
                         </div>
                         <div className="col-span-3 lg:col-span-2 flex items-center justify-end gap-1 pt-2">
                           <span className="font-mono text-sm text-surface-800">{formatCurrency(lineTotal(l))}</span>

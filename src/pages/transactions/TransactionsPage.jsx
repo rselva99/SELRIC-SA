@@ -10,9 +10,10 @@ import { useT } from '../../i18n/I18nContext';
 import { creditOf, debitOf, pickableCategories } from '../../lib/finance';
 import { formatCurrency, formatDate, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
+import CategoriesManager from '../../components/CategoriesManager';
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Download,
-  ArrowDownLeft, ArrowUpRight, Lock, Search, X, Check, ShoppingBag,
+  ArrowDownLeft, ArrowUpRight, Lock, Search, X, Check, ShoppingBag, Tags,
 } from 'lucide-react';
 
 // Simple mode: one tab for money in / money out.
@@ -61,6 +62,7 @@ export default function TransactionsPage() {
   const [newCat, setNewCat] = useState('');
   const [addingCat, setAddingCat] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
+  const [showCats, setShowCats] = useState(false);
 
   // ── Load the month ───────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -249,11 +251,15 @@ export default function TransactionsPage() {
               <ChevronRight size={18} />
             </button>
           </div>
+          <button type="button" onClick={() => setShowCats(true)} className="btn-secondary px-3 py-2 text-sm" title={t('cats.title')}>
+            <Tags size={16} /> {t('cats.button')}
+          </button>
           <button type="button" onClick={exportCsv} disabled={!rows.length} className="btn-secondary px-3 py-2 text-sm">
             <Download size={16} /> CSV
           </button>
         </div>
       </div>
+      <CategoriesManager open={showCats} onClose={() => { setShowCats(false); load(); }} />
 
       {/* ── Month totals ─────────────────────────────────────────────── */}
       <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">

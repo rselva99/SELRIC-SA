@@ -124,5 +124,10 @@ and safe to re-run.
   Additive, idempotent, tested on the replica. **Applied 2026-10-19.**
 - `2026-10-19-sale-item-cost.sql` — `sale_items.unit_cost` (the product's cost at the moment of the sale, for the
   Simple-mode margin reports), backfill of earlier lines from the product's current cost, and `record_sale()`
-  storing it. Additive, idempotent, tested on the replica. **Not yet applied.**
+  storing it. Additive, idempotent, tested on the replica. **Applied 2026-10-19.**
+- `2026-10-19-product-kind-and-customer-prices.sql` — from the Chile Nicaragua pilot: `products.kind`
+  (`sale` / `supply` — raw materials and packaging are stock-only and never offered in Sales),
+  `products.target_stock` created IF NOT EXISTS (it had no migration), `customer_prices` (the agreed unit price
+  per customer and product; `record_sale()` learns it from every sale, the Customers page edits it).
+  Additive, idempotent, tested on the replica. **Not yet applied.**
 

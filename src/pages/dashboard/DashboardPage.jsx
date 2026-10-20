@@ -100,7 +100,11 @@ export default function DashboardPage() {
     const last = subMonths(now, 1);
     const thisMonth = aggregateForPnL(transactions.filter((x) => sameMonth(x.date, now)), categories);
     const lastMonth = aggregateForPnL(transactions.filter((x) => sameMonth(x.date, last)), categories);
-    const lowStock = products.filter((p) => p.current_stock <= (p.reorder_level || 5));
+    // Same rule as the Inventory page: at/below the minimum (reorder_level) is
+    // "below minimum"; under the ideal quantity (target_stock) is "to restock".
+    const belowMin = products.filter((p) => (p.current_stock || 0) <= (p.reorder_level ?? 0));
+    const toRestock = products.filter((p) => !belowMin.includes(p) && (p.target_stock || 0) > 0 && (p.current_stock || 0) < p.target_stock);
+    const lowStock = [...belowMin, ...toRestock];
     const net = thisMonth.totalRevenue - thisMonth.totalExpenses;
     const lastNet = lastMonth.totalRevenue - lastMonth.totalExpenses;
     return {
@@ -111,6 +115,8 @@ export default function DashboardPage() {
       expensesTrend: pctChange(thisMonth.totalExpenses, lastMonth.totalExpenses),
       netTrend: pctChange(net, lastNet),
       lowStock,
+      belowMin,
+      toRestock,
       totalProducts: products.length,
     };
   }, [transactions, products, categories]);
@@ -148,9 +154,10 @@ export default function DashboardPage() {
     if (overdueBills) items.push({ icon: Receipt,    tone: 'red',   text: tn('dash.billsOverdue',  overdueBills),  to: billsTo });
     if (weekBills)    items.push({ icon: Receipt,    tone: 'amber', text: tn('dash.billsDue',      weekBills),     to: billsTo });
     if (weekTasks)    items.push({ icon: ListChecks, tone: 'amber', text: tn('dash.tasksThisWeek', weekTasks),     to: '/tasks' });
-    if (stats.lowStock.length) items.push({ icon: Package, tone: 'amber', text: tn('dash.lowStockItems', stats.lowStock.length), to: '/inventory' });
+    if (stats.belowMin.length)  items.push({ icon: Package, tone: 'red',   text: tn('dash.lowStockItems', stats.belowMin.length),  to: '/inventory' });
+    if (stats.toRestock.length) items.push({ icon: Package, tone: 'amber', text: tn('dash.restockItems',  stats.toRestock.length), to: '/inventory' });
     return items;
-  }, [tasks, bills, stats.lowStock.length, tn, simple]);
+  }, [tasks, bills, stats.belowMin.length, stats.toRestock.length, tn, simple]);
 
   const hour = new Date().getHours();
   const slot = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';

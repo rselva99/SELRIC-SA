@@ -35,10 +35,12 @@ export function DataProvider({ children }) {
   // Refs kept in sync with state so memoized callbacks don't need state in deps.
   const supplierCategoriesRef = useRef({});
   const productsRef           = useRef([]);
+  const categoriesRef         = useRef([]);
   const inFlightRef           = useRef(false);
 
   useEffect(() => { supplierCategoriesRef.current = supplierCategories; }, [supplierCategories]);
   useEffect(() => { productsRef.current = products; }, [products]);
+  useEffect(() => { categoriesRef.current = categories; }, [categories]);
 
   // ── Load all reference data ──────────────────────────────────────────────────
   // Guarded against concurrent invocations. Sets loadError on failure. Loading
@@ -88,11 +90,53 @@ export function DataProvider({ children }) {
     return data;
   }, []);
 
-  const deleteCategory = useCallback(async (id) => {
+  // How many transactions carry this category name (RLS scopes to the workspace).
+  const categoryUsage = useCallback(async (name) => {
+    const { count, error } = await supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('category', name);
+    if (error) throw error;
+    return count || 0;
+  }, []);
+
+  // Rename a category and carry every transaction (and learned supplier
+  // mapping) with it, so reports keep adding up. Transactions store the
+  // category by name, which is why the rows have to follow.
+  const renameCategory = useCallback(async (id, newName) => {
+    const name = String(newName || '').trim();
+    const cat = categoriesRef.current.find((c) => c.id === id);
+    if (!cat) throw new Error('Category not found');
+    if (!name) throw new Error('Name required');
+    if (name === cat.name) return cat;
+    const { data, error } = await supabase.from('categories').update({ name }).eq('id', id).select().single();
+    if (error) throw error;
+    const { error: e1 } = await supabase.from('transactions').update({ category: name }).eq('category', cat.name);
+    if (e1) throw e1;
+    await supabase.from('supplier_categories').update({ category: name }).eq('category', cat.name);
+    setCategories((prev) => prev.map((c) => (c.id === id ? data : c)).sort((a, b) => a.name.localeCompare(b.name)));
+    setSupplierCategories((prev) => Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, v === cat.name ? name : v])));
+    return data;
+  }, []);
+
+  // Delete a category. If transactions use it, `moveTo` (another category
+  // name) is required and those rows are reassigned first — a deleted name
+  // with rows still on it would silently drop them from every report.
+  const deleteCategory = useCallback(async (id, moveTo = null) => {
+    const cat = categoriesRef.current.find((c) => c.id === id);
+    if (cat) {
+      const used = await categoryUsage(cat.name);
+      if (used > 0) {
+        if (!moveTo || moveTo === cat.name) throw new Error('CATEGORY_IN_USE');
+        const { error: e1 } = await supabase.from('transactions').update({ category: moveTo }).eq('category', cat.name);
+        if (e1) throw e1;
+        await supabase.from('supplier_categories').update({ category: moveTo }).eq('category', cat.name);
+      } else {
+        await supabase.from('supplier_categories').delete().eq('category', cat.name);
+      }
+    }
     const { error } = await supabase.from('categories').delete().eq('id', id);
     if (error) throw error;
     setCategories((prev) => prev.filter((c) => c.id !== id));
-  }, []);
+    if (cat) setSupplierCategories((prev) => Object.fromEntries(Object.entries(prev).filter(([, v]) => v !== cat.name).concat(moveTo ? Object.entries(prev).filter(([, v]) => v === cat.name).map(([k]) => [k, moveTo]) : [])));
+  }, [categoryUsage]);
 
   // ── Account CRUD (legacy `accounts` table — kept for compatibility) ───────
   const addAccount = useCallback(async (name, type, parentId = null) => {
@@ -391,7 +435,7 @@ export function DataProvider({ children }) {
     categories, accounts, products, supplierCategories,
     loading, loadError,
     // Reference CRUD
-    addCategory, deleteCategory, addAccount, deleteAccount,
+    addCategory, renameCategory, deleteCategory, categoryUsage, addAccount, deleteAccount,
     addProduct, updateProduct, deleteProduct,
     // Transaction ops
     addTransaction, updateTransaction, deleteTransaction,
@@ -407,7 +451,7 @@ export function DataProvider({ children }) {
     refresh: loadAll,
   }), [
     categories, accounts, products, supplierCategories, loading, loadError,
-    addCategory, deleteCategory, addAccount, deleteAccount,
+    addCategory, renameCategory, deleteCategory, categoryUsage, addAccount, deleteAccount,
     addProduct, updateProduct, deleteProduct,
     addTransaction, updateTransaction, deleteTransaction,
     postTransaction, unpostTransaction, learnSupplierCategory,
