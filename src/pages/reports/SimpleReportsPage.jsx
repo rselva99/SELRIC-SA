@@ -36,7 +36,17 @@ import {
 //   Cash       — sales by payment method.
 // Full mode keeps its accountant reports page; main.jsx picks by mode.
 
-const BRAND = ['#368a67', '#276e52', '#55a683', '#84c3a7', '#f59f00', '#1971c2', '#e03131', '#8b5cf6'];
+// One colour per payment method, keyed by method — not by position. The donut hides
+// methods with no sales, so a positional palette made the donut and the monthly bars
+// disagree about which colour meant "card". Distinct hues, not four shades of green.
+const PAY_COLOR = {
+  cash:     '#2f8a66', // brand green — money
+  card:     '#3a6ea5', // steel blue
+  transfer: '#dfa02c', // ochre
+  other:    '#9a978e', // warm grey, sits in the surface family
+};
+// Warm grid line: the cards are cream (#f6f5f1), so a cool slate grid read as a smudge.
+const GRID = '#e7e4dc';
 const MONTHS_IN_TREND = 12;
 const QUIET_DAYS = 60;
 const RUNNING_OUT_DAYS = 14;
@@ -432,6 +442,15 @@ export default function SimpleReportsPage() {
     return trendMonths.map((m) => ({ month: monthLabel(m), ...Object.fromEntries(PAY_KEYS.map((k) => [t(`sales.payments.${k}`), Math.round(by[m][k])])) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sales, trendMonths, lang]);
+  const paymentTotal = useMemo(() => payment.reduce((a, p) => a + p.total, 0), [payment]);
+  const paymentCount = useMemo(() => payment.reduce((a, p) => a + p.count, 0), [payment]);
+  // Only chart the methods this business actually uses, so the legend stops listing
+  // three payment types that have never been taken.
+  const activePayKeys = useMemo(
+    () => PAY_KEYS.filter((k) => paymentByMonth.some((row) => row[t(`sales.payments.${k}`)] > 0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [paymentByMonth, lang]
+  );
 
   // ── UI bits ──────────────────────────────────────────────────────────────
   // Tabs follow the portal: no Sales module → only the P&L summary; no
@@ -542,7 +561,7 @@ export default function SimpleReportsPage() {
               </div>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={monthlySeries} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => `$${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} tick={{ fontSize: 11 }} width={48} />
                   <Tooltip formatter={tooltipMoney} />
@@ -691,7 +710,7 @@ export default function SimpleReportsPage() {
               </div>
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={salesByMonth} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => `$${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} tick={{ fontSize: 11 }} width={48} />
                   <Tooltip formatter={tooltipMoney} />
@@ -762,7 +781,7 @@ export default function SimpleReportsPage() {
               <p className="text-xs text-surface-500 mb-4">{t('rep.weekdayBody', { period: periodLabel })}</p>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={weekday} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                   <XAxis dataKey="day" tick={{ fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => `$${v}`} tick={{ fontSize: 11 }} width={48} />
                   <Tooltip formatter={(v, n) => [n === 'avg' ? money(v) : v, n === 'avg' ? t('rep.avgPerDay') : t('rep.salesCount')]} />
@@ -840,7 +859,7 @@ export default function SimpleReportsPage() {
               <h2 className="section-title mb-4">{t('rep.newVsReturning')}</h2>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={newVsReturning} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={32} />
                   <Tooltip />
@@ -911,19 +930,26 @@ export default function SimpleReportsPage() {
               <section className="card lg:col-span-2 p-5">
                 <h2 className="section-title mb-1">{t('rep.byPayment')}</h2>
                 <p className="text-xs text-surface-500 mb-3">{periodLabel}</p>
-                <ResponsiveContainer width="100%" height={200}>
-                  <PieChart>
-                    <Pie data={payment} dataKey="total" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2}>
-                      {payment.map((_, i) => <Cell key={i} fill={BRAND[i % BRAND.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={tooltipMoney} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <div className="relative">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie data={payment} dataKey="total" nameKey="name" innerRadius={58} outerRadius={86} paddingAngle={payment.length > 1 ? 2 : 0} stroke="none">
+                        {payment.map((p) => <Cell key={p.key} fill={PAY_COLOR[p.key] || PAY_COLOR.other} />)}
+                      </Pie>
+                      <Tooltip formatter={tooltipMoney} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  {/* The ring's 58px hole was showing nothing; the period total belongs in it. */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="font-mono text-xl text-surface-900 leading-none">{money(paymentTotal)}</span>
+                    <span className="text-[11px] text-surface-500 mt-1.5">{tn('sales.countMonth', paymentCount)}</span>
+                  </div>
+                </div>
                 <table className="w-full mt-2">
                   <tbody>
                     {payment.map((p, i) => (
                       <tr key={p.key} className="border-b border-surface-50">
-                        <td className="table-cell"><span className="inline-block w-2.5 h-2.5 rounded-full mr-2" style={{ background: BRAND[i % BRAND.length] }} />{p.name}</td>
+                        <td className="table-cell"><span className="inline-block w-2.5 h-2.5 rounded-full mr-2" style={{ background: PAY_COLOR[p.key] || PAY_COLOR.other }} />{p.name}</td>
                         <td className="table-cell text-right font-mono text-xs text-surface-500">{tn('sales.countMonth', p.count)}</td>
                         <td className="table-cell text-right font-mono">{money(p.total)}</td>
                         <td className="table-cell text-right font-mono text-xs text-surface-500">{fmtPct(p.share)}</td>
@@ -936,12 +962,12 @@ export default function SimpleReportsPage() {
                 <h2 className="section-title mb-4">{t('rep.paymentByMonth')}</h2>
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={paymentByMonth} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
                     <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                     <YAxis tickFormatter={(v) => `$${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} tick={{ fontSize: 11 }} width={48} />
                     <Tooltip formatter={tooltipMoney} />
-                    <Legend />
-                    {PAY_KEYS.map((k, i) => <Bar key={k} dataKey={t(`sales.payments.${k}`)} stackId="p" fill={BRAND[i % BRAND.length]} radius={i === PAY_KEYS.length - 1 ? [6, 6, 0, 0] : 0} />)}
+                    <Legend iconType="circle" iconSize={9} wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
+                    {activePayKeys.map((k, i) => <Bar key={k} dataKey={t(`sales.payments.${k}`)} stackId="p" fill={PAY_COLOR[k]} radius={i === activePayKeys.length - 1 ? [6, 6, 0, 0] : 0} />)}
                   </BarChart>
                 </ResponsiveContainer>
               </section>

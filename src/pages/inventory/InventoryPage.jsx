@@ -45,6 +45,26 @@ const STOCK_STATUS = (p) =>
   : 'ok';
 const STATUS_COLOR = { critical: '#dc2626', low: '#f59e0b', ok: '#22c55e' };
 
+
+// ── Form primitives — one labelled field, and a group of them ──
+// Sentence-case labels, and the hint always sits under the control so that
+// neighbouring fields in a grid row end at the same height.
+function Field({ label, hint, optional, children }) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-surface-700 mb-1.5">
+        {label}
+        {optional && <span className="text-surface-400 font-normal"> · optional</span>}
+      </label>
+      {children}
+      {hint && <p className="text-xs text-surface-500 mt-1.5 leading-snug">{hint}</p>}
+    </div>
+  );
+}
+
+function Section({ divider, children }) {
+  return <div className={`space-y-4${divider ? ' mt-5 pt-5 border-t border-surface-100' : ''}`}>{children}</div>;
+}
 // ── Thumbnail — lazy: only requests signed URL when the element scrolls into view ──
 function ProductThumbnail({ imageUrl, size = 'sm' }) {
   const [src, setSrc]       = useState('');
@@ -888,126 +908,138 @@ export default function InventoryPage() {
       {activeTab === 'history' && <MovementHistoryTab products={products} />}
 
       {/* ── ADD / EDIT PRODUCT MODAL ── */}
-      <Modal open={showProductModal} onClose={() => { setShowProductModal(false); setEditingProduct(null); }} title={editingProduct ? 'Edit Product' : 'Add Product'} size="lg">
-        <form onSubmit={handleSaveProduct} className="space-y-4">
-          {/* Photo */}
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-2">Product Photo</label>
-            <div className="flex items-center gap-4">
-              {imagePreview ? (
-                <img src={imagePreview} alt="Preview" className="w-16 h-16 rounded-xl object-cover border border-surface-200 shrink-0" />
-              ) : (
-                <div className="w-16 h-16 rounded-xl bg-surface-100 flex items-center justify-center border border-surface-200 shrink-0">
-                  <Camera size={22} className="text-surface-300" />
-                </div>
-              )}
-              <div className="space-y-1.5">
-                {/* No `capture` attribute: on a phone the browser then offers camera OR gallery; on a computer it opens the file picker. */}
-                <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-                <button type="button" onClick={() => imageInputRef.current?.click()} className="btn-secondary text-xs flex items-center gap-1.5">
-                  <Camera size={13} /> {imagePreview ? 'Change photo' : 'Upload or take a photo'}
-                </button>
-                {imagePreview && (
-                  <button type="button" onClick={() => { setImageFile(null); setImagePreview(''); }} className="btn-ghost text-xs block">Remove</button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">What is it?</label>
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Product kind">
-              {KINDS.map(({ value, label, hint, icon: Icon }) => {
-                const on = productForm.kind === value;
-                return (
-                  <button key={value} type="button" role="radio" aria-checked={on} onClick={() => setProductForm({ ...productForm, kind: value })}
-                    className={`text-left rounded-lg border-2 px-3 py-2.5 transition ${on ? 'border-brand-600 bg-brand-50/60' : 'border-surface-200 hover:border-surface-300 bg-white'}`}>
-                    <div className={`flex items-center gap-2 text-sm font-semibold ${on ? 'text-brand-900' : 'text-surface-800'}`}><Icon size={15} /> {label}</div>
-                    <p className="text-xs text-surface-500 mt-1 leading-snug">{hint}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">{productForm.kind === 'supply' ? 'Supply name' : 'Product Name'}</label>
-            <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="input-field" placeholder={productForm.kind === 'supply' ? 'e.g., 100g bags, labels, chiles (lb)' : 'e.g., Chile en polvo 100g'} required />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Category</label>
-              {productForm.category === NEW_CATEGORY ? (
-                <div className="flex gap-2">
-                  <input
-                    type="text" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="input-field"
-                    placeholder="New category name" autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(); } }}
-                  />
-                  <button type="button" onClick={commitNewCategory} disabled={!newCategory.trim()} className="btn-primary px-3 shrink-0" aria-label="Add category"><Check size={16} /></button>
-                  <button type="button" onClick={() => { setProductForm({ ...productForm, category: categories[0] || DEFAULT_CATEGORY }); setNewCategory(''); }} className="btn-ghost px-2 shrink-0" aria-label="Cancel"><X size={16} /></button>
-                </div>
-              ) : (
-                <select value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} className="input-field">
-                  {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                  {productForm.category && !categories.includes(productForm.category) && (
-                    <option value={productForm.category}>{productForm.category}</option>
-                  )}
-                  <option value={NEW_CATEGORY}>+ New category…</option>
-                </select>
-              )}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Unit</label>
-              <input type="text" value={productForm.unit} onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })} className="input-field" placeholder="bottles, cases, units" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">{productForm.kind === 'supply' ? 'Cost per unit' : 'Cost Price'}</label>
-              <input type="number" step="0.01" min="0" value={productForm.cost_price} onChange={(e) => setProductForm({ ...productForm, cost_price: e.target.value })} className="input-field" placeholder="0.00" />
-              <p className="text-[11px] text-surface-400 mt-1">What you pay for one {productForm.unit || 'unit'}. Used for stock value{productForm.kind === 'supply' ? '' : ' and margin'}.</p>
-            </div>
-            {productForm.kind !== 'supply' && (
-              <div>
-                <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Sell Price</label>
-                <input type="number" step="0.01" min="0" value={productForm.sell_price} onChange={(e) => setProductForm({ ...productForm, sell_price: e.target.value })} className="input-field" placeholder="0.00" />
-                <p className="text-[11px] text-surface-400 mt-1">List price. A customer's agreed price, once used in a sale, overrides it for them.</p>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Current Stock</label>
-              <input type="number" min="0" value={productForm.current_stock} onChange={(e) => setProductForm({ ...productForm, current_stock: e.target.value })} className="input-field" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Minimum</label>
-              <input type="number" min="0" value={productForm.reorder_level} onChange={(e) => setProductForm({ ...productForm, reorder_level: e.target.value })} className="input-field" />
-              <p className="text-[11px] text-surface-400 mt-1">Alert when stock is at or below this.</p>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Ideal quantity</label>
-              <input type="number" min="0" value={productForm.target_stock} onChange={(e) => setProductForm({ ...productForm, target_stock: e.target.value })} className="input-field" />
-              <p className="text-[11px] text-surface-400 mt-1">What you like to have on hand. Below it = on the restock list.</p>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
+      <Modal
+        open={showProductModal}
+        onClose={() => { setShowProductModal(false); setEditingProduct(null); }}
+        title={editingProduct ? 'Edit product' : 'Add product'}
+        description={productForm.kind === 'supply' ? 'Something you use up making what you sell.' : 'Something you sell to customers.'}
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-2">
             <button type="button" onClick={() => { setShowProductModal(false); setEditingProduct(null); }} className="btn-ghost">Cancel</button>
-            <button type="submit" disabled={saving || uploadingImg} className="btn-primary">
-              {saving || uploadingImg ? <Spinner size="sm" className="text-white" /> : editingProduct ? 'Update Product' : 'Add Product'}
+            <button type="submit" form="product-form" disabled={saving || uploadingImg} className="btn-primary">
+              {saving || uploadingImg ? <Spinner size="sm" className="text-white" /> : editingProduct ? 'Save changes' : 'Add product'}
             </button>
           </div>
+        }
+      >
+        <form id="product-form" onSubmit={handleSaveProduct}>
+          {/* What is it — the answer changes which fields below make sense. */}
+          <Section>
+            <Field label="What is it?">
+              <div className="grid grid-cols-2 gap-2.5" role="radiogroup" aria-label="Product kind">
+                {KINDS.map(({ value, label, hint, icon: Icon }) => {
+                  const on = productForm.kind === value;
+                  return (
+                    <button key={value} type="button" role="radio" aria-checked={on} onClick={() => setProductForm({ ...productForm, kind: value })}
+                      className={`text-left rounded-xl border px-3.5 py-3 transition ${on ? 'border-brand-600 bg-brand-50 ring-1 ring-brand-600' : 'border-surface-200 hover:border-surface-400 bg-white'}`}>
+                      <div className={`flex items-center gap-2 text-sm font-semibold ${on ? 'text-brand-900' : 'text-surface-800'}`}><Icon size={15} /> {label}</div>
+                      <p className="text-xs text-surface-500 mt-1 leading-snug">{hint}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          </Section>
+
+          {/* Identity */}
+          <Section divider>
+            <Field label={productForm.kind === 'supply' ? 'Supply name' : 'Product name'}>
+              <input type="text" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} className="input-field" placeholder={productForm.kind === 'supply' ? 'e.g., 100g bags, labels, chiles (lb)' : 'e.g., Chile en polvo 100g'} required />
+            </Field>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Category">
+                {productForm.category === NEW_CATEGORY ? (
+                  <div className="flex gap-2">
+                    <input
+                      type="text" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="input-field"
+                      placeholder="New category name" autoFocus
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(); } }}
+                    />
+                    <button type="button" onClick={commitNewCategory} disabled={!newCategory.trim()} className="btn-primary px-3 shrink-0" aria-label="Add category"><Check size={16} /></button>
+                    <button type="button" onClick={() => { setProductForm({ ...productForm, category: categories[0] || DEFAULT_CATEGORY }); setNewCategory(''); }} className="btn-ghost px-2 shrink-0" aria-label="Cancel"><X size={16} /></button>
+                  </div>
+                ) : (
+                  <select value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} className="input-field">
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {productForm.category && !categories.includes(productForm.category) && (
+                      <option value={productForm.category}>{productForm.category}</option>
+                    )}
+                    <option value={NEW_CATEGORY}>+ New category…</option>
+                  </select>
+                )}
+              </Field>
+              <Field label="Unit" hint="How you count it: bottles, cases, lb.">
+                <input type="text" value={productForm.unit} onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })} className="input-field" placeholder="units" />
+              </Field>
+            </div>
+
+            <Field label="Photo" optional>
+              <div className="flex items-center gap-4">
+                {imagePreview ? (
+                  <img src={imagePreview} alt="Preview" className="w-16 h-16 rounded-xl object-cover border border-surface-200 shrink-0" />
+                ) : (
+                  <div className="w-16 h-16 rounded-xl bg-surface-100 flex items-center justify-center border border-surface-200 shrink-0">
+                    <Camera size={22} className="text-surface-300" />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  {/* No `capture` attribute: on a phone the browser then offers camera OR gallery; on a computer it opens the file picker. */}
+                  <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                  <button type="button" onClick={() => imageInputRef.current?.click()} className="btn-secondary text-xs flex items-center gap-1.5">
+                    <Camera size={13} /> {imagePreview ? 'Change photo' : 'Upload or take a photo'}
+                  </button>
+                  {imagePreview && (
+                    <button type="button" onClick={() => { setImageFile(null); setImagePreview(''); }} className="btn-ghost text-xs block">Remove</button>
+                  )}
+                </div>
+              </div>
+            </Field>
+          </Section>
+
+          {/* Money */}
+          <Section divider>
+            <div className="grid grid-cols-2 gap-4">
+              <Field
+                label={productForm.kind === 'supply' ? 'Cost per unit' : 'Cost price'}
+                hint={`What you pay${productForm.unit ? ` per ${productForm.unit}` : ''}. Used for stock value${productForm.kind === 'supply' ? '' : ' and margin'}.`}
+              >
+                <input type="number" step="0.01" min="0" value={productForm.cost_price} onChange={(e) => setProductForm({ ...productForm, cost_price: e.target.value })} className="input-field" placeholder="0.00" />
+              </Field>
+              {productForm.kind !== 'supply' && (
+                <Field label="Sell price" hint="List price. A customer's agreed price overrides it for them.">
+                  <input type="number" step="0.01" min="0" value={productForm.sell_price} onChange={(e) => setProductForm({ ...productForm, sell_price: e.target.value })} className="input-field" placeholder="0.00" />
+                </Field>
+              )}
+            </div>
+          </Section>
+
+          {/* Stock levels. Every field carries a hint so the three columns end level. */}
+          <Section divider>
+            <div className="grid grid-cols-3 gap-4">
+              <Field label="In stock now" hint="How many you have today.">
+                <input type="number" min="0" value={productForm.current_stock} onChange={(e) => setProductForm({ ...productForm, current_stock: e.target.value })} className="input-field" />
+              </Field>
+              <Field label="Minimum" hint="Warn me at or below this.">
+                <input type="number" min="0" value={productForm.reorder_level} onChange={(e) => setProductForm({ ...productForm, reorder_level: e.target.value })} className="input-field" />
+              </Field>
+              <Field label="Ideal quantity" hint="Below it, it joins the restock list.">
+                <input type="number" min="0" value={productForm.target_stock} onChange={(e) => setProductForm({ ...productForm, target_stock: e.target.value })} className="input-field" />
+              </Field>
+            </div>
+          </Section>
         </form>
       </Modal>
 
       {/* ── CATEGORIES MODAL ── */}
-      <Modal open={showCatModal} onClose={() => setShowCatModal(false)} title="Product categories">
-        <p className="text-sm text-surface-500 mb-4">Rename a category and every product in it follows. Deleting one moves its products to "{DEFAULT_CATEGORY}". New categories are created from the product form.</p>
+      <Modal
+        open={showCatModal}
+        onClose={() => setShowCatModal(false)}
+        title="Product categories"
+        description={`Rename a category and every product in it follows. Deleting one moves its products to "${DEFAULT_CATEGORY}".`}
+        footer={<div className="flex justify-end"><button type="button" onClick={() => setShowCatModal(false)} className="btn-ghost">Done</button></div>}
+      >
         {categories.filter((c) => c !== DEFAULT_CATEGORY).length === 0 ? (
           <p className="text-sm text-surface-500 py-6 text-center">No categories yet — add a product and pick "+ New category…".</p>
         ) : (
@@ -1033,79 +1065,85 @@ export default function InventoryPage() {
             })}
           </ul>
         )}
-        <div className="flex justify-end pt-4">
-          <button type="button" onClick={() => setShowCatModal(false)} className="btn-ghost">Done</button>
-        </div>
       </Modal>
 
       {/* ── LOG INVENTORY MODAL ── */}
-      <Modal open={showLogModal} onClose={() => setShowLogModal(false)} title="Log Inventory Movement">
-        <form onSubmit={handleLogEntry} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Product</label>
+      <Modal
+        open={showLogModal}
+        onClose={() => setShowLogModal(false)}
+        title="Log a stock movement"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setShowLogModal(false)} className="btn-ghost">Cancel</button>
+            <button type="submit" form="log-form" disabled={saving} className="btn-primary">
+              {saving ? <Spinner size="sm" className="text-white" /> : 'Log entry'}
+            </button>
+          </div>
+        }
+      >
+        <form id="log-form" onSubmit={handleLogEntry} className="space-y-4">
+          <Field label="Product">
             <select value={logForm.product_id} onChange={(e) => setLogForm({ ...logForm, product_id: e.target.value })} className="input-field" required>
               <option value="">Select product</option>
               {[...products].sort((a, b) => a.name.localeCompare(b.name)).map((p) => (
                 <option key={p.id} value={p.id}>{p.name} (Stock: {p.current_stock})</option>
               ))}
             </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Type">
+              <select value={logForm.type} onChange={(e) => setLogForm({ ...logForm, type: e.target.value })} className="input-field">
+                {LOG_TYPES.map((lt) => <option key={lt.value} value={lt.value}>{lt.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Date">
+              <input type="date" value={logForm.date} onChange={(e) => setLogForm({ ...logForm, date: e.target.value })} className="input-field" />
+            </Field>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Type</label>
-            <select value={logForm.type} onChange={(e) => setLogForm({ ...logForm, type: e.target.value })} className="input-field">
-              {LOG_TYPES.map((lt) => <option key={lt.value} value={lt.value}>{lt.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">
-              Quantity
-              {logForm.type === 'adjustment' ? ' (new absolute stock level)' : logForm.type === 'received' ? ' (units received)' : ' (units removed)'}
-            </label>
+          <Field
+            label="Quantity"
+            hint={logForm.type === 'adjustment' ? 'The new total on hand, not the difference.' : logForm.type === 'received' ? 'Units received.' : 'Units removed.'}
+          >
             <input type="number" value={logForm.quantity} onChange={(e) => setLogForm({ ...logForm, quantity: e.target.value })} className="input-field" placeholder="0" required />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Date</label>
-            <input type="date" value={logForm.date} onChange={(e) => setLogForm({ ...logForm, date: e.target.value })} className="input-field" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Notes <span className="text-surface-400 normal-case font-normal">(optional)</span></label>
+          </Field>
+          <Field label="Notes" optional>
             <input type="text" value={logForm.notes} onChange={(e) => setLogForm({ ...logForm, notes: e.target.value })} className="input-field" placeholder="e.g. Received from supplier" />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setShowLogModal(false)} className="btn-ghost">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary">
-              {saving ? <Spinner size="sm" className="text-white" /> : 'Log Entry'}
-            </button>
-          </div>
+          </Field>
         </form>
       </Modal>
 
       {/* ── STOCK COUNT MODAL ── */}
-      <Modal open={showCountModal} onClose={() => setShowCountModal(false)} title="Periodic Stock Count" size="xl">
-        <div>
-          <p className="text-sm text-surface-500 mb-4">Enter the actual counted quantity. Only changed items will be adjusted.</p>
-          <div className="max-h-[400px] overflow-y-auto space-y-2">
-            {countEntries.map((entry, idx) => (
-              <div key={entry.product_id} className="flex items-center gap-3 px-3 py-2 bg-surface-50 rounded-lg">
-                <span className="flex-1 text-sm font-medium">{entry.name}</span>
-                <span className="text-xs text-surface-400 w-28 text-right">System: {entry.system_stock}</span>
-                <input type="number" value={entry.counted}
-                  onChange={(e) => { const u = [...countEntries]; u[idx] = { ...u[idx], counted: e.target.value }; setCountEntries(u); }}
-                  className="input-field w-24 text-center" placeholder="Count" />
-                {entry.counted !== '' && parseInt(entry.counted) !== entry.system_stock && (
-                  <span className={`text-xs font-mono w-14 text-right ${parseInt(entry.counted) > entry.system_stock ? 'text-green-600' : 'text-red-600'}`}>
-                    {parseInt(entry.counted) > entry.system_stock ? '+' : ''}{parseInt(entry.counted) - entry.system_stock}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-end gap-2 pt-4 mt-4 border-t border-surface-100">
+      <Modal
+        open={showCountModal}
+        onClose={() => setShowCountModal(false)}
+        title="Periodic stock count"
+        description="Enter what you actually counted. Only the rows you change are adjusted."
+        size="xl"
+        footer={
+          <div className="flex justify-end gap-2">
             <button onClick={() => setShowCountModal(false)} className="btn-ghost">Cancel</button>
             <button onClick={handleSubmitCount} disabled={saving} className="btn-primary">
-              {saving ? <Spinner size="sm" className="text-white" /> : 'Submit Count'}
+              {saving ? <Spinner size="sm" className="text-white" /> : 'Submit count'}
             </button>
           </div>
+        }
+      >
+        {/* The modal body scrolls on its own, so no inner scroller here. */}
+        <div className="space-y-2">
+          {countEntries.map((entry, idx) => (
+            <div key={entry.product_id} className="flex items-center gap-3 px-3 py-2 bg-surface-50 rounded-lg">
+              <span className="flex-1 text-sm font-medium">{entry.name}</span>
+              <span className="text-xs text-surface-400 w-28 text-right">System: {entry.system_stock}</span>
+              <input type="number" value={entry.counted}
+                onChange={(e) => { const u = [...countEntries]; u[idx] = { ...u[idx], counted: e.target.value }; setCountEntries(u); }}
+                className="input-field w-24 text-center" placeholder="Count" />
+              {entry.counted !== '' && parseInt(entry.counted) !== entry.system_stock && (
+                <span className={`text-xs font-mono w-14 text-right ${parseInt(entry.counted) > entry.system_stock ? 'text-green-600' : 'text-red-600'}`}>
+                  {parseInt(entry.counted) > entry.system_stock ? '+' : ''}{parseInt(entry.counted) - entry.system_stock}
+                </span>
+              )}
+            </div>
+          ))}
         </div>
       </Modal>
     </div>

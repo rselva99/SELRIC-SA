@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-export default function Modal({ open, onClose, title, children, size = 'md' }) {
+export default function Modal({ open, onClose, title, description, children, footer, size = 'md' }) {
   useEffect(() => {
     if (open) document.body.style.overflow = 'hidden';
     else document.body.style.overflow = '';
@@ -29,17 +29,25 @@ export default function Modal({ open, onClose, title, children, size = 'md' }) {
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200">
-          <h2 className="font-display text-lg">{title}</h2>
+        <div className="shrink-0 flex items-start justify-between gap-4 px-6 py-4 border-b border-surface-200">
+          <div className="min-w-0">
+            <h2 className="font-display text-lg leading-tight">{title}</h2>
+            {description && <p className="text-sm text-surface-500 mt-1 leading-snug">{description}</p>}
+          </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition"
+            className="shrink-0 -mr-1.5 p-1.5 rounded-lg text-surface-400 hover:text-surface-600 hover:bg-surface-100 transition"
+            aria-label="Close"
           >
             <X size={18} />
           </button>
         </div>
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>
+        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        {/* Footer: stays put while the body scrolls, so the primary action is always reachable. */}
+        {footer && (
+          <div className="shrink-0 px-6 py-3.5 border-t border-surface-200 bg-surface-50 rounded-b-xl">{footer}</div>
+        )}
       </div>
     </div>
   );
