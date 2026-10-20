@@ -11,6 +11,8 @@ import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 import { useData } from '../../contexts/DataContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
 import { aggregateForPnL } from '../../lib/finance';
 import { generatePnLPdf } from '../../lib/reports';
@@ -91,6 +93,9 @@ function Delta({ value, invert = false, suffix = '' }) {
 
 export default function SimpleReportsPage() {
   const { products, categories } = useData();
+  const { config } = useAuth();
+  const label = useLabel();
+  const mod = (k) => config?.modules?.[k] !== false;
   const { t, tn, locale, lang } = useT();
 
   // ── Period ───────────────────────────────────────────────────────────────
@@ -429,14 +434,16 @@ export default function SimpleReportsPage() {
   }, [sales, trendMonths, lang]);
 
   // ── UI bits ──────────────────────────────────────────────────────────────
+  // Tabs follow the portal: no Sales module → only the P&L summary; no
+  // Customers / Inventory module → those tabs go away.
   const TABS = [
     { key: 'summary',   icon: FileText },
-    { key: 'products',  icon: Package },
-    { key: 'trends',    icon: TrendingUp },
-    { key: 'customers', icon: Users },
-    { key: 'inventory', icon: BarChart3 },
-    { key: 'cash',      icon: Wallet },
+    ...(mod('sales') ? [{ key: 'products', icon: Package }, { key: 'trends', icon: TrendingUp }] : []),
+    ...(mod('sales') && mod('customers') ? [{ key: 'customers', icon: Users }] : []),
+    ...(mod('inventory') ? [{ key: 'inventory', icon: BarChart3 }] : []),
+    ...(mod('sales') ? [{ key: 'cash', icon: Wallet }] : []),
   ];
+  const activeTab = TABS.some((x) => x.key === tab) ? tab : 'summary';
   const money = (v) => formatCurrency(v);
   const tooltipMoney = (v) => money(v);
   const noSales = !loading && periodSales.length === 0;
@@ -508,7 +515,7 @@ export default function SimpleReportsPage() {
       <div className="mt-6 flex gap-1 bg-surface-100 rounded-lg p-1 w-fit max-w-full overflow-x-auto">
         {TABS.map(({ key, icon: Icon }) => (
           <button key={key} type="button" onClick={() => setTab(key)}
-            className={cn('inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-medium whitespace-nowrap transition', tab === key ? 'bg-white shadow-sm text-surface-900' : 'text-surface-500 hover:text-surface-700')}>
+            className={cn('inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-medium whitespace-nowrap transition', activeTab === key ? 'bg-white shadow-sm text-surface-900' : 'text-surface-500 hover:text-surface-700')}>
             <Icon size={15} /> {t(`rep.tabs.${key}`)}
           </button>
         ))}
@@ -520,7 +527,7 @@ export default function SimpleReportsPage() {
         <div className="mt-6 space-y-6">
 
           {/* ═══ 1. Summary ═══════════════════════════════════════════ */}
-          {tab === 'summary' && (<>
+          {activeTab === 'summary' && (<>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <Tile dark icon={TrendingUp} label={t('rep.revenue')} value={money(pnl.totalRevenue)} delta={changeOf(pnl.totalRevenue, pnlPrev.totalRevenue)} />
               <Tile icon={TrendingDown} label={t('rep.expenses')} value={money(pnl.totalExpenses)} delta={changeOf(pnl.totalExpenses, pnlPrev.totalExpenses)} invert />
@@ -585,7 +592,7 @@ export default function SimpleReportsPage() {
           </>)}
 
           {/* ═══ 2. Products ══════════════════════════════════════════ */}
-          {tab === 'products' && (noSales ? <div className="card"><Empty title={t('rep.noSalesTitle', { period: periodLabel })} body={t('rep.noSalesBody')} link={{ to: '/sales', label: t('crm.recordSale') }} /></div> : <>
+          {activeTab === 'products' && (noSales ? <div className="card"><Empty title={t('rep.noSalesTitle', { period: periodLabel })} body={t('rep.noSalesBody')} link={{ to: '/sales', label: t('crm.recordSale') }} /></div> : <>
             <div className="grid sm:grid-cols-3 gap-4">
               {[['bestUnits', productHighlights.byUnits, (r) => tn('sales.itemsSold', r.units)], ['bestRevenue', productHighlights.byRevenue, (r) => money(r.revenue)], ['bestMargin', productHighlights.byMargin, (r) => `${money(r.margin)} · ${fmtPct(r.marginPct)}`]].map(([k, r, f]) => (
                 <div key={k} className="card p-5">
@@ -670,7 +677,7 @@ export default function SimpleReportsPage() {
           </>)}
 
           {/* ═══ 3. Trends ════════════════════════════════════════════ */}
-          {tab === 'trends' && (sales.length === 0 ? <div className="card"><Empty icon={TrendingUp} title={t('rep.noTrendTitle')} body={t('rep.noTrendBody')} /></div> : <>
+          {activeTab === 'trends' && (sales.length === 0 ? <div className="card"><Empty icon={TrendingUp} title={t('rep.noTrendTitle')} body={t('rep.noTrendBody')} /></div> : <>
             <div className="grid sm:grid-cols-3 gap-4">
               <Tile dark icon={TrendingUp} label={t('rep.bestMonth')} value={trendStats.best ? money(trendStats.best.total) : '—'} sub={trendStats.best?.month} />
               <Tile icon={BarChart3} label={t('rep.avgMonth')} value={money(trendStats.avg)} sub={tn('rep.monthsWithSales', trendStats.months)} />
@@ -766,7 +773,7 @@ export default function SimpleReportsPage() {
           </>)}
 
           {/* ═══ 4. Customers ═════════════════════════════════════════ */}
-          {tab === 'customers' && (<>
+          {activeTab === 'customers' && (<>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <Tile dark icon={Users} label={t('rep.activeCustomers')} value={customerStats.active} sub={tn('rep.walkIns', customerStats.walkIns)} />
               <Tile icon={Sparkles} label={t('rep.newCustomers')} value={customerStats.fresh} />
@@ -846,7 +853,7 @@ export default function SimpleReportsPage() {
           </>)}
 
           {/* ═══ 5. Inventory ═════════════════════════════════════════ */}
-          {tab === 'inventory' && (products.length === 0 ? <div className="card"><Empty icon={Package} title={t('rep.noProductsTitle')} body={t('rep.noProductsBody')} link={{ to: '/inventory', label: t('dash.viewInventory') }} /></div> : <>
+          {activeTab === 'inventory' && (products.length === 0 ? <div className="card"><Empty icon={Package} title={t('rep.noProductsTitle')} body={t('rep.noProductsBody')} link={{ to: '/inventory', label: t('dash.viewInventory') }} /></div> : <>
             <div className="grid sm:grid-cols-3 gap-4">
               <Tile dark icon={Package} label={t('rep.stockValue')} value={money(inventoryStats.value)} sub={t('rep.atCost')} />
               <Tile icon={AlertTriangle} label={t('rep.runningOut')} value={inventoryStats.running} sub={t('rep.withinDays', { days: RUNNING_OUT_DAYS })} />
@@ -899,7 +906,7 @@ export default function SimpleReportsPage() {
           </>)}
 
           {/* ═══ 6. Cash ══════════════════════════════════════════════ */}
-          {tab === 'cash' && (noSales ? <div className="card"><Empty icon={Wallet} title={t('rep.noSalesTitle', { period: periodLabel })} body={t('rep.noSalesBody')} link={{ to: '/sales', label: t('crm.recordSale') }} /></div> : <>
+          {activeTab === 'cash' && (noSales ? <div className="card"><Empty icon={Wallet} title={t('rep.noSalesTitle', { period: periodLabel })} body={t('rep.noSalesBody')} link={{ to: '/sales', label: t('crm.recordSale') }} /></div> : <>
             <div className="grid lg:grid-cols-5 gap-6">
               <section className="card lg:col-span-2 p-5">
                 <h2 className="section-title mb-1">{t('rep.byPayment')}</h2>

@@ -37,25 +37,29 @@ import CashManagementPage from './pages/cash-management/CashManagementPage';
 import PayrollPage from './pages/payroll/PayrollPage';
 import TransactionsPage from './pages/transactions/TransactionsPage';
 import SettingsPage from './pages/settings/SettingsPage';
+import SetupPage from './pages/setup/SetupPage';
 import PinGate from './components/PinGate';
 import './index.css';
 
 // `fullOnly` pages belong to the full accounting package. A workspace in
 // simple mode is sent to its Transactions tab instead. While the organization
 // is still loading (accountingMode null) nothing is redirected.
-function ProtectedRoute({ children, adminOnly = false, fullOnly = false }) {
-  const { user, loading, isAdmin, accountingMode } = useAuth();
+// `module` names a portal module (Settings → Your portal); a Simple-mode
+// workspace that turned it off is sent to the dashboard.
+function ProtectedRoute({ children, adminOnly = false, fullOnly = false, module = null }) {
+  const { user, loading, isAdmin, accountingMode, config } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
   if (fullOnly && accountingMode === 'simple') return <Navigate to="/transactions" replace />;
+  if (module && accountingMode === 'simple' && config?.modules?.[module] === false) return <Navigate to="/" replace />;
   return children;
 }
 
 // "/" is the public landing page for visitors and the app for signed-in users.
 // Any other app path still bounces a visitor to /login as before.
 function RootGate() {
-  const { user, loading, primaryProgram } = useAuth();
+  const { user, loading, primaryProgram, accountingMode, config, isAdmin } = useAuth();
   const location = useLocation();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) {
@@ -65,7 +69,19 @@ function RootGate() {
   // before phase 2 ships) gets a holding page instead of the Business app.
   const program = primaryProgram ? getProgram(primaryProgram) : null;
   if (program && program.status !== 'live') return <ProgramPendingPage program={program} />;
+  // A Simple-mode admin who has not shaped the portal yet does that first
+  // (one screen; everything is editable later in Settings → Your portal).
+  if (accountingMode === 'simple' && isAdmin && config && !config.configured) return <Navigate to="/setup" replace />;
   return <AppLayout />;
+}
+
+// /setup is only for an admin whose Simple-mode workspace is not configured.
+function SetupGate() {
+  const { user, loading, accountingMode, config, isAdmin } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (accountingMode !== 'simple' || !isAdmin) return <Navigate to="/" replace />;
+  return <SetupPage />;
 }
 
 // /sales depends on the accounting mode: Simple records each sale with its
@@ -103,6 +119,7 @@ function App() {
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             {/* Public page per program — readable signed in or out. */}
             <Route path="/programs/:key" element={<ProgramPage />} />
+            <Route path="/setup" element={<SetupGate />} />
 
             <Route path="/" element={<RootGate />}>
               <Route index element={<DashboardPage />} />
@@ -121,12 +138,12 @@ function App() {
               {/* Simple mode */}
               <Route path="transactions" element={<ProtectedRoute adminOnly><TransactionsPage /></ProtectedRoute>} />
               {/* Both modes — /sales picks the page by mode (see SalesRoute) */}
-              <Route path="sales" element={<ProtectedRoute adminOnly><SalesRoute /></ProtectedRoute>} />
-              <Route path="customers" element={<ProtectedRoute adminOnly><CustomersPage /></ProtectedRoute>} />
-              <Route path="tasks" element={<ProtectedRoute adminOnly><TasksPage /></ProtectedRoute>} />
-              <Route path="reports" element={<ProtectedRoute adminOnly><ReportsRoute /></ProtectedRoute>} />
+              <Route path="sales" element={<ProtectedRoute adminOnly module="sales"><SalesRoute /></ProtectedRoute>} />
+              <Route path="customers" element={<ProtectedRoute adminOnly module="customers"><CustomersPage /></ProtectedRoute>} />
+              <Route path="tasks" element={<ProtectedRoute adminOnly module="tasks"><TasksPage /></ProtectedRoute>} />
+              <Route path="reports" element={<ProtectedRoute adminOnly module="reports"><ReportsRoute /></ProtectedRoute>} />
               <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />
-              <Route path="inventory" element={<InventoryPage />} />
+              <Route path="inventory" element={<ProtectedRoute module="inventory"><InventoryPage /></ProtectedRoute>} />
               <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />
               <Route path="settings" element={<ProtectedRoute adminOnly><SettingsPage /></ProtectedRoute>} />
               {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the dashboard. */}

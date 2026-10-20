@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM } from '../../programs';
+import { MODULES } from '../../lib/workspaceConfig';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
 // Which groups show depends on the workspace's accounting mode
@@ -63,25 +64,28 @@ const FULL_GROUPS = [
   ]},
 ];
 
-const SIMPLE_GROUPS = [
-  { key: 'overview', items: [
-    { key: 'dashboard', icon: LayoutDashboard, path: '/' },
-  ]},
-  { key: 'money', items: [
-    { key: 'transactions', icon: ArrowLeftRight, path: '/transactions' },
-    { key: 'reports',      icon: BarChart3,      path: '/reports' },
-  ]},
-  { key: 'operations', items: [
-    { key: 'salesSimple', icon: ShoppingBag, path: '/sales' },
-    { key: 'customers',   icon: Contact,     path: '/customers' },
-    { key: 'inventory',   icon: Package,     path: '/inventory' },
-    { key: 'tasks',       icon: ListChecks,  path: '/tasks' },
-  ]},
-  { key: 'settings', items: [
-    { key: 'users',    icon: Users,    path: '/users' },
-    { key: 'settings', icon: Settings, path: '/settings' },
-  ]},
-];
+// Simple mode: the sidebar follows the workspace's portal config — which
+// modules are on and what the business calls them (Settings → Your portal).
+// `module` ties an item to a config key; items without one are the core.
+const MODULE_ICONS = { sales: ShoppingBag, customers: Contact, inventory: Package, tasks: ListChecks, reports: BarChart3 };
+function simpleGroups(config) {
+  const on = (k) => config?.modules?.[k] !== false;
+  const item = (k) => ({ key: k === 'sales' ? 'salesSimple' : k, module: k, icon: MODULE_ICONS[k], path: MODULES.find((m) => m.key === k).path });
+  return [
+    { key: 'overview', items: [
+      { key: 'dashboard', icon: LayoutDashboard, path: '/' },
+    ]},
+    { key: 'money', items: [
+      { key: 'transactions', icon: ArrowLeftRight, path: '/transactions' },
+      ...(on('reports') ? [item('reports')] : []),
+    ]},
+    { key: 'operations', items: ['sales', 'customers', 'inventory', 'tasks'].filter(on).map(item) },
+    { key: 'settings', items: [
+      { key: 'users',    icon: Users,    path: '/users' },
+      { key: 'settings', icon: Settings, path: '/settings' },
+    ]},
+  ].filter((g) => g.items.length);
+}
 
 const LIMITED_GROUPS = [
   { key: 'overview', items: [
@@ -101,13 +105,15 @@ function monogram(name) {
 }
 
 export default function AppLayout() {
-  const { profile, organization, accountingMode, primaryProgram, isAdmin, signOut } = useAuth();
+  const { profile, organization, accountingMode, primaryProgram, isAdmin, signOut, config } = useAuth();
   const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const groups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? SIMPLE_GROUPS : FULL_GROUPS;
+  const groups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? simpleGroups(config) : FULL_GROUPS;
+  // A module's custom name (Settings → Your portal) wins over the translation.
+  const labelOf = (item) => (item.module && config?.labels?.[item.module]) || t(`nav.${item.key}`);
   const businessName = organization?.name || 'SelRic';
   // The program this workspace runs (each SelRic program is its own workspace).
   const currentProgram = PROGRAMS.find((p) => p.key === primaryProgram)?.key || DEFAULT_PROGRAM;
@@ -185,7 +191,7 @@ export default function AppLayout() {
                     >
                       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r bg-brand-200" />}
                       <item.icon size={17} className={active ? 'text-white' : 'text-brand-300'} />
-                      <span className="truncate">{t(`nav.${item.key}`)}</span>
+                      <span className="truncate">{labelOf(item)}</span>
                     </Link>
                   );
                 })}

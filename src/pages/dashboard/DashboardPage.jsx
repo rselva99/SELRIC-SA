@@ -61,7 +61,11 @@ function pctChange(now, prev) {
 }
 
 export default function DashboardPage() {
-  const { profile, organization, accountingMode, isAdmin } = useAuth();
+  const { profile, organization, accountingMode, isAdmin, config } = useAuth();
+  // Simple mode: which sections show and which modules exist come from the
+  // portal config (Settings → Your portal). Full mode shows everything.
+  const show = (k) => accountingMode !== 'simple' || config?.dashboard?.[k] !== false;
+  const moduleOn = (k) => accountingMode !== 'simple' || config?.modules?.[k] !== false;
   const { products, categories } = useData();
   const { t, tn, locale } = useT();
   const simple = accountingMode === 'simple';
@@ -150,14 +154,15 @@ export default function DashboardPage() {
     const weekBills = bills.length - overdueBills;
     const billsTo = simple ? '/transactions' : '/bookkeeping';
     const items = [];
-    if (overdueTasks) items.push({ icon: ListChecks, tone: 'red',   text: tn('dash.overdueTasks',  overdueTasks),  to: '/tasks' });
+    if (overdueTasks && moduleOn('tasks')) items.push({ icon: ListChecks, tone: 'red',   text: tn('dash.overdueTasks',  overdueTasks),  to: '/tasks' });
     if (overdueBills) items.push({ icon: Receipt,    tone: 'red',   text: tn('dash.billsOverdue',  overdueBills),  to: billsTo });
     if (weekBills)    items.push({ icon: Receipt,    tone: 'amber', text: tn('dash.billsDue',      weekBills),     to: billsTo });
-    if (weekTasks)    items.push({ icon: ListChecks, tone: 'amber', text: tn('dash.tasksThisWeek', weekTasks),     to: '/tasks' });
-    if (stats.belowMin.length)  items.push({ icon: Package, tone: 'red',   text: tn('dash.lowStockItems', stats.belowMin.length),  to: '/inventory' });
-    if (stats.toRestock.length) items.push({ icon: Package, tone: 'amber', text: tn('dash.restockItems',  stats.toRestock.length), to: '/inventory' });
+    if (weekTasks && moduleOn('tasks')) items.push({ icon: ListChecks, tone: 'amber', text: tn('dash.tasksThisWeek', weekTasks),     to: '/tasks' });
+    if (stats.belowMin.length && moduleOn('inventory'))  items.push({ icon: Package, tone: 'red',   text: tn('dash.lowStockItems', stats.belowMin.length),  to: '/inventory' });
+    if (stats.toRestock.length && moduleOn('inventory')) items.push({ icon: Package, tone: 'amber', text: tn('dash.restockItems',  stats.toRestock.length), to: '/inventory' });
     return items;
-  }, [tasks, bills, stats.belowMin.length, stats.toRestock.length, tn, simple]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, bills, stats.belowMin.length, stats.toRestock.length, tn, simple, config]);
 
   const hour = new Date().getHours();
   const slot = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
@@ -222,7 +227,7 @@ export default function DashboardPage() {
           <h2 className="font-display text-xl text-brand-950">{t('dash.getStartedTitle')}</h2>
           <p className="text-surface-600 text-sm mt-1">{t('dash.getStartedBody')}</p>
           <ol className="mt-5 grid sm:grid-cols-2 gap-3">
-            {t(simple ? 'dash.startSimple' : 'dash.start').map(([title, body, to]) => {
+            {t(simple ? 'dash.startSimple' : 'dash.start').filter(([, , to]) => !simple || ({ '/inventory': 'inventory', '/sales': 'sales', '/customers': 'customers', '/tasks': 'tasks' }[to] ? moduleOn({ '/inventory': 'inventory', '/sales': 'sales', '/customers': 'customers', '/tasks': 'tasks' }[to]) : true)).map(([title, body, to]) => {
               const Icon = START_ICONS[to] || FileText;
               return (
                 <li key={to}>
@@ -244,7 +249,7 @@ export default function DashboardPage() {
       <div className={`mt-6 grid grid-cols-1 gap-6 ${hasWide ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
         {hasWide && (
         <div className="lg:col-span-2 space-y-6">
-          {isAdmin && !isEmptyWorkspace && (
+          {isAdmin && !isEmptyWorkspace && show('chart') && (
             <div className="card p-5">
               <h3 className="section-title mb-4">{t('dash.chartTitle')}</h3>
               <div className="h-64">
@@ -265,7 +270,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {isAdmin && transactions.length > 0 && (
+          {isAdmin && transactions.length > 0 && show('recent') && (
             <div className="card">
               <div className="flex items-center justify-between px-5 py-4 border-b border-surface-200">
                 <h3 className="section-title">{t('dash.recent')}</h3>
@@ -329,7 +334,8 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Products (everyone) */}
+          {/* Products (everyone, when the inventory module is on) */}
+          {moduleOn('inventory') && show('products') && (
           <div className="card p-5">
             <div className="flex items-start justify-between">
               <div>
@@ -356,8 +362,10 @@ export default function DashboardPage() {
             )}
           </div>
 
+          )}
+
           {/* Where the money went */}
-          {isAdmin && categoryData.length > 0 && (
+          {isAdmin && categoryData.length > 0 && show('breakdown') && (
             <div className="card p-5">
               <h3 className="section-title mb-2">{t('dash.breakdown')}</h3>
               <div className="h-44">

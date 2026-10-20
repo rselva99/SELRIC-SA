@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
+import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
 import { formatCurrency, formatDate, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
@@ -26,6 +27,7 @@ const emptyForm = () => ({ name: '', email: '', phone: '', notes: '' });
 export default function CustomersPage() {
   const { user } = useAuth();
   const { products } = useData();
+  const label = useLabel();
   const { t, tn } = useT();
 
   const [customers, setCustomers] = useState([]);
@@ -228,7 +230,7 @@ export default function CustomersPage() {
       {/* ── Header ───────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h1 className="page-title">{t('crm.title')}</h1>
+          <h1 className="page-title">{label('customers')}</h1>
           <p className="text-surface-500 text-sm mt-1">{t('crm.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">

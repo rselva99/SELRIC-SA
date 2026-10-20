@@ -5,7 +5,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { BUSINESS_TYPES } from '../auth/SignupPage';
 import Spinner from '../../components/ui/Spinner';
-import { Building2, BookOpen, ArrowLeftRight, Check, Languages, BadgeCheck, ArrowRight, LayoutGrid } from 'lucide-react';
+import { Building2, BookOpen, ArrowLeftRight, Check, Languages, BadgeCheck, ArrowRight, LayoutGrid, LayoutTemplate } from 'lucide-react';
+import PortalEditor from '../../components/PortalEditor';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, getProgram, accentOf } from '../../programs';
 
@@ -13,7 +14,20 @@ import { PROGRAMS, getProgram, accentOf } from '../../programs';
 // its books, language and plan. Writes go to the organization row and to
 // org_programs — RLS allows admins to update only their own.
 export default function SettingsPage() {
-  const { organization, accountingMode, updateOrganization, primaryProgram } = useAuth();
+  const { organization, accountingMode, updateOrganization, primaryProgram, config, updateConfig } = useAuth();
+  const [savingPortal, setSavingPortal] = useState(false);
+
+  async function savePortal(draft) {
+    setSavingPortal(true);
+    try {
+      await updateConfig(draft);
+      toast.success(t('portal.saved'));
+    } catch (err) {
+      toast.error(err.message || t('settings.saveFailed'));
+    } finally {
+      setSavingPortal(false);
+    }
+  }
   const { t } = useT();
   const program = getProgram(primaryProgram) || PROGRAMS[0];
 
@@ -178,6 +192,22 @@ export default function SettingsPage() {
           )}
         </div>
       </section>
+
+      {/* ── Your portal (Simple mode) ────────────────────────────────── */}
+      {accountingMode === 'simple' && (
+        <section className="card mt-6">
+          <header className="flex items-center gap-3 px-5 py-4 border-b border-surface-200">
+            <span className="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center"><LayoutTemplate size={18} /></span>
+            <div>
+              <h2 className="section-title">{t('portal.title')}</h2>
+              <p className="text-xs text-surface-500">{t('portal.body')}</p>
+            </div>
+          </header>
+          <div className="px-5 py-5">
+            <PortalEditor initial={config} onSave={savePortal} saving={savingPortal} />
+          </div>
+        </section>
+      )}
 
       {/* ── Language + plan ──────────────────────────────────────────── */}
       <div className="grid sm:grid-cols-2 gap-6 mt-6">

@@ -129,5 +129,9 @@ and safe to re-run.
   (`sale` / `supply` — raw materials and packaging are stock-only and never offered in Sales),
   `products.target_stock` created IF NOT EXISTS (it had no migration), `customer_prices` (the agreed unit price
   per customer and product; `record_sale()` learns it from every sale, the Customers page edits it).
-  Additive, idempotent, tested on the replica. **Not yet applied.**
+  Additive, idempotent, tested on the replica. **Applied 2026-10-19.**
+- `2026-10-19-workspace-config.sql` — `organizations.config` (jsonb, `{}` = not set up): the portal each Simple-mode
+  workspace shapes for itself — template, modules on/off, custom names, dashboard sections. Resolved in
+  `src/lib/workspaceConfig.js`; admins write it through the existing organization UPDATE policy. Additive, idempotent,
+  tested on the replica. **Not yet applied.**
 

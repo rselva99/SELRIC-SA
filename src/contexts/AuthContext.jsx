@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { setReportBusinessName } from '../lib/reports';
+import { resolveConfig, serializeConfig } from '../lib/workspaceConfig';
 
 const AuthContext = createContext({});
 
@@ -115,6 +116,12 @@ export function AuthProvider({ children }) {
     return data;
   }
 
+  // Settings → Your portal / the setup screen: store the workspace config
+  // (modules, labels, dashboard). Only known fields are written.
+  async function updateConfig(next) {
+    return updateOrganization({ config: serializeConfig(next) });
+  }
+
   // Self-serve sign-up. `details` = { full_name, org_name, business_type, locale, invite_code }.
   // The database trigger (handle_new_user) turns org_name/business_type into a
   // brand-new workspace with this user as its admin — unless an admin has
@@ -175,6 +182,9 @@ export function AuthProvider({ children }) {
   // Each SelRic program is its own workspace: the first (normally only) row
   // is the program this workspace runs. null until the organization loads.
   const primaryProgram = organization ? (programKeys[0] || 'business') : null;
+  // The portal shape for this workspace (modules, labels, dashboard). Always a
+  // complete object; `config.configured` says whether setup has been done.
+  const config = resolveConfig(organization);
 
   const value = {
     user,
@@ -184,9 +194,11 @@ export function AuthProvider({ children }) {
     programs,
     programKeys,
     primaryProgram,
+    config,
     loading,
     isAdmin,
     updateOrganization,
+    updateConfig,
     signUp,
     signIn,
     signOut,

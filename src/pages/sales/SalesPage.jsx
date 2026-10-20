@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 import { useData } from '../../contexts/DataContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
 import { formatCurrency, formatDate, cn } from '../../lib/utils';
 import Spinner from '../../components/ui/Spinner';
@@ -34,7 +36,7 @@ const PAYMENTS = [
 
 // `auto` = the price was filled by us (list or agreed price) and may be
 // swapped when the customer changes; a hand-typed price is never overwritten.
-const emptyLine = () => ({ product_id: '', name: '', quantity: '1', unit_price: '', auto: true });
+const emptyLine = (custom = false) => ({ product_id: custom ? NOT_IN_INVENTORY : '', name: '', quantity: '1', unit_price: '', auto: true });
 const emptyForm = () => ({
   date: format(new Date(), 'yyyy-MM-dd'),
   customer_id: '',
@@ -51,7 +53,12 @@ const lineTotal = (l) => money((parseInt(l.quantity, 10) || 0) * (parseFloat(l.u
 
 export default function SalesPage() {
   const { products, refresh } = useData();
+  const { config } = useAuth();
+  const label = useLabel();
   const { t, tn, locale } = useT();
+  // Services-style portal: the inventory module is off, so every line is a
+  // named item with a price — no product picker.
+  const noInventory = config?.modules?.inventory === false;
 
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [rows, setRows] = useState([]);
@@ -217,8 +224,10 @@ export default function SalesPage() {
     setLine(i, { product_id: value, name: p?.name || '', unit_price: price == null ? '' : Number(price).toFixed(2), auto: true });
   }
 
-  function addLine() { setForm((f) => ({ ...f, lines: [...f.lines, emptyLine()] })); }
-  function removeLine(i) { setForm((f) => ({ ...f, lines: f.lines.length === 1 ? [emptyLine()] : f.lines.filter((_, j) => j !== i) })); }
+  function addLine() { setForm((f) => ({ ...f, lines: [...f.lines, emptyLine(noInventory)] })); }
+  function removeLine(i) { setForm((f) => ({ ...f, lines: f.lines.length === 1 ? [emptyLine(noInventory)] : f.lines.filter((_, j) => j !== i) })); }
+  // First render in a no-inventory portal: the initial line is free text too.
+  useEffect(() => { if (noInventory) setForm((f) => ({ ...f, lines: f.lines.map((l) => (l.product_id ? l : { ...l, product_id: NOT_IN_INVENTORY })) })); }, [noInventory]);
 
   function startEdit(row) {
     setEditing(row);
@@ -353,8 +362,8 @@ export default function SalesPage() {
       {/* ── Header ───────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h1 className="page-title">{t('sales.title')}</h1>
-          <p className="text-surface-500 text-sm mt-1">{t('sales.subtitle')}</p>
+          <h1 className="page-title">{label('sales')}</h1>
+          <p className="text-surface-500 text-sm mt-1">{t(noInventory ? 'sales.subtitleNoInventory' : 'sales.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="inline-flex items-center rounded-lg border border-surface-300 bg-white">
@@ -392,7 +401,7 @@ export default function SalesPage() {
       <section className={cn('card mt-6 p-5 transition-colors', editing && 'border-brand-400 ring-2 ring-brand-500/15')}>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h2 className="section-title">{editing ? t('sales.editTitle', { n: editing.number }) : t('sales.recordTitle')}</h2>
-          {!editing && !products.length && (
+          {!editing && !products.length && !noInventory && (
             <Link to="/inventory" className="text-sm text-brand-700 hover:text-brand-800 font-medium inline-flex items-center gap-1">
               <Package size={14} /> {t('sales.addProductsHint')}
             </Link>
@@ -482,8 +491,8 @@ export default function SalesPage() {
                           {custom ? (
                             <div className="flex gap-2">
                               <input type="text" value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} className="input-field py-2 text-sm"
-                                placeholder={t('sales.itemNamePlaceholder')} autoFocus />
-                              <button type="button" onClick={() => setLine(i, { product_id: '', name: '', unit_price: '' })} className="btn-ghost px-2 shrink-0" aria-label={t('common.cancel')}><X size={15} /></button>
+                                placeholder={t(noInventory ? 'sales.serviceNamePlaceholder' : 'sales.itemNamePlaceholder')} autoFocus={!noInventory} />
+                              {!noInventory && <button type="button" onClick={() => setLine(i, { product_id: '', name: '', unit_price: '' })} className="btn-ghost px-2 shrink-0" aria-label={t('common.cancel')}><X size={15} /></button>}
                             </div>
                           ) : (
                             <select value={l.product_id} onChange={(e) => pickProduct(i, e.target.value)} className="input-field py-2 text-sm" aria-label={t('sales.product')}>
