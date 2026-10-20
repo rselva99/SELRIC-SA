@@ -317,6 +317,19 @@ export default function InventoryPage() {
   const [uploadingImg, setUploadingImg] = useState(false);
   const imageInputRef = useRef(null);
   const [newCategory, setNewCategory]   = useState('');
+  // What this product is made of: [{ component_id, quantity }]. Sale products only.
+  const [recipe, setRecipe] = useState([]);
+
+  // Supplies are what a recipe can draw on — packaging, ingredients.
+  const supplies = useMemo(
+    () => products.filter(isSupply).sort((a, b) => a.name.localeCompare(b.name)),
+    [products]
+  );
+
+  const recipeCost = useMemo(() => recipe.reduce((sum, r) => {
+    const sp = supplies.find((x) => x.id === r.component_id);
+    return sum + (Number(sp?.cost_price) || 0) * (parseInt(r.quantity, 10) || 0);
+  }, 0), [recipe, supplies]);
 
   // The workspace's categories: what its products use (+ the bar starter set
   // for a restaurant / bar), "Other" always last.
@@ -482,6 +495,7 @@ export default function InventoryPage() {
     setEditingProduct(null);
     setProductForm({ name:'', kind:'sale', category: categories[0] || DEFAULT_CATEGORY, unit:'units', cost_price:'', sell_price:'', reorder_level:'5', current_stock:'0', target_stock:'0' });
     setNewCategory('');
+    setRecipe([]);
     setImageFile(null);
     setImagePreview('');
     setShowProductModal(true);
@@ -497,9 +511,31 @@ export default function InventoryPage() {
       target_stock: p.target_stock?.toString() || '0',
     });
     setNewCategory('');
+    setRecipe([]);
+    if (p.kind !== 'supply') {
+      supabase.from('product_components').select('component_id, quantity').eq('product_id', p.id)
+        .then(({ data }) => setRecipe((data || []).map((r) => ({ component_id: r.component_id, quantity: String(r.quantity) }))));
+    }
     setImageFile(null);
     setImagePreview('');
     setShowProductModal(true);
+  }
+
+  // Replace the saved recipe with what is on screen: drop the rows that are gone,
+  // upsert the rest. A supply never has one.
+  async function saveRecipe(productId, rows) {
+    const clean = rows
+      .filter((r) => r.component_id && (parseInt(r.quantity, 10) || 0) > 0)
+      .map((r) => ({ product_id: productId, component_id: r.component_id, quantity: parseInt(r.quantity, 10) }));
+    let del = supabase.from('product_components').delete().eq('product_id', productId);
+    if (clean.length) del = del.not('component_id', 'in', `(${clean.map((r) => r.component_id).join(',')})`);
+    const { error: delErr } = await del;
+    if (delErr) throw delErr;
+    if (clean.length) {
+      const { error } = await supabase.from('product_components')
+        .upsert(clean, { onConflict: 'product_id,component_id' });
+      if (error) throw error;
+    }
   }
 
   async function handleSaveProduct(e) {
@@ -532,8 +568,11 @@ export default function InventoryPage() {
         target_stock: parseInt(productForm.target_stock) || 0,
         image_url: imageUrl,
       };
-      if (editingProduct) { await updateProduct(editingProduct.id, payload); toast.success('Product updated'); }
-      else                { await addProduct(payload); toast.success('Product added'); }
+      let productId = editingProduct?.id;
+      if (editingProduct) { await updateProduct(editingProduct.id, payload); }
+      else                { productId = (await addProduct(payload)).id; }
+      await saveRecipe(productId, productForm.kind === 'supply' ? [] : recipe);
+      toast.success(editingProduct ? 'Product updated' : 'Product added');
       setShowProductModal(false);
       setEditingProduct(null);
     } catch (err) { toast.error(err.message || 'Failed to save'); }
@@ -1014,6 +1053,75 @@ export default function InventoryPage() {
               )}
             </div>
           </Section>
+
+          {/* What it is made of. A sale product draws down its packaging and
+              materials every time a unit is sold. */}
+          {productForm.kind !== 'supply' && (
+            <Section divider>
+              <Field
+                label="What it is made of"
+                hint="Each unit sold takes this much off your supplies, and adds their cost to this product's cost."
+              >
+                {supplies.length === 0 ? (
+                  <p className="text-sm text-surface-500 bg-surface-50 rounded-lg px-3.5 py-2.5 leading-snug">
+                    No supplies yet. Add a product marked <span className="font-medium text-surface-700">Supply</span> — bags,
+                    labels, boxes — and it will be selectable here.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {recipe.map((r, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <select
+                          value={r.component_id}
+                          onChange={(e) => setRecipe(recipe.map((x, j) => (j === i ? { ...x, component_id: e.target.value } : x)))}
+                          className="input-field"
+                        >
+                          <option value="">Choose a supply…</option>
+                          {supplies.map((sp) => (
+                            <option
+                              key={sp.id}
+                              value={sp.id}
+                              disabled={sp.id !== r.component_id && recipe.some((x) => x.component_id === sp.id)}
+                            >
+                              {sp.name}{Number(sp.cost_price) ? ` — ${formatCurrency(sp.cost_price)} / ${sp.unit || 'unit'}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number" min="1" value={r.quantity}
+                          onChange={(e) => setRecipe(recipe.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))}
+                          className="input-field w-20 text-center" aria-label="Quantity per unit sold"
+                        />
+                        <button
+                          type="button" onClick={() => setRecipe(recipe.filter((_, j) => j !== i))}
+                          className="p-2 rounded-lg text-surface-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                          aria-label="Remove material"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button" onClick={() => setRecipe([...recipe, { component_id: '', quantity: '1' }])}
+                      className="btn-secondary text-xs" disabled={recipe.length >= supplies.length}
+                    >
+                      <Plus size={13} /> Add material
+                    </button>
+                  </div>
+                )}
+              </Field>
+
+              {recipeCost > 0 && (
+                <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-brand-50 border border-brand-100 px-3.5 py-2.5">
+                  <span className="text-sm text-brand-900">Cost per unit, materials included</span>
+                  <span className="font-mono text-sm text-brand-900">
+                    {formatCurrency(parseFloat(productForm.cost_price) || 0)} + {formatCurrency(recipeCost)} ={' '}
+                    <span className="font-semibold">{formatCurrency((parseFloat(productForm.cost_price) || 0) + recipeCost)}</span>
+                  </span>
+                </div>
+              )}
+            </Section>
+          )}
 
           {/* Stock levels. Every field carries a hint so the three columns end level. */}
           <Section divider>

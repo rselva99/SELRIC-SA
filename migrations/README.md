@@ -133,5 +133,13 @@ and safe to re-run.
 - `2026-10-19-workspace-config.sql` — `organizations.config` (jsonb, `{}` = not set up): the portal each Simple-mode
   workspace shapes for itself — template, modules on/off, custom names, dashboard sections. Resolved in
   `src/lib/workspaceConfig.js`; admins write it through the existing organization UPDATE policy. Additive, idempotent,
-  tested on the replica. **Not yet applied.**
+  tested on the replica. **Applied 2026-10-19.**
+- `2026-10-20-product-components.sql` — from the Lopez Bakery pilot: `product_components`, what a product is made of.
+  Selling one unit of a parent now draws its packaging and materials off stock (`used` inventory log, tied to the
+  sale) and folds their cost into `sale_items.unit_cost`, so the Simple-mode margin counts the bag the product went
+  out in. `void_sale` returns the materials, reading the logs rather than the recipe so an edited recipe cannot
+  distort a reversal; `update_sale` keeps the component logs on the sale's date. **No COGS transaction is written:**
+  supplies are expensed when bought (receiving stock creates no transaction), so booking cost again at sale time
+  would double-count — the cost reaches the margin, not the P&L. Quantities are whole units, because
+  `products.current_stock` is integer and the UI parseInt()s it. Additive, idempotent. **Not yet applied.**
 
