@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
@@ -39,6 +39,11 @@ import TransactionsPage from './pages/transactions/TransactionsPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import SetupPage from './pages/setup/SetupPage';
 import PinGate from './components/PinGate';
+import { HerdProvider } from './programs/ganaderia/HerdContext';
+import GanaderiaHomePage from './programs/ganaderia/HomePage';
+import AnimalsPage from './programs/ganaderia/AnimalsPage';
+import AnimalPage from './programs/ganaderia/AnimalPage';
+import EventsPage from './programs/ganaderia/EventsPage';
 import './index.css';
 
 // `fullOnly` pages belong to the full accounting package. A workspace in
@@ -46,10 +51,15 @@ import './index.css';
 // is still loading (accountingMode null) nothing is redirected.
 // `module` names a portal module (Settings → Your portal); a Simple-mode
 // workspace that turned it off is sent to the dashboard.
-function ProtectedRoute({ children, adminOnly = false, fullOnly = false, module = null }) {
-  const { user, loading, isAdmin, accountingMode, config } = useAuth();
+// `program` is the SelRic program the page belongs to ('business' by default,
+// 'ganaderia' for the pages under /ganaderia, null for pages every program
+// shares such as Team and Settings). A workspace on another program is sent
+// to its own home.
+function ProtectedRoute({ children, adminOnly = false, fullOnly = false, module = null, program = 'business' }) {
+  const { user, loading, isAdmin, accountingMode, config, primaryProgram } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (program && primaryProgram && primaryProgram !== program) return <Navigate to={getProgram(primaryProgram)?.home || '/'} replace />;
   if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
   if (fullOnly && accountingMode === 'simple') return <Navigate to="/transactions" replace />;
   if (module && accountingMode === 'simple' && config?.modules?.[module] === false) return <Navigate to="/" replace />;
@@ -65,14 +75,29 @@ function RootGate() {
   if (!user) {
     return location.pathname === '/' ? <LandingPage /> : <Navigate to="/login" replace />;
   }
-  // A workspace whose program is not built yet (a Ganadería pilot invite used
-  // before phase 2 ships) gets a holding page instead of the Business app.
+  // A workspace whose program is not built yet gets a holding page instead
+  // of the app. Programs that are live render inside the shared shell; each
+  // one's pages live under its own prefix (Business keeps the root).
   const program = primaryProgram ? getProgram(primaryProgram) : null;
-  if (program && program.status !== 'live') return <ProgramPendingPage program={program} />;
+  if (program && !program.built) return <ProgramPendingPage program={program} />;
+  if (program && program.key !== 'business') {
+    if (location.pathname === '/') return <Navigate to={program.home} replace />;
+    return <AppLayout />;
+  }
   // A Simple-mode admin who has not shaped the portal yet does that first
   // (one screen; everything is editable later in Settings → Your portal).
   if (accountingMode === 'simple' && isAdmin && config && !config.configured) return <Navigate to="/setup" replace />;
   return <AppLayout />;
+}
+
+// /ganaderia/* — the Batavia Ganadería program. One herd context for all its
+// pages; a Business workspace that lands here is sent back to its dashboard.
+function GanaderiaRoot() {
+  return (
+    <ProtectedRoute program="ganaderia">
+      <HerdProvider><Outlet /></HerdProvider>
+    </ProtectedRoute>
+  );
 }
 
 // /setup is only for an admin whose Simple-mode workspace is not configured.
@@ -122,7 +147,14 @@ function App() {
             <Route path="/setup" element={<SetupGate />} />
 
             <Route path="/" element={<RootGate />}>
-              <Route index element={<DashboardPage />} />
+              <Route index element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+              {/* Batavia Ganadería */}
+              <Route path="ganaderia" element={<GanaderiaRoot />}>
+                <Route index element={<GanaderiaHomePage />} />
+                <Route path="animales" element={<AnimalsPage />} />
+                <Route path="animales/:slug" element={<AnimalPage />} />
+                <Route path="eventos" element={<EventsPage />} />
+              </Route>
               {/* Full accounting package — hidden (and redirected) in simple mode */}
               <Route path="accountant" element={<ProtectedRoute adminOnly fullOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />
               <Route path="accountant/review-match/:id" element={<ProtectedRoute adminOnly fullOnly><PinGate><StatementReviewMatch /></PinGate></ProtectedRoute>} />
@@ -144,8 +176,9 @@ function App() {
               <Route path="reports" element={<ProtectedRoute adminOnly module="reports"><ReportsRoute /></ProtectedRoute>} />
               <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />
               <Route path="inventory" element={<ProtectedRoute module="inventory"><InventoryPage /></ProtectedRoute>} />
-              <Route path="users" element={<ProtectedRoute adminOnly><ManageUsersPage /></ProtectedRoute>} />
-              <Route path="settings" element={<ProtectedRoute adminOnly><SettingsPage /></ProtectedRoute>} />
+              {/* Shared by every program */}
+              <Route path="users" element={<ProtectedRoute adminOnly program={null}><ManageUsersPage /></ProtectedRoute>} />
+              <Route path="settings" element={<ProtectedRoute adminOnly program={null}><SettingsPage /></ProtectedRoute>} />
               {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the dashboard. */}
             </Route>
 

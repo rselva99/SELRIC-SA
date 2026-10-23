@@ -10,17 +10,18 @@ import { Briefcase, Tractor } from 'lucide-react';
 // for each workspace that turns it on.
 //
 //   key     — stable id; also the `program` value in org_programs / waitlist
-//   status  — 'live'  : built, can be turned on in Settings → Programs
-//             'pilot' : exists as a prototype, in pilot at one site, not yet in the app
-//             'soon'  : announced only
-//   home    — where the sidebar's program switcher sends you
+//   status  — what the public site says: 'live', 'pilot' (running at one
+//             site, by invitation) or 'soon' (announced only)
+//   built   — the program's pages exist in this app; a workspace on a program
+//             that is not built yet gets the holding page after sign-in
+//   home    — where the program's pages start
 //   accent  — a key of ACCENTS (Tailwind classes must be literal strings)
 //
 // Business keeps its historical routes at the root so nothing bookmarked by
 // Humphrey's changes; later programs mount under their own prefix.
 export const PROGRAMS = [
-  { key: 'business',  icon: Briefcase, status: 'live',  home: '/',          accent: 'brand', default: true },
-  { key: 'ganaderia', icon: Tractor,   status: 'pilot', home: '/ganaderia', accent: 'ranch' },
+  { key: 'business',  icon: Briefcase, status: 'live',  built: true, home: '/',          accent: 'brand', default: true },
+  { key: 'ganaderia', icon: Tractor,   status: 'pilot', built: true, home: '/ganaderia', accent: 'ranch' },
 ];
 
 export const DEFAULT_PROGRAM = 'business';

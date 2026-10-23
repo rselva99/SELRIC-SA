@@ -156,4 +156,13 @@ and safe to re-run.
   definitions live in `organizations.config.fields` (no schema change); `cleanExtra` in the front keeps the values
   typed. A guard refuses to run before decimal-quantities, so that numeric `record_sale` body is never undone.
   Additive, idempotent, tested on the replica (CHECK rejects arrays/scalars; another workspace cannot read or change
-  `extra`; period lock still applies). **Not yet applied.**
+  `extra`; period lock still applies). **Applied 2026-10-20.**
+- `2026-10-23-ganaderia-core.sql` — Batavia Ganadería, first cut: `lv_animals` (the card: name, chapa, fierro, species,
+  category, sex, lot, dam/sire, calvings, last pregnancy check, last weight, status, flags, notes; `slug` unique per
+  workspace) and `lv_events` (the timeline: type, date, typed `data` jsonb, note, source text, `import_key` for re-runnable
+  seeds), both with the standard org_id trigger + RLS. `lv_record_event(jsonb)` writes an event and what it means to the
+  card (a calving adds a calving and can create the calf's card; a check sets pregnant/months; a weight, a move, a sale,
+  a death); `lv_delete_event(uuid)` undoes it from the events left. `check_invite` now also returns the invite's
+  `program`, so the sign-up form asks for the finca's name. Additive, idempotent, tested on the replica (RLS: another
+  workspace sees nothing and cannot write; the RPCs refuse an animal it cannot see). The pilot herd itself (Finca
+  Batavia, inventory 0426) is loaded by a seed kept outside this repository. **Applied 2026-10-23.**

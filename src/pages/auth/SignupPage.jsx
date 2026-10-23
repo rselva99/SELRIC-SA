@@ -26,6 +26,10 @@ export default function SignupPage() {
   const [gate, setGate] = useState('checking');
   const [inviteLabel, setInviteLabel] = useState('');
   const [invitePlan, setInvitePlan] = useState('');
+  // The program the invite is for: a Ganadería invite asks for the finca's
+  // name and skips the business type (check_invite returns it; older
+  // deployments return nothing and the form stays the Business one).
+  const [inviteProgram, setInviteProgram] = useState('business');
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +43,7 @@ export default function SignupPage() {
       if (res?.valid) {
         setInviteLabel(res.label || '');
         setInvitePlan(res.plan || '');
+        setInviteProgram(res.program || 'business');
         setGate('invited');
       } else {
         setGate('invalid');
@@ -161,18 +166,20 @@ export default function SignupPage() {
                     className="input-field" placeholder="Maria Lopez" autoComplete="name" required />
                 </div>
                 <div>
-                  <label htmlFor="su-org" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessName')}</label>
+                  <label htmlFor="su-org" className="block text-xs font-semibold text-surface-600 mb-1.5">{t(inviteProgram === 'ganaderia' ? 'common.farmName' : 'common.businessName')}</label>
                   <input id="su-org" type="text" value={form.org_name} onChange={set('org_name')}
-                    className="input-field" placeholder="Lopez Bakery LLC" autoComplete="organization" required />
+                    className="input-field" placeholder={inviteProgram === 'ganaderia' ? 'Finca Batavia' : 'Lopez Bakery LLC'} autoComplete="organization" required />
                 </div>
-                <div>
-                  <label htmlFor="su-type" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessType')}</label>
-                  <select id="su-type" value={form.business_type} onChange={set('business_type')} className="input-field">
-                    {BUSINESS_TYPES.map((value) => (
-                      <option key={value} value={value}>{t(`auth.businessTypes.${value}`)}</option>
-                    ))}
-                  </select>
-                </div>
+                {inviteProgram !== 'ganaderia' && (
+                  <div>
+                    <label htmlFor="su-type" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessType')}</label>
+                    <select id="su-type" value={form.business_type} onChange={set('business_type')} className="input-field">
+                      {BUSINESS_TYPES.map((value) => (
+                        <option key={value} value={value}>{t(`auth.businessTypes.${value}`)}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label htmlFor="su-email" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.email')}</label>
                   <input id="su-email" type="email" value={form.email} onChange={set('email')}

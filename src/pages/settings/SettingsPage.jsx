@@ -30,6 +30,9 @@ export default function SettingsPage() {
   }
   const { t } = useT();
   const program = getProgram(primaryProgram) || PROGRAMS[0];
+  // Accounting mode and the portal shape belong to the Business program; a
+  // Ganadería workspace keeps the finca's name, program, language and plan.
+  const isBusiness = program.key === 'business';
 
   // ── Business ─────────────────────────────────────────────────────────────
   const [biz, setBiz] = useState({ name: '', business_type: 'other' });
@@ -83,29 +86,31 @@ export default function SettingsPage() {
   return (
     <div className="animate-fade-in max-w-3xl">
       <h1 className="page-title">{t('settings.title')}</h1>
-      <p className="text-surface-500 text-sm mt-1">{t('settings.subtitle')}</p>
+      <p className="text-surface-500 text-sm mt-1">{t(isBusiness ? 'settings.subtitle' : 'settings.subtitleFarm')}</p>
 
       {/* ── Business ─────────────────────────────────────────────────── */}
       <section className="card mt-6">
         <header className="flex items-center gap-3 px-5 py-4 border-b border-surface-200">
           <span className="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center"><Building2 size={18} /></span>
           <div>
-            <h2 className="section-title">{t('settings.businessTitle')}</h2>
+            <h2 className="section-title">{t(isBusiness ? 'settings.businessTitle' : 'settings.farmTitle')}</h2>
             <p className="text-xs text-surface-500">{t('settings.businessBody')}</p>
           </div>
         </header>
         <form onSubmit={saveBusiness} className="px-5 py-5 grid sm:grid-cols-2 gap-4">
           <div>
-            <label htmlFor="st-name" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessName')}</label>
+            <label htmlFor="st-name" className="block text-xs font-semibold text-surface-600 mb-1.5">{t(isBusiness ? 'common.businessName' : 'common.farmName')}</label>
             <input id="st-name" type="text" value={biz.name} onChange={(e) => setBiz((b) => ({ ...b, name: e.target.value }))}
               className="input-field" autoComplete="organization" required />
           </div>
-          <div>
-            <label htmlFor="st-type" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessType')}</label>
-            <select id="st-type" value={biz.business_type} onChange={(e) => setBiz((b) => ({ ...b, business_type: e.target.value }))} className="input-field">
-              {BUSINESS_TYPES.map((v) => <option key={v} value={v}>{t(`auth.businessTypes.${v}`)}</option>)}
-            </select>
-          </div>
+          {isBusiness && (
+            <div>
+              <label htmlFor="st-type" className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.businessType')}</label>
+              <select id="st-type" value={biz.business_type} onChange={(e) => setBiz((b) => ({ ...b, business_type: e.target.value }))} className="input-field">
+                {BUSINESS_TYPES.map((v) => <option key={v} value={v}>{t(`auth.businessTypes.${v}`)}</option>)}
+              </select>
+            </div>
+          )}
           <div className="sm:col-span-2 flex justify-end">
             <button type="submit" disabled={!bizDirty || savingBiz} className="btn-primary">
               {savingBiz ? <Spinner size="sm" className="text-white" /> : t('common.save')}
@@ -133,7 +138,8 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ── Accounting mode ──────────────────────────────────────────── */}
+      {/* ── Accounting mode (Business) ───────────────────────────────── */}
+      {isBusiness && (
       <section className="card mt-6">
         <header className="flex items-center gap-3 px-5 py-4 border-b border-surface-200">
           <span className="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center"><BookOpen size={18} /></span>
@@ -192,9 +198,10 @@ export default function SettingsPage() {
           )}
         </div>
       </section>
+      )}
 
-      {/* ── Your portal (Simple mode) ────────────────────────────────── */}
-      {accountingMode === 'simple' && (
+      {/* ── Your portal (Business, Simple mode) ──────────────────────── */}
+      {isBusiness && accountingMode === 'simple' && (
         <section className="card mt-6">
           <header className="flex items-center gap-3 px-5 py-4 border-b border-surface-200">
             <span className="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center"><LayoutTemplate size={18} /></span>

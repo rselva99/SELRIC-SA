@@ -24,9 +24,12 @@ import {
   Settings,
   ShoppingBag,
   Contact,
+  Home,
+  Beef,
+  ClipboardList,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { PROGRAMS, DEFAULT_PROGRAM } from '../../programs';
+import { PROGRAMS, DEFAULT_PROGRAM, accentOf } from '../../programs';
 import { MODULES } from '../../lib/workspaceConfig';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
@@ -96,6 +99,21 @@ const LIMITED_GROUPS = [
   ]},
 ];
 
+// Batavia Ganadería: the finca's pages, then the shared Team and Settings.
+// `exact` keeps Inicio from lighting up on every /ganaderia/* page.
+const GANADERIA_GROUPS = [
+  { key: 'finca', items: [
+    { key: 'lvHome',    icon: Home,          path: '/ganaderia', exact: true },
+    { key: 'lvAnimals', icon: Beef,          path: '/ganaderia/animales' },
+    { key: 'lvEvents',  icon: ClipboardList, path: '/ganaderia/eventos' },
+  ]},
+  { key: 'settings', items: [
+    { key: 'users',    icon: Users,    path: '/users' },
+    { key: 'settings', icon: Settings, path: '/settings' },
+  ]},
+];
+const GANADERIA_LIMITED_GROUPS = [GANADERIA_GROUPS[0]];
+
 // Two-letter monogram for the business tile: "Lopez Bakery" → "LB".
 function monogram(name) {
   const words = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -111,20 +129,25 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const groups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? simpleGroups(config) : FULL_GROUPS;
+  // The program this workspace runs (each SelRic program is its own workspace).
+  const program = PROGRAMS.find((p) => p.key === primaryProgram) || PROGRAMS.find((p) => p.key === DEFAULT_PROGRAM);
+  const currentProgram = program.key;
+  const groups = currentProgram === 'ganaderia'
+    ? (isAdmin ? GANADERIA_GROUPS : GANADERIA_LIMITED_GROUPS)
+    : !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? simpleGroups(config) : FULL_GROUPS;
   // A module's custom name (Settings → Your portal) wins over the translation.
   const labelOf = (item) => (item.module && config?.labels?.[item.module]) || t(`nav.${item.key}`);
   const businessName = organization?.name || 'SelRic';
-  // The program this workspace runs (each SelRic program is its own workspace).
-  const currentProgram = PROGRAMS.find((p) => p.key === primaryProgram)?.key || DEFAULT_PROGRAM;
+  const tile = currentProgram === 'business' ? 'bg-brand-500' : accentOf(program).tile;
 
   async function handleSignOut() {
     await signOut();
     navigate('/login');
   }
 
-  function isActive(path) {
-    return path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
+  function isActive(item) {
+    const { path, exact } = typeof item === 'string' ? { path: item } : item;
+    return path === '/' || exact ? location.pathname === path : location.pathname.startsWith(path);
   }
 
   return (
@@ -146,11 +169,11 @@ export default function AppLayout() {
         <div className="px-4 pt-5 pb-4 border-b border-white/10">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <Link to="/" className="w-11 h-11 shrink-0 rounded-xl bg-brand-500 flex items-center justify-center font-display text-base tracking-wide">
+              <Link to={program.home} className={cn('w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-display text-base tracking-wide', tile)}>
                 {monogram(businessName)}
               </Link>
               <div className="min-w-0">
-                <Link to="/" className="block font-display text-[17px] leading-tight truncate" title={businessName}>
+                <Link to={program.home} className="block font-display text-[17px] leading-tight truncate" title={businessName}>
                   {businessName}
                 </Link>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-brand-300">
@@ -176,7 +199,7 @@ export default function AppLayout() {
               </div>
               <div className="space-y-0.5">
                 {g.items.map((item) => {
-                  const active = isActive(item.path);
+                  const active = isActive(item);
                   return (
                     <Link
                       key={item.path}
