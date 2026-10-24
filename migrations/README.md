@@ -195,4 +195,4 @@ and safe to re-run.
   the dashboard's Research tab reads one jsonb row from `platform_research` (SELECT only when `is_platform_admin()`;
   no other grant) and three files from the private bucket `platform-docs` (same policy) via signed URLs. No
   INSERT/UPDATE/DELETE policy on either: writes happen only through `~/selric-business/publish.mjs` with the
-  service role, from outside the repo. Idempotent. **Not yet applied.**
+  service role, from outside the repo. Idempotent. **Applied 2026-10-24; research published the same day.**
