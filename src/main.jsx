@@ -37,6 +37,7 @@ import CashManagementPage from './pages/cash-management/CashManagementPage';
 import PayrollPage from './pages/payroll/PayrollPage';
 import TransactionsPage from './pages/transactions/TransactionsPage';
 import SettingsPage from './pages/settings/SettingsPage';
+import CeoPage from './pages/ceo/CeoPage';
 import SetupPage from './pages/setup/SetupPage';
 import PinGate from './components/PinGate';
 import { HerdProvider } from './programs/ganaderia/HerdContext';
@@ -192,6 +193,9 @@ function App() {
               {/* Shared by every program */}
               <Route path="users" element={<ProtectedRoute adminOnly program={null}><ManageUsersPage /></ProtectedRoute>} />
               <Route path="settings" element={<ProtectedRoute adminOnly program={null}><SettingsPage /></ProtectedRoute>} />
+              {/* Cross-workspace oversight for whoever runs SelRic. Belongs to no
+                  program; the real gate is in the database, not in this route. */}
+              <Route path="ceo" element={<ProtectedRoute program={null}><CeoPage /></ProtectedRoute>} />
               {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the public site. */}
             </Route>
 

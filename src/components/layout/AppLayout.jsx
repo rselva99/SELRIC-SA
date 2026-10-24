@@ -27,6 +27,7 @@ import {
   Home,
   Beef,
   ClipboardList,
+  Gauge,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM, accentOf } from '../../programs';
@@ -123,7 +124,7 @@ function monogram(name) {
 }
 
 export default function AppLayout() {
-  const { profile, organization, accountingMode, primaryProgram, isAdmin, signOut, config } = useAuth();
+  const { profile, organization, accountingMode, primaryProgram, isAdmin, isPlatformAdmin, signOut, config } = useAuth();
   const { t } = useT();
   const location = useLocation();
   const navigate = useNavigate();
@@ -132,9 +133,14 @@ export default function AppLayout() {
   // The program this workspace runs (each SelRic program is its own workspace).
   const program = PROGRAMS.find((p) => p.key === primaryProgram) || PROGRAMS.find((p) => p.key === DEFAULT_PROGRAM);
   const currentProgram = program.key;
-  const groups = currentProgram === 'ganaderia'
+  const baseGroups = currentProgram === 'ganaderia'
     ? (isAdmin ? GANADERIA_GROUPS : GANADERIA_LIMITED_GROUPS)
     : !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? simpleGroups(config) : FULL_GROUPS;
+  // Oversight is for whoever runs SelRic, not whoever runs this workspace, so it
+  // is appended for platform admins regardless of program or accounting mode.
+  const groups = isPlatformAdmin
+    ? [...baseGroups, { key: 'platform', items: [{ key: 'oversight', icon: Gauge, path: '/ceo' }] }]
+    : baseGroups;
   // A module's custom name (Settings → Your portal) wins over the translation.
   const labelOf = (item) => (item.module && config?.labels?.[item.module]) || t(`nav.${item.key}`);
   const businessName = organization?.name || 'SelRic';

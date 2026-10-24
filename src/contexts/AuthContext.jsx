@@ -9,6 +9,9 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [organization, setOrganization] = useState(null);
+  // Whoever runs SelRic, as opposed to whoever runs a workspace. Drives the
+  // Oversight link; the real gate is ceo_overview(), which raises in the database.
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   // The program this workspace runs: [{ program, plan, enabled_at }] from
   // org_programs. Falls back to Business when the table is not there yet.
   const [programs, setPrograms] = useState([]);
@@ -29,6 +32,7 @@ export function AuthProvider({ children }) {
       else {
         setProfile(null);
         setOrganization(null);
+        setIsPlatformAdmin(false);
         setPrograms([]);
         setLoading(false);
       }
@@ -48,10 +52,17 @@ export function AuthProvider({ children }) {
       if (error) throw error;
       setProfile(data);
       await fetchOrganization(data?.org_id);
+      // Best-effort: on a database without the ceo-overview migration this
+      // returns an error, and staying false is the correct outcome.
+      try {
+        const { data: pa } = await supabase.rpc('is_platform_admin');
+        setIsPlatformAdmin(pa === true);
+      } catch { setIsPlatformAdmin(false); }
     } catch (err) {
       console.error('Error fetching profile:', err);
       setProfile(null);
       setOrganization(null);
+      setIsPlatformAdmin(false);
       setReportBusinessName(null);
     } finally {
       setLoading(false);
@@ -190,6 +201,7 @@ export function AuthProvider({ children }) {
     user,
     profile,
     organization,
+    isPlatformAdmin,
     accountingMode,
     programs,
     programKeys,
