@@ -3,11 +3,11 @@
 --
 -- Every other read in this database is deliberately trapped inside one
 -- workspace by the org_isolation policies. That is correct for customers and
--- useless for the founder, who needs to see all of them at once and cannot,
--- today, tell that a pilot has gone quiet.
+-- useless for the founder, who cannot otherwise tell that a pilot has gone
+-- quiet.
 --
 -- Rather than weaken any policy, this adds a narrow, explicit exception:
---   • platform_admins — a short list of user ids, readable only by the people on it
+--   • platform_admins — a short list of EMAILS, readable only by the person it names
 --   • ceo_overview()  — SECURITY DEFINER, returns aggregates ONLY, and raises
 --                       if the caller is not on that list
 --
@@ -15,24 +15,36 @@
 -- a transaction, an animal or a person's name from another workspace. If a
 -- future version needs to, it should be a different function with its own
 -- justification, not an extension of this one.
+--
+-- WHY EMAIL AND NOT user_id. The first draft keyed on auth.users(id), which
+-- silently does nothing when the account does not exist yet — and the intended
+-- CEO account, novoaricardo7@gmail.com, did not. Keying on email means the
+-- person becomes a platform admin the moment they sign up, in either order,
+-- with no second step to forget. For a list of one or two people that is the
+-- right trade; it would not be for a large one.
 -- ════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
 
 -- ─── 1. Who is allowed to see across workspaces ─────────────────────────────
-CREATE TABLE IF NOT EXISTS public.platform_admins (
-  user_id    uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+-- An earlier draft of this table was keyed on user_id. Drop it if it is there;
+-- nothing has ever been written to it.
+DROP TABLE IF EXISTS public.platform_admins;
+
+CREATE TABLE public.platform_admins (
+  email      text PRIMARY KEY,
   note       text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.platform_admins ENABLE ROW LEVEL SECURITY;
 
--- Only a platform admin can see the list, and nobody can edit it from the app.
--- Adding someone is a deliberate SQL statement, which is the point.
+-- You may see your own row and nobody else's. There is no INSERT, UPDATE or
+-- DELETE grant at all: adding a platform admin is a deliberate SQL statement
+-- run by a human, which is the point of the table.
 DROP POLICY IF EXISTS "platform_admins self read" ON public.platform_admins;
 CREATE POLICY "platform_admins self read" ON public.platform_admins
   FOR SELECT TO authenticated
-  USING (user_id = auth.uid());
+  USING (lower(email) = lower((SELECT u.email FROM auth.users u WHERE u.id = auth.uid())));
 GRANT SELECT ON public.platform_admins TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.is_platform_admin()
@@ -42,7 +54,12 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT EXISTS (SELECT 1 FROM public.platform_admins WHERE user_id = auth.uid());
+  SELECT EXISTS (
+    SELECT 1
+      FROM public.platform_admins pa
+      JOIN auth.users u ON u.id = auth.uid()
+     WHERE lower(pa.email) = lower(u.email)
+  );
 $$;
 GRANT EXECUTE ON FUNCTION public.is_platform_admin() TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.is_platform_admin() FROM anon;
@@ -88,9 +105,9 @@ BEGIN
         'animals',        (SELECT count(*) FROM public.lv_animals a        WHERE a.org_id = o.id),
         'herd_events',    (SELECT count(*) FROM public.lv_events e         WHERE e.org_id = o.id)
       ),
-      -- "Alive" means someone put something in recently. Rows that the founder
-      -- back-filled himself are still activity, so this is a ceiling on health,
-      -- never a floor: a quiet workspace here is definitely quiet.
+      -- "Alive" means someone put something in recently. Rows the founder
+      -- back-filled himself still count, so this is a ceiling on health, never
+      -- a floor: a workspace that looks quiet here is definitely quiet.
       'last_activity', GREATEST(
         COALESCE((SELECT max(s.created_at)::date FROM public.sales s          WHERE s.org_id = o.id), '1900-01-01'),
         COALESCE((SELECT max(p.updated_at)::date FROM public.products p       WHERE p.org_id = o.id), '1900-01-01'),
@@ -135,22 +152,34 @@ $$;
 GRANT EXECUTE ON FUNCTION public.ceo_overview() TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.ceo_overview() FROM anon;
 
--- ─── 3. Seed the founder ────────────────────────────────────────────────────
--- Ricardo's account on Humphrey's. Idempotent; does nothing if the user is absent.
-INSERT INTO public.platform_admins (user_id, note)
-SELECT id, 'Founder'
-  FROM auth.users
- WHERE lower(email) = 'ricardo.humphreys@outlook.com'
-ON CONFLICT (user_id) DO NOTHING;
+-- ─── 3. The platform admins ─────────────────────────────────────────────────
+-- Email keyed, so this works whether or not the account exists yet. The CEO
+-- account is novoaricardo7@gmail.com; the outlook address is the founder's
+-- login on the Humphrey's workspace and is listed so he does not lock himself
+-- out of oversight while the new account is being set up. Delete that second
+-- row once the CEO account is in use.
+INSERT INTO public.platform_admins (email, note) VALUES
+  ('novoaricardo7@gmail.com',       'CEO'),
+  ('ricardo.humphreys@outlook.com', 'Founder — existing login, remove once the CEO account is in use')
+ON CONFLICT (email) DO NOTHING;
+
+-- To add someone later:
+--   INSERT INTO public.platform_admins (email, note) VALUES ('<email>', '<who>');
+-- To remove:
+--   DELETE FROM public.platform_admins WHERE email = '<email>';
 
 -- ─── 4. Sanity ──────────────────────────────────────────────────────────────
 DO $$
-DECLARE n integer;
+DECLARE n integer; m integer;
 BEGIN
   SELECT count(*) INTO n FROM public.platform_admins;
-  RAISE NOTICE 'ceo-overview: OK — % platform admin(s)', n;
-  IF n = 0 THEN
-    RAISE WARNING 'ceo-overview: nobody is a platform admin yet. Add one with: INSERT INTO public.platform_admins (user_id, note) SELECT id, ''Founder'' FROM auth.users WHERE lower(email) = ''<your email>'';';
+  IF n = 0 THEN RAISE EXCEPTION 'ceo-overview: no platform admins were seeded'; END IF;
+  SELECT count(*) INTO m
+    FROM public.platform_admins pa
+    JOIN auth.users u ON lower(u.email) = lower(pa.email);
+  RAISE NOTICE 'ceo-overview: OK — % admin email(s) listed, % of them with an account that exists today', n, m;
+  IF m = 0 THEN
+    RAISE WARNING 'ceo-overview: none of the listed emails has an account yet. Oversight unlocks when one signs in.';
   END IF;
 END $$;
 

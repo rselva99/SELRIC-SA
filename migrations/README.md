@@ -176,7 +176,10 @@ and safe to re-run.
 - `2026-10-24-ceo-overview.sql` — cross-workspace oversight for whoever runs SelRic. Every other read is trapped
   inside one workspace by `org_isolation`, which is right for customers and useless for the founder, who could not
   otherwise tell that a pilot had gone quiet. Adds `platform_admins` (a short list of user ids, readable only by the
-  people on it), `is_platform_admin()` and `ceo_overview()` — both SECURITY DEFINER, with `ceo_overview()` raising
+  person it names), `is_platform_admin()` and `ceo_overview()` — both SECURITY DEFINER, with `ceo_overview()` raising
   `NOT_PLATFORM_ADMIN` for anyone else. The function returns **aggregates only**: counts, dates and invite codes,
-  never another workspace's rows. Seeds the founder by email. The app degrades to no link and an explanatory page if
-  this is not applied. Additive, idempotent. **Not yet applied.**
+  never another workspace's rows. **Keyed on email, not user_id**, because the intended CEO account
+  (`novoaricardo7@gmail.com`) did not exist yet and a user_id seed would have silently done nothing — email means the
+  person becomes an admin whenever they sign up, in either order. No INSERT/UPDATE/DELETE grant: adding an admin is a
+  deliberate SQL statement. The app degrades to no link and an explanatory page if this is not applied. Additive,
+  idempotent. **Not yet applied.**
