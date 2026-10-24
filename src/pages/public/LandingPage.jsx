@@ -134,14 +134,40 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Who we are ──────────────────────────────────────────────────── */}
-      <section id="who-we-are" className="scroll-mt-20">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24 grid lg:grid-cols-[0.8fr_1.2fr] gap-10 lg:gap-16">
-          <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('site.whoTitle')}</h2>
-          <div className="border-l-2 border-brand-500 pl-6 sm:pl-8 max-w-[62ch] text-lg leading-relaxed text-surface-800 space-y-5">
-            <p>{t('site.who1')}</p>
-            <p className="text-surface-600 text-base">{t('site.who2')}</p>
+      {/* ── Who we are ──────────────────────────────────────────────────────
+          The two origin stories are the strongest thing on this page and they
+          used to be buried mid-paragraph. Each one gets its own card, tinted
+          with its program's accent, so you can see at a glance that each
+          program came out of a real business rather than a product meeting. */}
+      <section id="who-we-are" className="scroll-mt-20 bg-surface-50 border-y border-surface-200">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-20 lg:py-24">
+          <div className="grid lg:grid-cols-[0.8fr_1.2fr] gap-8 lg:gap-16 items-start">
+            <h2 className="font-display text-3xl sm:text-4xl text-brand-950 leading-tight">{t('site.whoTitle')}</h2>
+            <p className="max-w-[58ch] text-lg sm:text-xl leading-relaxed text-surface-800">{t('site.whoLede')}</p>
           </div>
+
+          <div className="mt-12 grid md:grid-cols-2 gap-5 lg:gap-6">
+            {t('site.whoOrigins').map(([label, place, before], i) => {
+              const p = PROGRAMS[i] || PROGRAMS[0];
+              const a = accentOf(p);
+              return (
+                <article key={label} className="rounded-2xl bg-white border border-surface-200 p-6 sm:p-7">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-10 h-10 rounded-xl flex items-center justify-center ${a.tile}`}><p.icon size={19} /></span>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-surface-500">{label}</div>
+                      <div className="font-display text-lg text-brand-950 leading-tight truncate">{place}</div>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-[15px] leading-relaxed text-surface-700">{before}</p>
+                </article>
+              );
+            })}
+          </div>
+
+          <p className="mt-10 border-l-2 border-brand-500 pl-5 sm:pl-6 max-w-[60ch] text-[15px] leading-relaxed text-surface-600">
+            {t('site.whoSig')}
+          </p>
         </div>
       </section>
 

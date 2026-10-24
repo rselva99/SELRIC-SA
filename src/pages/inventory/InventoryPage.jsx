@@ -4,6 +4,7 @@ import {
   Cell, PieChart, Pie, Legend, ResponsiveContainer,
 } from 'recharts';
 import { supabase } from '../../lib/supabase';
+import { uploadProductImage, signedProductImage, prepareImage, imageErrorKey } from '../../lib/productImages';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n/I18nContext';
@@ -77,7 +78,9 @@ function Section({ divider, children }) {
 }
 // ── Thumbnail — lazy: only requests signed URL when the element scrolls into view ──
 function ProductThumbnail({ imageUrl, size = 'sm' }) {
+  const { t } = useT();
   const [src, setSrc]       = useState('');
+  const [failed, setFailed] = useState(false);
   const [visible, setVisible] = useState(false);
   const ref = useRef(null);
 
@@ -94,14 +97,25 @@ function ProductThumbnail({ imageUrl, size = 'sm' }) {
 
   useEffect(() => {
     if (!visible || !imageUrl) return;
-    supabase.storage.from('product-images').createSignedUrl(imageUrl, 3600)
-      .then(({ data }) => { if (data) setSrc(data.signedUrl); });
+    let alive = true;
+    signedProductImage(imageUrl).then(({ url, error }) => {
+      if (!alive) return;
+      if (url) setSrc(url); else setFailed(!!error);
+    });
+    return () => { alive = false; };
   }, [visible, imageUrl]);
 
   const dim = size === 'sm' ? 'w-10 h-10' : 'w-full h-40';
+  // A product that HAS a photo we cannot read is not the same as one with no
+  // photo: the first is a problem worth seeing, the second is normal.
+  const tone = failed ? 'bg-amber-50 text-amber-500' : 'bg-surface-100 text-surface-300';
   return src
-    ? <img ref={ref} src={src} alt="" className={`${dim} rounded-lg object-cover border border-surface-200 shrink-0`} />
-    : <div ref={ref} className={`${dim} rounded-lg bg-surface-100 flex items-center justify-center shrink-0`}><Package size={size==='sm'?16:36} className="text-surface-300" /></div>;
+    ? <img ref={ref} src={src} alt="" onError={() => { setSrc(''); setFailed(true); }}
+        className={`${dim} rounded-lg object-cover border border-surface-200 shrink-0`} />
+    : <div ref={ref} title={failed ? t('inv.imgErr.load') : undefined}
+        className={`${dim} rounded-lg flex items-center justify-center shrink-0 ${tone}`}>
+        {failed ? <AlertTriangle size={size === 'sm' ? 15 : 32} /> : <Package size={size === 'sm' ? 16 : 36} className="text-surface-300" />}
+      </div>;
 }
 
 // ── Expandable product row — fetches its own logs from DB on open ────────
@@ -428,8 +442,10 @@ export default function InventoryPage() {
   // When editing a product, load existing image preview
   useEffect(() => {
     if (editingProduct?.image_url) {
-      supabase.storage.from('product-images').createSignedUrl(editingProduct.image_url, 3600)
-        .then(({ data }) => { if (data) setImagePreview(data.signedUrl); });
+      signedProductImage(editingProduct.image_url).then(({ url, error }) => {
+        if (url) setImagePreview(url);
+        else if (error) toast.error(t('inv.imgErr.load'));
+      });
     }
   }, [editingProduct]);
 
@@ -503,13 +519,23 @@ export default function InventoryPage() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  function handleImageSelect(e) {
+  async function handleImageSelect(e) {
     const file = e.target.files[0];
+    e.target.value = '';          // same file twice in a row must re-trigger
     if (!file) return;
-    setImageFile(file);
-    const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target.result);
-    reader.readAsDataURL(file);
+    try {
+      // Shrink here, not at save time: the owner sees the real preview and the
+      // upload is already small by the time they press Save.
+      const { blob, name } = await prepareImage(file);
+      setImageFile(new File([blob], name, { type: blob.type || 'image/jpeg' }));
+      const reader = new FileReader();
+      reader.onload = (ev) => setImagePreview(ev.target.result);
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      setImageFile(null);
+      setImagePreview('');
+      toast.error(t(imageErrorKey(err)));
+    }
   }
 
   function openAddProduct() {
@@ -573,11 +599,15 @@ export default function InventoryPage() {
       let imageUrl = editingProduct?.image_url || '';
       if (imageFile) {
         setUploadingImg(true);
-        const path = `${Date.now()}_${imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        const { data: upData, error: upErr } = await supabase.storage.from('product-images').upload(path, imageFile);
+        try {
+          imageUrl = await uploadProductImage(imageFile, organization?.id);
+        } catch (err) {
+          setUploadingImg(false);
+          setSaving(false);
+          toast.error(t(imageErrorKey(err)));
+          return;
+        }
         setUploadingImg(false);
-        if (upErr) throw upErr;
-        imageUrl = upData.path;
       }
       const payload = {
         name: productForm.name,
