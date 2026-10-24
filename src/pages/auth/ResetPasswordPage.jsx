@@ -23,7 +23,7 @@ export default function ResetPasswordPage() {
     try {
       await updatePassword(password);
       toast.success(t('auth.passwordUpdated'));
-      navigate('/');
+      navigate('/app');
     } catch (err) {
       toast.error(err.message || t('auth.passwordUpdateFailed'));
     } finally {

@@ -21,7 +21,7 @@ export default function LoginPage() {
     try {
       await signIn(email, password);
       toast.success(t('common.welcomeBack'));
-      navigate('/');
+      navigate('/app');
     } catch (err) {
       toast.error(err.message || t('common.loginFailed'));
     } finally {

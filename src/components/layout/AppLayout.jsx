@@ -41,7 +41,7 @@ import { MODULES } from '../../lib/workspaceConfig';
 //             and assets stay out of the way too.
 const FULL_GROUPS = [
   { key: 'overview', items: [
-    { key: 'dashboard', icon: LayoutDashboard, path: '/' },
+    { key: 'dashboard', icon: LayoutDashboard, path: '/dashboard' },
   ]},
   { key: 'money', items: [
     { key: 'bookkeeping', icon: BookOpen,  path: '/bookkeeping' },
@@ -76,7 +76,7 @@ function simpleGroups(config) {
   const item = (k) => ({ key: k === 'sales' ? 'salesSimple' : k, module: k, icon: MODULE_ICONS[k], path: MODULES.find((m) => m.key === k).path });
   return [
     { key: 'overview', items: [
-      { key: 'dashboard', icon: LayoutDashboard, path: '/' },
+      { key: 'dashboard', icon: LayoutDashboard, path: '/dashboard' },
     ]},
     { key: 'money', items: [
       { key: 'transactions', icon: ArrowLeftRight, path: '/transactions' },
@@ -92,7 +92,7 @@ function simpleGroups(config) {
 
 const LIMITED_GROUPS = [
   { key: 'overview', items: [
-    { key: 'dashboard', icon: LayoutDashboard, path: '/' },
+    { key: 'dashboard', icon: LayoutDashboard, path: '/dashboard' },
   ]},
   { key: 'operations', items: [
     { key: 'inventory', icon: Package, path: '/inventory' },

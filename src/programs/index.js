@@ -17,10 +17,11 @@ import { Briefcase, Tractor } from 'lucide-react';
 //   home    — where the program's pages start
 //   accent  — a key of ACCENTS (Tailwind classes must be literal strings)
 //
-// Business keeps its historical routes at the root so nothing bookmarked by
-// Humphrey's changes; later programs mount under their own prefix.
+// "/" is the public site for everyone, signed in or out, so no program may
+// claim it as its home. Business keeps its other historical routes at the root
+// (/transactions, /reports…); only its dashboard moved to /dashboard.
 export const PROGRAMS = [
-  { key: 'business',  icon: Briefcase, status: 'live',  built: true, home: '/',          accent: 'brand', default: true },
+  { key: 'business',  icon: Briefcase, status: 'live',  built: true, home: '/dashboard', accent: 'brand', default: true },
   { key: 'ganaderia', icon: Tractor,   status: 'pilot', built: true, home: '/ganaderia', accent: 'ranch' },
 ];
 

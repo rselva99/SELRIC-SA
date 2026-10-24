@@ -60,34 +60,45 @@ function ProtectedRoute({ children, adminOnly = false, fullOnly = false, module 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   if (program && primaryProgram && primaryProgram !== program) return <Navigate to={getProgram(primaryProgram)?.home || '/'} replace />;
-  if (adminOnly && !isAdmin) return <Navigate to="/" replace />;
+  if (adminOnly && !isAdmin) return <Navigate to="/dashboard" replace />;
   if (fullOnly && accountingMode === 'simple') return <Navigate to="/transactions" replace />;
-  if (module && accountingMode === 'simple' && config?.modules?.[module] === false) return <Navigate to="/" replace />;
+  if (module && accountingMode === 'simple' && config?.modules?.[module] === false) return <Navigate to="/dashboard" replace />;
   return children;
 }
 
-// "/" is the public landing page for visitors and the app for signed-in users.
-// Any other app path still bounces a visitor to /login as before.
+// "/" is the public landing page for EVERYONE, signed in or out. Being signed
+// in no longer hijacks the front door: the app is reached through /app, or by
+// going straight to any of its own paths. Any other app path still bounces a
+// visitor to /login as before.
 function RootGate() {
-  const { user, loading, primaryProgram, accountingMode, config, isAdmin } = useAuth();
+  const { user, loading, primaryProgram } = useAuth();
   const location = useLocation();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
-  if (!user) {
-    return location.pathname === '/' ? <LandingPage /> : <Navigate to="/login" replace />;
-  }
-  // A workspace whose program is not built yet gets a holding page instead
-  // of the app. Programs that are live render inside the shared shell; each
-  // one's pages live under its own prefix (Business keeps the root).
+  if (location.pathname === '/') return <LandingPage />;
+  if (!user) return <Navigate to="/login" replace />;
+  // A workspace whose program is not built yet gets a holding page instead of
+  // the app. Live programs render inside the shared shell; each one's pages
+  // live under its own prefix (Business keeps /transactions, /reports…).
   const program = primaryProgram ? getProgram(primaryProgram) : null;
   if (program && !program.built) return <ProgramPendingPage program={program} />;
-  if (program && program.key !== 'business') {
-    if (location.pathname === '/') return <Navigate to={program.home} replace />;
-    return <AppLayout />;
-  }
-  // A Simple-mode admin who has not shaped the portal yet does that first
-  // (one screen; everything is editable later in Settings → Your portal).
-  if (accountingMode === 'simple' && isAdmin && config && !config.configured) return <Navigate to="/setup" replace />;
   return <AppLayout />;
+}
+
+// /app — the way in. The public site is the front door; this is the one link
+// that takes a signed-in workspace straight to its own program, whichever that
+// is, and sends a visitor to sign in first.
+function AppEntry() {
+  const { user, loading, primaryProgram, accountingMode, config, isAdmin } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  const program = primaryProgram ? getProgram(primaryProgram) : null;
+  if (program && !program.built) return <ProgramPendingPage program={program} />;
+  // A Simple-mode Business admin who has not shaped the portal yet does that
+  // first (one screen; everything is editable later in Settings → Your portal).
+  if ((!program || program.key === 'business') && accountingMode === 'simple' && isAdmin && config && !config.configured) {
+    return <Navigate to="/setup" replace />;
+  }
+  return <Navigate to={program?.home || '/dashboard'} replace />;
 }
 
 // /ganaderia/* — the Batavia Ganadería program. One herd context for all its
@@ -105,7 +116,7 @@ function SetupGate() {
   const { user, loading, accountingMode, config, isAdmin } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (accountingMode !== 'simple' || !isAdmin) return <Navigate to="/" replace />;
+  if (accountingMode !== 'simple' || !isAdmin) return <Navigate to="/app" replace />;
   return <SetupPage />;
 }
 
@@ -127,7 +138,7 @@ function ReportsRoute() {
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to="/app" replace />;
   return children;
 }
 
@@ -145,9 +156,11 @@ function App() {
             {/* Public page per program — readable signed in or out. */}
             <Route path="/programs/:key" element={<ProgramPage />} />
             <Route path="/setup" element={<SetupGate />} />
+            {/* The one link that goes straight into the app. */}
+            <Route path="/app" element={<AppEntry />} />
 
             <Route path="/" element={<RootGate />}>
-              <Route index element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+              <Route path="dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
               {/* Batavia Ganadería */}
               <Route path="ganaderia" element={<GanaderiaRoot />}>
                 <Route index element={<GanaderiaHomePage />} />
@@ -179,7 +192,7 @@ function App() {
               {/* Shared by every program */}
               <Route path="users" element={<ProtectedRoute adminOnly program={null}><ManageUsersPage /></ProtectedRoute>} />
               <Route path="settings" element={<ProtectedRoute adminOnly program={null}><SettingsPage /></ProtectedRoute>} />
-              {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the dashboard. */}
+              {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the public site. */}
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

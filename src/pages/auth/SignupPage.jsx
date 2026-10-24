@@ -83,7 +83,7 @@ export default function SignupPage() {
       });
       if (data?.session) {
         toast.success(t('auth.welcomeNew', { name: form.full_name.trim().split(' ')[0] || '' }));
-        navigate('/');
+        navigate('/app');
       } else {
         // Email confirmation is on in Supabase: no session until they click the link.
         setNeedsConfirm(true);

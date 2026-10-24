@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, Menu, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, Menu, X } from 'lucide-react';
 import { useT, LangToggle } from '../../i18n/I18nContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { PROGRAMS, accentOf } from '../../programs';
 
 // Public-site header shared by the home page and every program page.
@@ -9,6 +10,9 @@ import { PROGRAMS, accentOf } from '../../programs';
 export default function SiteHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { t } = useT();
+  // "/" is the public site for everyone now, so a signed-in visitor needs a
+  // visible way back into their workspace. /app knows which program that is.
+  const { user } = useAuth();
 
   const statusLabel = (p) => t(p.status === 'live' ? 'site.statusLive' : p.status === 'pilot' ? 'site.statusPilot' : 'site.statusSoon');
 
@@ -49,8 +53,14 @@ export default function SiteHeader() {
 
         <div className="hidden md:flex items-center gap-3">
           <LangToggle />
-          <Link to="/login" className="btn-ghost text-surface-700">{t('common.signIn')}</Link>
-          <Link to="/#waitlist" className="btn-primary">{t('landing.joinWaitlist')}</Link>
+          {user ? (
+            <Link to="/app" className="btn-primary">{t('site.goToApp')} <ArrowRight size={16} /></Link>
+          ) : (
+            <>
+              <Link to="/login" className="btn-ghost text-surface-700">{t('common.signIn')}</Link>
+              <Link to="/#waitlist" className="btn-primary">{t('landing.joinWaitlist')}</Link>
+            </>
+          )}
         </div>
 
         <button
@@ -78,8 +88,14 @@ export default function SiteHeader() {
           <Link to="/#pricing" onClick={() => setMenuOpen(false)} className="block py-2">{t('site.navPricing')}</Link>
           <div className="pt-3 flex items-center gap-3">
             <LangToggle />
-            <Link to="/login" className="btn-secondary flex-1">{t('common.signIn')}</Link>
-            <Link to="/#waitlist" onClick={() => setMenuOpen(false)} className="btn-primary flex-1">{t('landing.joinWaitlist')}</Link>
+            {user ? (
+              <Link to="/app" onClick={() => setMenuOpen(false)} className="btn-primary flex-1">{t('site.goToApp')} <ArrowRight size={16} /></Link>
+            ) : (
+              <>
+                <Link to="/login" className="btn-secondary flex-1">{t('common.signIn')}</Link>
+                <Link to="/#waitlist" onClick={() => setMenuOpen(false)} className="btn-primary flex-1">{t('landing.joinWaitlist')}</Link>
+              </>
+            )}
           </div>
         </div>
       )}
