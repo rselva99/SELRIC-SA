@@ -197,11 +197,16 @@ export function AuthProvider({ children }) {
   // complete object; `config.configured` says whether setup has been done.
   const config = resolveConfig(organization);
 
+  // SelRic's own organization, as opposed to a customer's. Decides which shell
+  // a signed-in person gets: the company's, or a workspace's.
+  const isInternal = organization?.is_internal === true;
+
   const value = {
     user,
     profile,
     organization,
     isPlatformAdmin,
+    isInternal,
     accountingMode,
     programs,
     programKeys,

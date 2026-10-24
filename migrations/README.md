@@ -182,4 +182,11 @@ and safe to re-run.
   (`novoaricardo7@gmail.com`) did not exist yet and a user_id seed would have silently done nothing — email means the
   person becomes an admin whenever they sign up, in either order. No INSERT/UPDATE/DELETE grant: adding an admin is a
   deliberate SQL statement. The app degrades to no link and an explanatory page if this is not applied. Additive,
-  idempotent. **Not yet applied.**
+  idempotent. **Applied 2026-10-24.**
+- `2026-10-24-ceo-workspace.sql` — SelRic as its own entity, separate from every customer. `organizations.is_internal`;
+  `handle_new_user()` gives a platform-admin email the "SelRic" internal workspace on sign-up (no gate, no program, no
+  seed data — being on `platform_admins` is the invitation); `ceo_overview()` excludes internal organizations so SelRic
+  does not appear on its own dashboard as a pilot "never used". Removes `ricardo.humphreys@outlook.com` from
+  `platform_admins`: that is a customer-workspace login. Adds invite `SELRIC-CEO-0001` only because the sign-up page
+  needs a code in the URL to open. The app routes an internal account to `CeoLayout` and `/ceo`, never to a workspace.
+  **Not yet applied.**

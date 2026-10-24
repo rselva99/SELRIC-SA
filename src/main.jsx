@@ -38,6 +38,7 @@ import PayrollPage from './pages/payroll/PayrollPage';
 import TransactionsPage from './pages/transactions/TransactionsPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import CeoPage from './pages/ceo/CeoPage';
+import CeoLayout from './components/layout/CeoLayout';
 import SetupPage from './pages/setup/SetupPage';
 import PinGate from './components/PinGate';
 import { HerdProvider } from './programs/ganaderia/HerdContext';
@@ -57,9 +58,11 @@ import './index.css';
 // shares such as Team and Settings). A workspace on another program is sent
 // to its own home.
 function ProtectedRoute({ children, adminOnly = false, fullOnly = false, module = null, program = 'business' }) {
-  const { user, loading, isAdmin, accountingMode, config, primaryProgram } = useAuth();
+  const { user, loading, isAdmin, accountingMode, config, primaryProgram, isInternal } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  // SelRic's own account has no program; every program page sends it home.
+  if (isInternal && program) return <Navigate to="/ceo" replace />;
   if (program && primaryProgram && primaryProgram !== program) return <Navigate to={getProgram(primaryProgram)?.home || '/'} replace />;
   if (adminOnly && !isAdmin) return <Navigate to="/dashboard" replace />;
   if (fullOnly && accountingMode === 'simple') return <Navigate to="/transactions" replace />;
@@ -72,11 +75,14 @@ function ProtectedRoute({ children, adminOnly = false, fullOnly = false, module 
 // going straight to any of its own paths. Any other app path still bounces a
 // visitor to /login as before.
 function RootGate() {
-  const { user, loading, primaryProgram } = useAuth();
+  const { user, loading, primaryProgram, isInternal } = useAuth();
   const location = useLocation();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (location.pathname === '/') return <LandingPage />;
   if (!user) return <Navigate to="/login" replace />;
+  // SelRic itself gets its own shell. No sidebar of programs, because there is
+  // no program: there is the company and the pilots it is watching.
+  if (isInternal) return <CeoLayout />;
   // A workspace whose program is not built yet gets a holding page instead of
   // the app. Live programs render inside the shared shell; each one's pages
   // live under its own prefix (Business keeps /transactions, /reports…).
@@ -89,11 +95,12 @@ function RootGate() {
 // that takes a signed-in workspace straight to its own program, whichever that
 // is, and sends a visitor to sign in first.
 function AppEntry() {
-  const { user, loading, primaryProgram, accountingMode, config, isAdmin } = useAuth();
+  const { user, loading, primaryProgram, accountingMode, config, isAdmin, isInternal } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   const program = primaryProgram ? getProgram(primaryProgram) : null;
   if (program && !program.built) return <ProgramPendingPage program={program} />;
+  if (isInternal) return <Navigate to="/ceo" replace />;
   // A Simple-mode Business admin who has not shaped the portal yet does that
   // first (one screen; everything is editable later in Settings → Your portal).
   if ((!program || program.key === 'business') && accountingMode === 'simple' && isAdmin && config && !config.configured) {
@@ -114,9 +121,10 @@ function GanaderiaRoot() {
 
 // /setup is only for an admin whose Simple-mode workspace is not configured.
 function SetupGate() {
-  const { user, loading, accountingMode, config, isAdmin } = useAuth();
+  const { user, loading, accountingMode, config, isAdmin, isInternal } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (isInternal) return <Navigate to="/ceo" replace />;
   if (accountingMode !== 'simple' || !isAdmin) return <Navigate to="/app" replace />;
   return <SetupPage />;
 }
