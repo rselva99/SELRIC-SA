@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Gauge, LogOut } from 'lucide-react';
+import { Activity, BookOpen, Flag, Gauge, LogOut } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { cn } from '../../lib/utils';
@@ -7,12 +7,15 @@ import { cn } from '../../lib/utils';
 // The shell for SelRic itself — the company, not a customer. A platform admin
 // whose organization is internal lands here instead of in a workspace, and
 // never sees a program's sidebar, because there is no program: there is the
-// company, and the people it is piloting with.
+// company, and the pilots it is watching.
 //
-// Deliberately smaller than AppLayout. One rail, one page today (Oversight),
-// room for more. Anything that belongs to a customer workspace stays out.
+// The four entries are the four pages of Oversight. They mirror the tab bar on
+// the page itself, so a reader can move by rail or by tab.
 const NAV = [
-  { key: 'oversight', icon: Gauge, path: '/ceo' },
+  { key: 'oversight', icon: Gauge,    path: '/ceo',          exact: true },
+  { key: 'pilots',    icon: Activity, path: '/ceo/pilots' },
+  { key: 'research',  icon: BookOpen, path: '/ceo/research' },
+  { key: 'plan',      icon: Flag,     path: '/ceo/plan' },
 ];
 
 export default function CeoLayout() {
@@ -40,8 +43,8 @@ export default function CeoLayout() {
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map(({ key, icon: Icon, path }) => {
-            const active = location.pathname === path || location.pathname.startsWith(path + '/');
+          {NAV.map(({ key, icon: Icon, path, exact }) => {
+            const active = exact ? location.pathname === path || location.pathname === path + '/' : location.pathname.startsWith(path);
             return (
               <Link
                 key={key}
@@ -65,11 +68,7 @@ export default function CeoLayout() {
             </div>
             <LangToggle />
           </div>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/5 hover:text-white transition-colors"
-          >
+          <button type="button" onClick={handleSignOut} className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/5 hover:text-white transition-colors">
             <LogOut size={16} /> {t('common.signOut')}
           </button>
         </div>

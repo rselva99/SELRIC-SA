@@ -190,3 +190,9 @@ and safe to re-run.
   `platform_admins`: that is a customer-workspace login. Adds invite `SELRIC-CEO-0001` only because the sign-up page
   needs a code in the URL to open. The app routes an internal account to `CeoLayout` and `/ceo`, never to a workspace.
   **Not yet applied.**
+- `2026-10-24-platform-research.sql` — the business plan, financial model and market analysis served to platform
+  admins only. The repository is public and the client bundle is public, so nothing from the plan lives in either:
+  the dashboard's Research tab reads one jsonb row from `platform_research` (SELECT only when `is_platform_admin()`;
+  no other grant) and three files from the private bucket `platform-docs` (same policy) via signed URLs. No
+  INSERT/UPDATE/DELETE policy on either: writes happen only through `~/selric-business/publish.mjs` with the
+  service role, from outside the repo. Idempotent. **Not yet applied.**

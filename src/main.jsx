@@ -203,7 +203,7 @@ function App() {
               <Route path="settings" element={<ProtectedRoute adminOnly program={null}><SettingsPage /></ProtectedRoute>} />
               {/* Cross-workspace oversight for whoever runs SelRic. Belongs to no
                   program; the real gate is in the database, not in this route. */}
-              <Route path="ceo" element={<ProtectedRoute program={null}><CeoPage /></ProtectedRoute>} />
+              <Route path="ceo/*" element={<ProtectedRoute program={null}><CeoPage /></ProtectedRoute>} />
               {/* /calendar and /marketing were retired on 2026-10-19 — the "*" route below sends old links to the public site. */}
             </Route>
 
