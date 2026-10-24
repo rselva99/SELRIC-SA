@@ -166,3 +166,10 @@ and safe to re-run.
   `program`, so the sign-up form asks for the finca's name. Additive, idempotent, tested on the replica (RLS: another
   workspace sees nothing and cannot write; the RPCs refuse an animal it cannot see). The pilot herd itself (Finca
   Batavia, inventory 0426) is loaded by a seed kept outside this repository. **Applied 2026-10-23.**
+- `2026-10-24-product-images-storage.sql` — from the Chile Nicaragua pilot reporting photos "not loading": the
+  `product-images` bucket and its policies had never been in a migration at all, having been created by hand in the
+  dashboard. Sets the bucket private with a 10 MB ceiling and only browser-renderable types, so an iPhone HEIC is
+  refused at upload with a visible error instead of landing in storage and rendering nowhere. Four org-scoped
+  policies on `storage.objects` (read also allows the 25 legacy flat-named objects that predate the per-workspace
+  prefix; the app now writes `<org_id>/<file>`). Paired with `src/lib/productImages.js`, which downscales to 1600px
+  in the browser before upload. Additive, idempotent, deletes no objects. **Applied 2026-10-24.**
