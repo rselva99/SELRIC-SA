@@ -196,3 +196,9 @@ and safe to re-run.
   no other grant) and three files from the private bucket `platform-docs` (same policy) via signed URLs. No
   INSERT/UPDATE/DELETE policy on either: writes happen only through `~/selric-business/publish.mjs` with the
   service role, from outside the repo. Idempotent. **Applied 2026-10-24; research published the same day.**
+- `2026-10-24-platform-leads.sql` — the sales funnel under /ceo/funnel: `platform_leads` (region us/ni, program,
+  stage lead→contacted→demo→pilot→paying|lost, source, owner, head_count for the Ganadería tier, next action) and
+  `platform_lead_events`, written by trigger on every stage change so velocity is measurable without anyone
+  remembering to log it. Platform admins only, both tables; the agent working Nicaragua is recorded in `owner`
+  until a scoped login exists. Seeds the four pilots at `pilot` and Finca Batavia at `contacted` — nothing invented.
+  Idempotent. **Applied 2026-10-24.**

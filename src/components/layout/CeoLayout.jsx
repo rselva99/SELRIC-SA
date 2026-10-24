@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, BookOpen, Flag, Gauge, LogOut } from 'lucide-react';
+import { Activity, BookOpen, Filter, Flag, Gauge, LogOut } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { cn } from '../../lib/utils';
@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils';
 const NAV = [
   { key: 'oversight', icon: Gauge,    path: '/ceo',          exact: true },
   { key: 'pilots',    icon: Activity, path: '/ceo/pilots' },
+  { key: 'funnel',    icon: Filter,   path: '/ceo/funnel' },
   { key: 'research',  icon: BookOpen, path: '/ceo/research' },
   { key: 'plan',      icon: Flag,     path: '/ceo/plan' },
 ];

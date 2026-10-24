@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import Spinner from '../../components/ui/Spinner';
+import FunnelPage from './FunnelPage';
 
 // CEO oversight — the only view that looks across every workspace at once.
 // Four pages under /ceo: Overview, Pilots, Research, Plan.
@@ -334,7 +335,7 @@ function Plan({ paying, animals, R }) {
 }
 
 // ── shell ───────────────────────────────────────────────────────────────────
-const TABS = [['', 'Overview'], ['pilots', 'Pilots'], ['research', 'Research'], ['plan', 'Plan']];
+const TABS = [['', 'Overview'], ['pilots', 'Pilots'], ['funnel', 'Funnel'], ['research', 'Research'], ['plan', 'Plan']];
 
 export default function CeoPage() {
   const [data, setData] = useState(null);
@@ -394,6 +395,7 @@ export default function CeoPage() {
       </nav>
       {tab === '' && <Overview data={data} ws={ws} paying={paying} animals={animals} neverUsed={neverUsed} R={R} />}
       {tab === 'pilots' && <Pilots data={data} ws={ws} />}
+      {tab === 'funnel' && <FunnelPage />}
       {tab === 'research' && <Research R={R} docs={docs} updatedAt={updatedAt} />}
       {tab === 'plan' && <Plan paying={paying} animals={animals} R={R} />}
       <p className="mt-10 text-xs text-surface-400 leading-relaxed max-w-[75ch]">
