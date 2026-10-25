@@ -15,7 +15,7 @@ import Spinner from '../../components/ui/Spinner';
 // the page says so instead of inventing one. The agent's own numbers become
 // the Nicaragua benchmark once there are enough of them.
 
-const STAGES = [
+export const STAGES = [
   { key: 'lead',      label: 'Lead',      hint: 'Identified. Nobody has spoken to them yet.' },
   { key: 'contacted', label: 'Contacted', hint: 'Reached out — email, call, visit — and waiting or talking.' },
   { key: 'demo',      label: 'Demo',      hint: 'They saw the product with their own kind of data.' },
@@ -24,7 +24,7 @@ const STAGES = [
 ];
 const LOST = { key: 'lost', label: 'Lost' };
 // Weighted pipeline: how much of a lead's monthly price to count at each stage.
-const WEIGHT = { lead: 0.05, contacted: 0.1, demo: 0.35, pilot: 0.6, paying: 1 };
+export const WEIGHT = { lead: 0.05, contacted: 0.1, demo: 0.35, pilot: 0.6, paying: 1 };
 
 // Published bands, with the source stated. Reply ≠ meeting ≠ close — each
 // benchmark below names which one it is.
@@ -67,7 +67,7 @@ const pct = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
 const today = () => new Date().toISOString().slice(0, 10);
 const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
 const tierPrice = (head) => (head == null ? 50 : head > 200 ? 100 : head > 100 ? 75 : 50);
-const monthly = (l) => (l.program === 'ganaderia' ? tierPrice(l.head_count) : 100);
+export const monthly = (l) => (l.program === 'ganaderia' ? tierPrice(l.head_count) : 100);
 
 const EMPTY = { region: 'us', program: 'business', name: '', contact: '', phone: '', email: '', head_count: '', source: 'outbound', referred_by: '', owner: 'founder', next_action: '', next_action_at: '', notes: '' };
 
@@ -219,8 +219,39 @@ function LeadDrawer({ lead, events, onClose, onSave, onDelete }) {
   );
 }
 
+// What the model asks of this funnel in the next three months, against what
+// is in it — the funnel's own benchmark bands turn demos and pilots into an
+// expected number of closes, so the gap is a number, not a feeling.
+function PlanNeeds({ R, M }) {
+  const N = M.next90, P = M.pipeline;
+  const low = P.demo * 0.30 * 0.15 + P.pilot * 0.15, high = P.demo * 0.50 * 0.25 + P.pilot * 0.25;
+  const need = N.need + N.pilots;
+  const planMrr = R.monthly.find((m) => m.label === N.until)?.mrr ?? 0;
+  const short = need - high;
+  return (
+    <Card className="mt-4 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-surface-900">What the plan needs from this funnel by {monthName(N.until)}</div>
+          <p className="mt-1 text-sm text-surface-600 leading-relaxed max-w-[70ch]">
+            The base case books <span className="font-semibold text-surface-900">{Math.round(need)} paying customers</span> and {usd(planMrr)} a month by then{N.pilots > 0 ? <> — {Math.round(N.pilots)} of them converted pilots in {monthName(M.pilotLabel)}, {N.need.toFixed(1)} from new leads</> : null}.
+            Today there are {P.demo} in demo and {P.pilot} in pilot; at the sales-assisted bands that is {low.toFixed(1)}–{high.toFixed(1)} closes.
+            {short > 0.5 ? <> The pipeline is <span className="font-semibold text-amber-800">{Math.ceil(short)} short</span> even at the top of the band — the next ninety days are about adding leads, not closing them.</> : <> The pipeline covers the plan if it converts at the band.</>}
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-center shrink-0">
+          {[['Plan needs', Math.round(need)], ['In demo / pilot', P.demo + P.pilot], ['Expected closes', `${low.toFixed(0)}–${high.toFixed(0)}`]].map(([l, v]) => (
+            <div key={l} className="rounded-lg bg-surface-50 px-3 py-2"><div className="font-display text-xl text-surface-900">{v}</div><div className="text-[11px] text-surface-500">{l}</div></div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+const monthName = (ym) => (ym ? new Date(ym + '-15').toLocaleString('en-US', { month: 'short', year: '2-digit' }) : '');
+
 // ── page ────────────────────────────────────────────────────────────────────
-export default function FunnelPage() {
+export default function FunnelPage({ R, M, onChange }) {
   const [leads, setLeads] = useState(null);
   const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
@@ -249,14 +280,14 @@ export default function FunnelPage() {
     const { error: e } = await q;
     if (e) { toast.error(e.message.includes('platform_leads_name_program_idx') ? 'That name already exists for this program.' : e.message); return false; }
     toast.success(id ? 'Saved' : 'Lead added');
-    await load();
+    await load(); onChange?.();
     if (id) setPicked((p) => (p ? { ...p, ...rest } : p));
     return true;
   }
   async function remove(id) {
     const { error: e } = await supabase.from('platform_leads').delete().eq('id', id);
     if (e) { toast.error(e.message); return; }
-    toast.success('Deleted'); setPicked(null); await load();
+    toast.success('Deleted'); setPicked(null); await load(); onChange?.();
   }
 
   const us = useMemo(() => (leads || []).filter((l) => l.region === 'us'), [leads]);
@@ -295,6 +326,8 @@ export default function FunnelPage() {
           <button onClick={() => setPicked({ ...EMPTY })} className="btn-primary"><Plus size={15} /> Lead</button>
         </div>
       </div>
+
+      {R && M?.next90 && <PlanNeeds R={R} M={M} />}
 
       {(week.length > 0 || stale.length > 0) && (
         <Card className="mt-4 p-4">

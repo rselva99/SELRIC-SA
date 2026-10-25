@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, BookOpen, Filter, Flag, Gauge, LogOut } from 'lucide-react';
+import { Activity, BookOpen, FileText, Filter, Flag, Gauge, LogOut, SlidersHorizontal } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { cn } from '../../lib/utils';
@@ -9,14 +9,16 @@ import { cn } from '../../lib/utils';
 // never sees a program's sidebar, because there is no program: there is the
 // company, and the pilots it is watching.
 //
-// The four entries are the four pages of Oversight. They mirror the tab bar on
-// the page itself, so a reader can move by rail or by tab.
+// The entries are the pages of Oversight. They mirror the tab bar on the page
+// itself, so a reader can move by rail or by tab.
 const NAV = [
-  { key: 'oversight', icon: Gauge,    path: '/ceo',          exact: true },
-  { key: 'pilots',    icon: Activity, path: '/ceo/pilots' },
-  { key: 'funnel',    icon: Filter,   path: '/ceo/funnel' },
-  { key: 'research',  icon: BookOpen, path: '/ceo/research' },
-  { key: 'plan',      icon: Flag,     path: '/ceo/plan' },
+  { key: 'oversight', icon: Gauge,             path: '/ceo',           exact: true },
+  { key: 'pilots',    icon: Activity,          path: '/ceo/pilots' },
+  { key: 'funnel',    icon: Filter,            path: '/ceo/funnel' },
+  { key: 'research',  icon: BookOpen,          path: '/ceo/research' },
+  { key: 'model',     icon: SlidersHorizontal, path: '/ceo/model' },
+  { key: 'documents', icon: FileText,          path: '/ceo/documents' },
+  { key: 'plan',      icon: Flag,              path: '/ceo/plan' },
 ];
 
 export default function CeoLayout() {

@@ -202,3 +202,12 @@ and safe to re-run.
   remembering to log it. Platform admins only, both tables; the agent working Nicaragua is recorded in `owner`
   until a scoped login exists. Seeds the four pilots at `pilot` and Finca Batavia at `contacted` — nothing invented.
   Idempotent. **Applied 2026-10-24.**
+- `2026-10-24-platform-model.sql` — the editable model: `platform_assumptions` (one row per version of the
+  assumptions object the engine in `src/lib/ceoModel.js` runs on — the engine holds no constants) and
+  `platform_documents` (one row per version of each document's prose: business_plan, market_gtm, findings, plan, as
+  markdown sections with `{{tokens}}` the app resolves from the model). Both readable and appendable only when
+  `is_platform_admin()`; no UPDATE/DELETE grant anywhere — a save is a new version, a restore is a copy of an old
+  one, and the trigger assigns the version number. Version 1 of both is seeded by `~/selric-business/publish.mjs`
+  with the service role, from outside the repo; `verify_model.mjs` asserts the seeded row reproduces the 24 Oct
+  numbers to the cent. `platform_research` is no longer read by the app (left in place). Idempotent.
+  **Applied 2026-10-24; seeded the same day.**
