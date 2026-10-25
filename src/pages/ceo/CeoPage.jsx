@@ -12,11 +12,12 @@ import { get, plain, resolve, tableFor } from '../../lib/ceoDocs.js';
 import FunnelPage, { WEIGHT, monthly } from './FunnelPage';
 import ModelPage from './ModelPage';
 import DocumentsPage from './DocumentsPage';
-import { C, SEG, usd, usdK, num, pct, mon, nowLabel, Grid, MonthAxis, NumAxis, NumAxisX, CatAxisY, Tip, ChartCard } from './charts';
+import CompetitionPage from './CompetitionPage';
+import { C, SEG, usd, usdK, num, pct, mon, nowLabel, Grid, MonthAxis, NumAxis, NumAxisX, CatAxisY, Tip, ChartCard, useNarrow } from './charts';
 
 // CEO oversight — the only view that looks across every workspace at once.
-// Seven pages under /ceo: Overview, Pilots, Funnel, Research, Model,
-// Documents, Plan.
+// Eight pages under /ceo: Overview, Pilots, Funnel, Research, Competition,
+// Model, Documents, Plan.
 //
 // Four sources, one picture, and nothing stored that could be computed:
 //   • the pilots come from ceo_overview()
@@ -130,7 +131,8 @@ const Note = ({ children }) => (
     <div className="flex items-start gap-2.5"><AlertTriangle size={17} className="shrink-0 mt-0.5 text-amber-600" /><div className="text-sm leading-relaxed text-amber-900">{children}</div></div>
   </div>
 );
-const EndLabel = ({ x, y, index, last, text }) => (index === last ? <text x={x + 6} y={y + 3} fontSize={10} fill={C.text}>{text}</text> : null);
+// An end-of-line label; `dy` nudges it when two lines finish together, with a short leader.
+const EndLabel = ({ x, y, index, last, text, dy = 0 }) => (index === last ? <g>{dy !== 0 && <line x1={x} y1={y} x2={x + 5} y2={y + dy} stroke={C.grayL} strokeWidth={1} />}<text x={x + 6} y={y + dy + 3} fontSize={10} fill={C.text}>{text}</text></g> : null);
 
 // Shown wherever the model would be, until the migration has run and
 // publish.mjs has seeded version 1.
@@ -306,6 +308,7 @@ function Pilots({ data, ws, R, M }) {
 }
 
 function Research({ R, M, findings, assump }) {
+  const narrow = useNarrow();
   if (!R) return <div className="mt-6"><NotPublished /></div>;
   const S = R.scenarios, A = R.A, Y = R.years, order = R.scenarioOrder;
   const seg = R.monthly.map((m) => ({ label: m.label, ...m.cust, capped: m.capped }));
@@ -313,10 +316,15 @@ function Research({ R, M, findings, assump }) {
   const pnl = R.monthly.map((m) => ({ label: m.label, profit: m.profit, draw: m.draw, cash: m.cash }));
   const hours = R.monthly.map((m) => ({ label: m.label, needed: m.hoursNeeded, founder: A.capacity.founderSellingHours, available: m.hoursAvailable, cappedAt: m.capped ? m.hoursNeeded : null, plan: m.newPlan, allowed: m.newActual }));
   const scen = R.monthly.map((m, i) => ({ label: m.label, ...Object.fromEntries(order.map((k) => [k, S[k].mrr[i]])) }));
-  const sens = R.sensitivity.map((s) => ({ name: s.name, range: [s.low, s.high], low: s.low, high: s.high, swing: s.swing }));
+  const sens = R.sensitivity.map((s) => ({ name: narrow ? s.label : s.name, full: s.name, range: [s.low, s.high], low: s.low, high: s.high, swing: s.swing }));
   const herd = [...R.competitors.herd.map((c) => ({ name: c.name, price: c.price })), ...R.tiers.map((t) => ({ name: `SelRic — ${t.tier.toLowerCase()}`, price: t.price }))].sort((a, b) => a.price - b.price);
   const biz = [...R.competitors.business.map((c) => ({ name: c.name, price: c.price })), { name: 'SelRic Business', price: R.prices.business }].sort((a, b) => a.price - b.price);
   const last = R.monthly.length - 1;
+  // Scenario end labels: when two lines finish within 5% of the axis of each other, push the labels apart.
+  const finals = order.map((k) => ({ k, v: S[k].mrr[last] })).sort((a, b) => a.v - b.v);
+  const span = Math.max(...finals.map((f) => f.v)) || 1;
+  const nudge = {};
+  for (let i = 1; i < finals.length; i++) if (finals[i].v - finals[i - 1].v < 0.05 * span) { nudge[finals[i].k] = (nudge[finals[i].k] || 0) - 7; nudge[finals[i - 1].k] = (nudge[finals[i - 1].k] || 0) + 7; }
   const segLegend = SEG.map((s) => ({ label: s.label, color: s.color }));
   const segCols = [{ key: 'label', label: 'Month', fmt: mon, right: false }, ...SEG.map((s) => ({ key: s.key, label: s.label }))];
   const monthCol = { key: 'label', label: 'Month', fmt: mon, right: false };
@@ -382,7 +390,7 @@ function Research({ R, M, findings, assump }) {
         </ChartCard>
         <ChartCard title="Cash on hand" hint={`Annual prepay — ${A.price.annualPrepayMonthsFree} months free, taken by ${pct(A.price.annualPrepayShare)} of joiners — is what keeps the first year above zero.`} table={{ cols: [monthCol, { key: 'cash', label: 'Cash', fmt: usd }], rows: pnl }}>
           <ResponsiveContainer width="100%" height="100%"><AreaChart data={pnl} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
-            {Grid()}{MonthAxis()}{NumAxis({ fmt: usdK, width: 48 })}<Tooltip content={<Tip fmt={usd} />} cursor={{ stroke: C.grayL }} />
+            {Grid()}{MonthAxis()}{NumAxis({ fmt: usdK, width: 48, domain: [(min) => (min < -500 ? min : 0), 'auto'], allowDataOverflow: true })}<Tooltip content={<Tip fmt={usd} />} cursor={{ stroke: C.grayL }} />
             <ReferenceLine y={0} stroke={C.gray} />
             {R.drawStartsMonth && <ReferenceLine x={R.drawStartsMonth} stroke={C.gray} strokeDasharray="3 3" label={{ value: 'founder paid', position: 'insideTopLeft', fontSize: 10, fill: C.text }} />}
             <Area dataKey="cash" name="Cash" stroke={C.brand} strokeWidth={2} fill={C.brand} fillOpacity={0.1} isAnimationActive={false} />
@@ -421,8 +429,8 @@ function Research({ R, M, findings, assump }) {
         table={{ cols: [monthCol, ...order.map((k) => ({ key: k, label: S[k].label, fmt: usd }))], rows: scen }}>
         <ResponsiveContainer width="100%" height="100%"><LineChart data={scen} margin={{ top: 8, right: 96, left: 0, bottom: 0 }}>
           {Grid()}{MonthAxis()}{NumAxis({ fmt: usdK, width: 48 })}<Tooltip content={<Tip fmt={usd} />} cursor={{ stroke: C.grayL }} />
-          {order.filter((k) => k !== 'base').map((k) => <Line key={k} dataKey={k} name={S[k].label} stroke={C.gray} strokeWidth={1.5} dot={false} isAnimationActive={false} label={<EndLabel last={last} text={S[k].label} />} />)}
-          <Line dataKey="base" name="Base" stroke={C.brand} strokeWidth={2.5} dot={false} isAnimationActive={false} label={<EndLabel last={last} text="Base" />} />
+          {order.filter((k) => k !== 'base').map((k) => <Line key={k} dataKey={k} name={S[k].label} stroke={C.gray} strokeWidth={1.5} dot={false} isAnimationActive={false} label={<EndLabel last={last} text={S[k].label} dy={nudge[k] || 0} />} />)}
+          <Line dataKey="base" name="Base" stroke={C.brand} strokeWidth={2.5} dot={false} isAnimationActive={false} label={<EndLabel last={last} text="Base" dy={nudge.base || 0} />} />
         </LineChart></ResponsiveContainer>
       </ChartCard>
       <div className="mt-3 grid sm:grid-cols-5 gap-3">
@@ -442,8 +450,8 @@ function Research({ R, M, findings, assump }) {
       <ChartCard title="Year-3 ARR, low to high" height={40 + sens.length * 38}
         table={{ cols: [{ key: 'name', label: 'Assumption', fmt: (s) => s, right: false }, { key: 'low', label: 'Low', fmt: usd }, { key: 'high', label: 'High', fmt: usd }, { key: 'swing', label: 'Swing', fmt: usd }], rows: sens }}>
         <ResponsiveContainer width="100%" height="100%"><BarChart data={sens} layout="vertical" margin={{ top: 4, right: 64, left: 8, bottom: 0 }} barCategoryGap={10}>
-          {Grid()}{NumAxisX({ fmt: usdK })}{CatAxisY({ width: 210 })}
-          <Tooltip content={<Tip title={(s) => s} fmt={usd} />} cursor={{ fill: C.grid, opacity: 0.5 }} />
+          {Grid()}{NumAxisX({ fmt: usdK, tickCount: narrow ? 3 : 5 })}{CatAxisY({ width: narrow ? 118 : 210 })}
+          <Tooltip content={<Tip title={(s, p) => p?.[0]?.payload?.full || s} fmt={usd} />} cursor={{ fill: C.grid, opacity: 0.5 }} />
           <ReferenceLine x={Y[2].endARR} stroke={C.gray} strokeDasharray="3 3" />
           <Bar dataKey="range" name="Low – high" fill={C.brand} radius={[0, 4, 4, 0]} maxBarSize={16} isAnimationActive={false}>
             <LabelList dataKey="swing" position="right" formatter={usdK} style={{ fontSize: 10, fill: C.text }} />
@@ -458,7 +466,7 @@ function Research({ R, M, findings, assump }) {
           <ChartCard key={title} title={title} height={28 * rows.length + 24} legend={[{ label: 'SelRic', color: C.brand }, { label: 'Others', color: C.gray }]}
             table={{ cols: [{ key: 'name', label: 'Product', fmt: (s) => s, right: false }, { key: 'price', label: '$ / month', fmt: usd2 }], rows }}>
             <ResponsiveContainer width="100%" height="100%"><BarChart data={rows} layout="vertical" margin={{ top: 0, right: 40, left: 8, bottom: 0 }} barCategoryGap={6}>
-              {NumAxisX({ fmt: usd, domain: [0, maxV], hide: true })}{CatAxisY({ width: 170 })}
+              {NumAxisX({ fmt: usd, domain: [0, maxV], hide: true })}{CatAxisY({ width: narrow ? 112 : 170 })}
               <Tooltip content={<Tip title={(s) => s} fmt={usd2} />} cursor={{ fill: C.grid, opacity: 0.5 }} />
               <Bar dataKey="price" name="$ / month" radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={false}>
                 {rows.map((r) => <Cell key={r.name} fill={r.name.startsWith('SelRic') ? C.brand : C.gray} />)}
@@ -546,7 +554,7 @@ function Plan({ animals, ws, R, M, plan }) {
 }
 
 // ── shell ───────────────────────────────────────────────────────────────────
-const TABS = [['', 'Overview'], ['pilots', 'Pilots'], ['funnel', 'Funnel'], ['research', 'Research'], ['model', 'Model'], ['documents', 'Documents'], ['plan', 'Plan']];
+const TABS = [['', 'Overview'], ['pilots', 'Pilots'], ['funnel', 'Funnel'], ['research', 'Research'], ['competition', 'Competition'], ['model', 'Model'], ['documents', 'Documents'], ['plan', 'Plan']];
 
 export default function CeoPage() {
   const [data, setData] = useState(null);
@@ -588,7 +596,12 @@ export default function CeoPage() {
 
   const assump = versions[0] || null;
   const R = useMemo(() => { if (!assump) return null; try { return compute(assump.data); } catch (e) { console.error('model', e); return null; } }, [assump]);
-  const docs = useMemo(() => ({ findings: docRows.findings?.[0]?.sections || [], plan: docRows.plan?.[0]?.sections || { milestones: [], roadmap: [] } }), [docRows]);
+  const docs = useMemo(() => ({
+    findings: docRows.findings?.[0]?.sections || [],
+    plan: docRows.plan?.[0]?.sections || { milestones: [], roadmap: [] },
+    // The competitor dataset rides inside the competition document as a json section.
+    competition: (docRows.competition?.[0]?.sections || []).find((x) => x.kind === 'json')?.data || null,
+  }), [docRows]);
   const findings = useMemo(() => (R ? docs.findings.map((s) => ({ key: s.key, title: plain(s.title, R, docs), body: plain(s.body, R, docs) })) : []), [R, docs]);
   const ws = useMemo(() => (data?.workspaces || []).map((w) => ({ ...w, h: health(w) })), [data]);
   const M = useModel(R, leads, events);
@@ -622,7 +635,8 @@ export default function CeoPage() {
       {tab === 'funnel' && <FunnelPage R={R} M={M} onChange={load} />}
       {tab === 'research' && <Research R={R} M={M} findings={findings} assump={assump} />}
       {tab === 'model' && <ModelPage assump={assump} versions={versions} onSaved={load} />}
-      {tab === 'documents' && <DocumentsPage R={R} docRows={docRows} assump={assump} onSaved={load} />}
+      {tab === 'competition' && <CompetitionPage R={R} docRows={docRows} docs={docs} assump={assump} onSaved={load} />}
+      {tab === 'documents' && <DocumentsPage R={R} docRows={docRows} docs={docs} assump={assump} onSaved={load} />}
       {tab === 'plan' && <Plan animals={animals} ws={ws} R={R} M={M} plan={docs.plan} />}
       <p className="mt-10 text-xs text-surface-400 leading-relaxed max-w-[75ch]">
         Pilot counts come from <code>ceo_overview()</code>, which returns aggregates only. The model is computed in this browser from <code>platform_assumptions</code> v{assump?.version ?? '—'}; the prose comes from <code>platform_documents</code>. Both are readable only by platform admins, and nothing confidential is in this site's code.

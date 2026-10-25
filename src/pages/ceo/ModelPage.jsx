@@ -30,7 +30,7 @@ function Field({ f, draft, setDraft, errors }) {
   const set = (raw) => { const parsed = fromInput(raw, type); setDraft((d) => ({ ...setPath(d, f.path, parsed ?? raw), __raw: { ...(d.__raw || {}), [f.path]: raw } })); };
   const raw = draft.__raw?.[f.path];
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_120px_96px] gap-3 items-start px-4 py-2.5 border-t border-surface-100">
+    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_120px_96px] gap-3 items-start px-4 py-2.5 border-t border-surface-100">
       <div className="min-w-0">
         <div className="text-sm text-surface-800">{f.label}</div>
         <input aria-label={`${f.label} — note`} className="mt-1 w-full bg-transparent text-xs text-surface-500 focus:outline-none focus:text-surface-800 placeholder:text-surface-300" placeholder="why this number" value={note}
@@ -158,7 +158,7 @@ export default function ModelPage({ assump, versions, onSaved }) {
           {g.list ? <ListGroup g={g} draft={draft || data} setDraft={draft ? setDraft : () => {}} errors={errors} />
             : g.fields.map((f) => draft ? <Field key={f.path} f={f} draft={draft} setDraft={setDraft} errors={errors} />
               : (
-                <div key={f.path} className="grid grid-cols-[minmax(0,1fr)_120px_96px] gap-3 items-start px-4 py-2.5 border-t border-surface-100">
+                <div key={f.path} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_120px_96px] gap-3 items-start px-4 py-2.5 border-t border-surface-100">
                   <div className="min-w-0"><div className="text-sm text-surface-800">{f.label}</div>{data.meta?.[f.meta || f.path]?.note && <div className="text-xs text-surface-500">{data.meta[f.meta || f.path].note}{data.meta[f.meta || f.path].source ? ` — ${data.meta[f.meta || f.path].source}` : ''}</div>}</div>
                   <div className="font-mono text-sm text-surface-900 pt-0.5">{f.type === 'bool' ? (get(data, f.path) ? 'yes' : 'no') : toInput(get(data, f.path), f.type)}{f.type === 'pct' ? '%' : ''}</div>
                   <div className="text-xs text-surface-500 pt-1">{f.unit}</div>

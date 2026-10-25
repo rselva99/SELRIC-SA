@@ -59,20 +59,21 @@ export function resolve(text, R, ctx = {}) {
 }
 
 // ── Sections and blocks ─────────────────────────────────────────────────────
-// A document file: sections start with `## Title {#key}`; everything up to the
-// next `## ` is the body. The key is required so an edit can be matched to
-// its place in the rendered document.
+// A document file: a section starts with `## Title {#key}` or `### Title {#key}`
+// (level 2 or 3); everything up to the next anchored heading is the body. The
+// key is required so an edit can be matched to its place in the document; a
+// heading without an anchor stays inside the body as a sub-heading.
 export function parseSections(md) {
   const out = []; let cur = null;
   for (const line of String(md).split('\n')) {
-    const m = /^##\s+(.*?)\s*\{#([A-Za-z0-9_-]+)\}\s*$/.exec(line);
-    if (m) { cur = { key: m[2], title: m[1], body: '' }; out.push(cur); continue; }
+    const m = /^(#{2,3})\s+(.*?)\s*\{#([A-Za-z0-9_-]+)\}\s*$/.exec(line);
+    if (m) { cur = { key: m[3], title: m[2], body: '', level: m[1].length }; out.push(cur); continue; }
     if (cur) cur.body += (cur.body ? '\n' : '') + line;
   }
   for (const s of out) s.body = s.body.trim();
   return out;
 }
-export const joinSections = (sections) => sections.map((s) => `## ${s.title} {#${s.key}}\n\n${s.body}`).join('\n\n');
+export const joinSections = (sections) => sections.map((s) => `${'#'.repeat(s.level || 2)} ${s.title} {#${s.key}}\n\n${s.body}`).join('\n\n');
 
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 // Split a table row on `|` — but not on the `|` inside a {{path|fmt}} token.
@@ -224,6 +225,11 @@ export const TABLES = {
   ], align: ['l', 'r', 'l'] }),
   findings: (R, docs) => ({ head: ['Finding', 'What the model says'], rows: (docs?.findings || []).map((s, i) => [`**${i + 1}. ${strip(resolve(s.title, R))}**`, strip(resolve(s.body, R))]), align: ['l', 'l'] }),
   sources: (R) => ({ head: ['Source'], rows: R.sources.map((s) => [s]), align: ['l'] }),
+  // Competition — from the dataset section of the competition document.
+  compPricesBusiness: (R, docs) => compPrices(docs?.competition?.business, R),
+  compPricesGanaderia: (R, docs) => compPrices(docs?.competition?.ganaderia, R),
+  compMatrixBusiness: (R, docs) => compMatrix(docs?.competition?.business),
+  compMatrixGanaderia: (R, docs) => compMatrix(docs?.competition?.ganaderia),
   milestones: (R, docs) => ({ head: ['By', 'Milestone'], rows: (docs?.plan?.milestones || []).map((m) => [m.due, strip(resolve(m.what, R))]), align: ['l', 'l'] }),
   roadmap: (R, docs) => ({ head: ['Quarter', 'Focus', 'Actions'], rows: (docs?.plan?.roadmap || []).map((r) => [r.quarter, r.focus, strip(resolve(r.actions, R))]), align: ['l', 'l', 'l'] }),
   assumptions: (R) => ({ head: ['Assumption', 'Value'], rows: [
@@ -237,5 +243,27 @@ export const TABLES = {
     ['Annual prepay', `${F.pct(R.A.price.annualPrepayShare)} of joiners pay a year up front and get ${R.A.price.annualPrepayMonthsFree} months free`],
   ], align: ['l', 'l'] }),
 };
+// A price that may be a whole number, cents, zero or unknown.
+export const money = (n) => (n == null ? '—' : n === 0 ? '$0' : Number.isInteger(n) ? F.usd(n) : F.usd2(n));
+const SCORE_MARK = ['○', '◐', '●'];
+function compPrices(market, R) {
+  if (!market) return { head: ['Product'], rows: [['⟨dataset missing⟩']], align: ['l'] };
+  const rows = [];
+  for (const c of market.competitors || []) {
+    const self = !!c.self;
+    let entry = c.pricing?.entryUsdMonth ?? null, comparable = c.pricing?.comparableUsdMonth ?? null, plan = c.pricing?.comparableNote || '';
+    if (self && R) { const v = get(R, c.pricing?.priceToken || ''); if (typeof v === 'number') { entry = v; comparable = v; plan = 'from the model'; } else if (Array.isArray(v)) { entry = v[0]?.price ?? null; comparable = v[1]?.price ?? v[0]?.price ?? null; plan = v.map((t) => F.usd(t.price)).join(' / ') + ' by herd size, from the model'; } }
+    const b = (s) => (self ? `**${s}**` : s);
+    rows.push([b(c.name), c.region || '', b(money(entry)), b(money(comparable)), plan + (c.pricing?.fx ? ' (fx)' : ''), c.source || '']);
+  }
+  return { head: ['Product', 'Region', 'Entry $/mo', 'Comparable $/mo', 'Plan compared', 'Source'], rows, align: ['l', 'l', 'r', 'r', 'l', 'l'] };
+}
+function compMatrix(market) {
+  if (!market) return { head: [''], rows: [['⟨dataset missing⟩']], align: ['l'] };
+  const order = ['infra', 'market', 'ours'];
+  const feats = order.flatMap((g) => (market.features || []).filter((f) => (f.group || 'infra') === g));
+  const comps = [...(market.competitors || []).filter((c) => c.self), ...(market.competitors || []).filter((c) => !c.self)];
+  return { head: ['', ...feats.map((f) => f.label)], rows: comps.map((c) => [c.self ? `**${c.name}**` : c.name, ...feats.map((f) => SCORE_MARK[c.features?.[f.key] ?? 0])]), align: ['l', ...feats.map(() => 'c')] };
+}
 export function tableFor(name, R, docs) { const f = TABLES[name]; if (!f) return null; _tiersRef = R.tiers; return f(R, docs); }
 export const TABLE_NAMES = Object.keys(TABLES);

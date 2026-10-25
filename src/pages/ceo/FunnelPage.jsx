@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, Beef, Briefcase, CalendarClock, ChevronRight
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import Spinner from '../../components/ui/Spinner';
+import { C } from './charts';
 
 // The sales funnel, for the people who run SelRic. Two motions, one table:
 //   • United States — the founder reaching out to businesses, one at a time
@@ -107,7 +108,7 @@ function FunnelColumn({ region, leads, onPick }) {
                 <span className="text-surface-800">{s.label} <span className="text-surface-400 text-xs">· {here} here</span></span>
                 <span className="font-mono text-xs text-surface-600">{n} reached{conv != null && prev ? ` · ${pct(conv)} of ${STAGES[i - 1].label.toLowerCase()}` : ''}</span>
               </div>
-              <div className="mt-1 h-2.5 rounded-full bg-surface-100 overflow-hidden"><div className="h-full rounded-full bg-brand-600" style={{ width: `${(n / max) * 100}%` }} /></div>
+              <div className="mt-1 h-2.5 rounded-full bg-surface-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(n / max) * 100}%`, background: C.brand }} /></div>
               {b && (
                 <div className="mt-1 flex items-center gap-2 text-[11px]">
                   <span className="text-surface-500">benchmark {b.low == null ? 'none published' : `${pct(b.low)}–${pct(b.high)}`} <span className="text-surface-400">({b.what})</span></span>
@@ -239,7 +240,7 @@ function PlanNeeds({ R, M }) {
             {short > 0.5 ? <> The pipeline is <span className="font-semibold text-amber-800">{Math.ceil(short)} short</span> even at the top of the band — the next ninety days are about adding leads, not closing them.</> : <> The pipeline covers the plan if it converts at the band.</>}
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-3 text-center shrink-0">
+        <div className="grid grid-cols-3 gap-2 text-center w-full sm:w-auto">
           {[['Plan needs', Math.round(need)], ['In demo / pilot', P.demo + P.pilot], ['Expected closes', `${low.toFixed(0)}–${high.toFixed(0)}`]].map(([l, v]) => (
             <div key={l} className="rounded-lg bg-surface-50 px-3 py-2"><div className="font-display text-xl text-surface-900">{v}</div><div className="text-[11px] text-surface-500">{l}</div></div>
           ))}

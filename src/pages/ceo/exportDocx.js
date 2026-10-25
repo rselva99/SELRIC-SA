@@ -11,7 +11,7 @@ import {
 } from 'docx';
 import { inline, parseBlocks, resolve, tableFor } from '../../lib/ceoDocs.js';
 
-export const DOCX_FILES = { business_plan: 'SelRic_Business_Plan.docx', market_gtm: 'SelRic_Market_Analysis_and_GTM.docx' };
+export const DOCX_FILES = { business_plan: 'SelRic_Business_Plan.docx', market_gtm: 'SelRic_Market_Analysis_and_GTM.docx', competition: 'SelRic_Competition.docx' };
 
 const LETTER = { width: 12240, height: 15840 }, MARGIN = { top: 1080, right: 1080, bottom: 1080, left: 1080 };
 const CW = LETTER.width - MARGIN.left - MARGIN.right;
@@ -76,7 +76,8 @@ function blocksToDocx(body, R, docs) {
 // cover page (title + the body's paragraphs); the rest are chapters.
 export function docxDocument({ sections, R, docs, edition }) {
   const cover = sections.find((s) => s.key === '_cover');
-  const chapters = sections.filter((s) => s.key !== '_cover');
+  // A json section (the competition dataset) is data for the tables, not a chapter.
+  const chapters = sections.filter((s) => s.key !== '_cover' && s.kind !== 'json');
   const footer = new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'SelRic LLC · Confidential · ', size: 16, color: GREY }), new TextRun({ children: [PageNumber.CURRENT], size: 16, color: GREY })] })] });
   const children = [];
   if (cover) {
@@ -92,9 +93,11 @@ export function docxDocument({ sections, R, docs, edition }) {
     children.push(PB());
   }
   children.push(H('Contents', HeadingLevel.HEADING_1), new TableOfContents('Contents', { hyperlink: true, headingStyleRange: '1-2' }), P('(In Word: right-click the field and choose Update Field.)', { italics: true, size: 18, color: GREY }), PB());
-  chapters.forEach((s, i) => {
-    if (i > 0 && i % 3 === 0) children.push(PB());
-    children.push(H(resolve(s.title, R), HeadingLevel.HEADING_1));
+  let top = 0;
+  chapters.forEach((s) => {
+    const sub = s.level === 3;
+    if (!sub) { if (top > 0 && top % 3 === 0) children.push(PB()); top++; }
+    children.push(H(resolve(s.title, R), sub ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1));
     children.push(...blocksToDocx(s.body, R, docs));
   });
   return new Document({ styles, numbering, features: { updateFields: true }, sections: [{ properties: { page: { size: LETTER, margin: MARGIN } }, footers: { default: footer }, children }] });

@@ -211,3 +211,9 @@ and safe to re-run.
   with the service role, from outside the repo; `verify_model.mjs` asserts the seeded row reproduces the 24 Oct
   numbers to the cent. `platform_research` is no longer read by the app (left in place). Idempotent.
   **Applied 2026-10-24; seeded the same day.**
+- `2026-10-25-platform-competition.sql` — adds 'competition' to the `platform_documents` doc CHECK. The competition
+  document is prose sections plus one `{key:'dataset', kind:'json', data}` section holding the competitor dataset
+  (two markets, features with a group, every competitor's prices, 0/1/2 feature scores, bullets, sources), so the
+  dataset is versioned and restored with the prose; SelRic's rows carry a priceToken and the app resolves our price
+  from the model. No RLS change — the policies are per table. Seeded by `~/selric-business/publish.mjs`; the
+  frozen `SelRic_Competition.docx` goes to the private bucket. Idempotent. **Applied 2026-10-25; seeded the same day.**

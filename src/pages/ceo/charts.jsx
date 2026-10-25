@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CartesianGrid, XAxis, YAxis } from 'recharts';
 import { Table2, LineChart as LineIcon } from 'lucide-react';
 
@@ -39,7 +39,13 @@ export const nowLabel = () => new Date().toISOString().slice(0, 7);
 // Hairline solid grid, no axis lines, muted ticks.
 export const tick = { fontSize: 11, fill: C.text };
 export const Grid = () => <CartesianGrid vertical={false} stroke={C.grid} strokeWidth={1} />;
-export const MonthAxis = (p = {}) => <XAxis dataKey="label" tickFormatter={(v) => mon(v)} tick={tick} tickLine={false} axisLine={false} interval={5} minTickGap={16} {...p} />;
+export const MonthAxis = (p = {}) => <XAxis dataKey="label" tickFormatter={(v) => mon(v)} tick={tick} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={28} {...p} />;
+// True below the sm breakpoint — the charts give their category axes less room there.
+export function useNarrow() {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches);
+  useEffect(() => { const mq = window.matchMedia('(max-width: 639px)'); const f = (e) => setNarrow(e.matches); mq.addEventListener('change', f); return () => mq.removeEventListener('change', f); }, []);
+  return narrow;
+}
 export const NumAxis = ({ fmt = num, width = 44, ...p } = {}) => <YAxis tickFormatter={(v) => fmt(v)} tick={tick} tickLine={false} axisLine={false} width={width} {...p} />;
 // For horizontal bars (layout="vertical"): the number runs along X, the category down Y.
 export const NumAxisX = ({ fmt = num, ...p } = {}) => <XAxis type="number" tickFormatter={(v) => fmt(v)} tick={tick} tickLine={false} axisLine={false} {...p} />;
@@ -52,7 +58,7 @@ export function Tip({ active, payload, label, title = mon, fmt = num, fmts = {} 
   const rows = payload.filter((p) => p.value != null && !p.hide);
   return (
     <div className="rounded-lg border border-surface-200 bg-white px-3 py-2 shadow-card text-xs">
-      <div className="text-surface-500 mb-1">{title(label)}</div>
+      <div className="text-surface-500 mb-1">{title(label, payload)}</div>
       {rows.map((p) => {
         const f = fmts[p.dataKey] || fmt;
         const v = Array.isArray(p.value) ? `${f(p.value[0])} – ${f(p.value[1])}` : f(p.value);
