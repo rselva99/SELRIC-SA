@@ -40,3 +40,12 @@ docs/
 
 # Bookkeeping import CSVs — real financial data, keep local
 data/import/
+
+# Never in this public repo: local reports, FY2025 / pilot bookkeeping
+# migrations, and per-machine Claude Code settings.
+/reports/
+migrations/*fy2025*.sql
+migrations/2026-09-*.sql
+migrations/2026-07-22-book-bs-l20a-upstart-loan.sql
+.claude/settings.local.json
+.claude/launch.json
