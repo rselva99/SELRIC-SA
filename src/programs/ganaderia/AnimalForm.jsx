@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import Modal from '../../components/ui/Modal';
 import Spinner from '../../components/ui/Spinner';
 import { useT } from '../../i18n/I18nContext';
 import { cn } from '../../lib/utils';
 import { useHerd } from './HerdContext';
+import { Sheet } from './Sheet';
+import { btnClay, btnPaper, fieldCls, labelCls } from './components';
 import { SPECIES, CATEGORIES, CATEGORY_SEX, STATUSES, FLAGS, slugify } from './lib';
 
-// New animal / edit the card. One modal, every field the card holds.
+// New animal / edit the card. One sheet, every field the card holds.
 // Dam and sire are picked from the herd (females / males of the same
 // species); a dam that is not in the herd can still be written by name.
 
@@ -27,6 +28,19 @@ function fromRow(a) {
   };
 }
 
+function Seg({ value, options, onChange, label, disabledOf }) {
+  return (
+    <div className="flex gap-1 p-1 rounded-[14px] bg-finca-lineSoft" role="radiogroup" aria-label={label}>
+      {options.map(([v, text]) => (
+        <button key={v} type="button" role="radio" aria-checked={value === v} disabled={disabledOf?.(v)} onClick={() => onChange(v)}
+          className={cn('flex-1 min-h-[44px] px-3 rounded-[11px] text-[15px] font-semibold transition-colors disabled:opacity-40', value === v ? 'bg-finca-surface text-finca-ink shadow-finca' : 'text-finca-ink2 hover:text-finca-ink')}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function AnimalForm({ open, onClose, animal = null, defaults = null, onSaved }) {
   const { t } = useT();
   const { animals, bySlug, lots, saveAnimal } = useHerd();
@@ -34,7 +48,7 @@ export default function AnimalForm({ open, onClose, animal = null, defaults = nu
   const [saving, setSaving] = useState(false);
   const editing = !!animal;
 
-  // Reset when the modal opens (or opens for another animal) — not on every
+  // Reset when the sheet opens (or opens for another animal) — not on every
   // herd refresh, which would wipe what is being typed.
   useEffect(() => {
     if (open) setForm({ ...fromRow(animal), ...(animal ? {} : defaults || {}) });
@@ -54,7 +68,7 @@ export default function AnimalForm({ open, onClose, animal = null, defaults = nu
   const sexLocked = !!CATEGORY_SEX[form.category];
 
   async function handleSubmit(e) {
-    e.preventDefault();
+    e?.preventDefault();
     const name = form.name.trim();
     if (!name) { toast.error(t('lv.form.nameRequired')); return; }
     const dam = form.dam_id ? animals.find((a) => a.id === form.dam_id) : null;
@@ -96,95 +110,78 @@ export default function AnimalForm({ open, onClose, animal = null, defaults = nu
     }
   }
 
-  const label = 'block text-xs font-semibold text-surface-600 mb-1.5';
-
   return (
-    <Modal
+    <Sheet
       open={open}
       onClose={onClose}
       title={editing ? t('lv.form.editTitle', { name: animal.name }) : t('lv.form.newTitle')}
-      description={editing ? null : t('lv.form.newBody')}
-      size="lg"
+      subtitle={editing ? null : t('lv.form.newBody')}
       footer={(
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
-          <button type="submit" form="lv-animal-form" disabled={saving} className="btn-primary">
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className={cn(btnPaper, 'flex-1')}>{t('common.cancel')}</button>
+          <button type="submit" form="lv-animal-form" disabled={saving} className={cn(btnClay, 'flex-[2]')}>
             {saving ? <Spinner size="sm" className="text-white" /> : t(editing ? 'common.save' : 'lv.form.create')}
           </button>
         </div>
       )}
     >
-      <form id="lv-animal-form" onSubmit={handleSubmit} className="space-y-5">
+      <form id="lv-animal-form" onSubmit={handleSubmit} className="space-y-6">
         {/* Who */}
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div className="sm:col-span-2">
-            <label htmlFor="lv-name" className={label}>{t('lv.fields.name')}</label>
-            <input id="lv-name" type="text" value={form.name} onChange={set('name')} className="input-field" placeholder={t('lv.form.namePh')} required autoFocus />
+        <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <label htmlFor="lv-name" className={labelCls}>{t('lv.fields.name')}</label>
+            <input id="lv-name" type="text" value={form.name} onChange={set('name')} className={fieldCls} placeholder={t('lv.form.namePh')} required data-autofocus="" />
           </div>
           <div>
-            <label className={label}>{t('lv.fields.species')}</label>
-            <div className="flex rounded-lg bg-surface-100 p-0.5" role="radiogroup">
-              {SPECIES.map((s) => (
-                <button key={s} type="button" role="radio" aria-checked={form.species === s} onClick={() => setSpecies(s)}
-                  className={cn('flex-1 py-1.5 rounded-md text-sm font-medium transition-colors', form.species === s ? 'bg-white shadow-card text-surface-900' : 'text-surface-500 hover:text-surface-800')}>
-                  {t(`lv.species.${s}`)}
-                </button>
-              ))}
-            </div>
+            <label htmlFor="lv-tag" className={labelCls}>{t('lv.fields.tag')}</label>
+            <input id="lv-tag" type="text" inputMode="numeric" value={form.tag} onChange={set('tag')} className={fieldCls} placeholder="1024" />
           </div>
           <div>
-            <label htmlFor="lv-cat" className={label}>{t('lv.fields.category')}</label>
-            <select id="lv-cat" value={form.category} onChange={(e) => setCategory(e.target.value)} className="input-field">
+            <label htmlFor="lv-brand" className={labelCls}>{t('lv.fields.brand')}</label>
+            <input id="lv-brand" type="text" value={form.brand} onChange={set('brand')} className={cn(fieldCls, 'font-mono uppercase')} placeholder="AB/12" />
+          </div>
+          <div className="col-span-2">
+            <span className={labelCls}>{t('lv.fields.species')}</span>
+            <Seg label={t('lv.fields.species')} value={form.species} onChange={setSpecies} options={SPECIES.map((s) => [s, t(`lv.species.${s}`)])} />
+          </div>
+          <div>
+            <label htmlFor="lv-cat" className={labelCls}>{t('lv.fields.category')}</label>
+            <select id="lv-cat" value={form.category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
               {CATEGORIES[form.species].map((c) => <option key={c} value={c}>{t(`lv.category.${c}`)}</option>)}
             </select>
           </div>
           <div>
-            <label className={label}>{t('lv.fields.sex')}</label>
-            <div className="flex rounded-lg bg-surface-100 p-0.5" role="radiogroup">
-              {['H', 'M'].map((s) => (
-                <button key={s} type="button" role="radio" aria-checked={form.sex === s} disabled={sexLocked && form.sex !== s}
-                  onClick={() => setForm((f) => ({ ...f, sex: s }))}
-                  className={cn('flex-1 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-40', form.sex === s ? 'bg-white shadow-card text-surface-900' : 'text-surface-500 hover:text-surface-800')}>
-                  {t(`lv.sex.${s}`)}
-                </button>
-              ))}
-            </div>
+            <span className={labelCls}>{t('lv.fields.sex')}</span>
+            <Seg label={t('lv.fields.sex')} value={form.sex} onChange={(s) => setForm((f) => ({ ...f, sex: s }))}
+              options={['H', 'M'].map((s) => [s, t(`lv.sex.${s}`)])} disabledOf={(s) => sexLocked && form.sex !== s} />
           </div>
           <div>
-            <label htmlFor="lv-birth" className={label}>{t('lv.fields.birthDate')}</label>
-            <input id="lv-birth" type="date" value={form.birth_date} onChange={set('birth_date')} className="input-field" />
+            <label htmlFor="lv-birth" className={labelCls}>{t('lv.fields.birthDate')}</label>
+            <input id="lv-birth" type="date" value={form.birth_date} onChange={set('birth_date')} className={fieldCls} />
+          </div>
+          <div>
+            <label htmlFor="lv-lot" className={labelCls}>{t('lv.fields.lot')}</label>
+            <input id="lv-lot" type="text" value={form.lot} onChange={set('lot')} className={fieldCls} list="lv-lots" placeholder={t('lv.form.lotPh')} />
+            <datalist id="lv-lots">{lots.map((l) => <option key={l} value={l} />)}</datalist>
           </div>
         </div>
 
-        {/* Marks */}
-        <div className="grid sm:grid-cols-3 gap-4">
-          <div>
-            <label htmlFor="lv-tag" className={label}>{t('lv.fields.tag')}</label>
-            <input id="lv-tag" type="text" value={form.tag} onChange={set('tag')} className="input-field" placeholder="7275" />
+        {/* Family */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <label htmlFor="lv-breed" className={labelCls}>{t('lv.fields.breed')}</label>
+            <input id="lv-breed" type="text" value={form.breed} onChange={set('breed')} className={fieldCls} placeholder="Brahman" />
           </div>
           <div>
-            <label htmlFor="lv-brand" className={label}>{t('lv.fields.brand')}</label>
-            <input id="lv-brand" type="text" value={form.brand} onChange={set('brand')} className="input-field font-mono uppercase" placeholder="TO/SR" />
-          </div>
-          <div>
-            <label htmlFor="lv-lot" className={label}>{t('lv.fields.lot')}</label>
-            <input id="lv-lot" type="text" value={form.lot} onChange={set('lot')} className="input-field" list="lv-lots" placeholder={t('lv.form.lotPh')} />
-            <datalist id="lv-lots">{lots.map((l) => <option key={l} value={l} />)}</datalist>
-          </div>
-          <div>
-            <label htmlFor="lv-breed" className={label}>{t('lv.fields.breed')}</label>
-            <input id="lv-breed" type="text" value={form.breed} onChange={set('breed')} className="input-field" placeholder="Brahman" />
-          </div>
-          <div>
-            <label htmlFor="lv-dam" className={label}>{t('lv.fields.dam')}</label>
-            <select id="lv-dam" value={form.dam_id} onChange={set('dam_id')} className="input-field">
+            <label htmlFor="lv-dam" className={labelCls}>{t('lv.fields.dam')}</label>
+            <select id="lv-dam" value={form.dam_id} onChange={set('dam_id')} className={fieldCls}>
               <option value="">{form.dam_name ? t('lv.form.damByName', { name: form.dam_name }) : t('lv.form.unknown')}</option>
               {dams.map((a) => <option key={a.id} value={a.id}>{a.name}{a.tag ? ` · ${a.tag}` : ''}</option>)}
             </select>
           </div>
           <div>
-            <label htmlFor="lv-sire" className={label}>{t('lv.fields.sire')}</label>
-            <select id="lv-sire" value={form.sire_id} onChange={set('sire_id')} className="input-field">
+            <label htmlFor="lv-sire" className={labelCls}>{t('lv.fields.sire')}</label>
+            <select id="lv-sire" value={form.sire_id} onChange={set('sire_id')} className={fieldCls}>
               <option value="">{form.sire_name ? t('lv.form.damByName', { name: form.sire_name }) : t('lv.form.unknown')}</option>
               {sires.map((a) => <option key={a.id} value={a.id}>{a.name}{a.tag ? ` · ${a.tag}` : ''}</option>)}
             </select>
@@ -192,37 +189,37 @@ export default function AnimalForm({ open, onClose, animal = null, defaults = nu
         </div>
 
         {/* State */}
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="lv-status" className={label}>{t('lv.fields.status')}</label>
-            <select id="lv-status" value={form.status} onChange={set('status')} className="input-field">
+            <label htmlFor="lv-status" className={labelCls}>{t('lv.fields.status')}</label>
+            <select id="lv-status" value={form.status} onChange={set('status')} className={fieldCls}>
               {STATUSES.map((s) => <option key={s} value={s}>{t(`lv.status.${s}`)}</option>)}
             </select>
           </div>
           <div>
-            <label htmlFor="lv-aliases" className={label}>{t('lv.fields.aliases')}</label>
-            <input id="lv-aliases" type="text" value={form.aliases} onChange={set('aliases')} className="input-field" placeholder={t('lv.form.aliasesPh')} />
+            <label htmlFor="lv-aliases" className={labelCls}>{t('lv.fields.aliases')}</label>
+            <input id="lv-aliases" type="text" value={form.aliases} onChange={set('aliases')} className={fieldCls} placeholder={t('lv.form.aliasesPh')} />
           </div>
-          <div className="sm:col-span-2">
-            <label className={label}>{t('lv.fields.flags')}</label>
-            <div className="flex flex-wrap gap-1.5">
+          <div className="col-span-2">
+            <span className={labelCls}>{t('lv.fields.flags')}</span>
+            <div className="flex flex-wrap gap-2">
               {FLAGS.map((f) => {
                 const on = form.flags.includes(f);
                 return (
                   <button key={f} type="button" onClick={() => toggleFlag(f)} aria-pressed={on}
-                    className={cn('px-2.5 py-1 rounded-full text-xs font-medium border transition-colors', on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-surface-300 text-surface-600 hover:border-surface-400')}>
+                    className={cn('min-h-[40px] px-3.5 rounded-full text-[14px] font-medium border transition-colors', on ? 'bg-finca-forest border-finca-forest text-white' : 'bg-finca-surface border-finca-line text-finca-ink hover:border-finca-field')}>
                     {t(`lv.flags.${f}`)}
                   </button>
                 );
               })}
             </div>
           </div>
-          <div className="sm:col-span-2">
-            <label htmlFor="lv-notes" className={label}>{t('lv.fields.notes')}</label>
-            <textarea id="lv-notes" value={form.notes} onChange={set('notes')} className="input-field min-h-[80px]" placeholder={t('lv.form.notesPh')} />
+          <div className="col-span-2">
+            <label htmlFor="lv-notes" className={labelCls}>{t('lv.fields.notes')}</label>
+            <textarea id="lv-notes" value={form.notes} onChange={set('notes')} className={cn(fieldCls, 'min-h-[96px] py-3')} placeholder={t('lv.form.notesPh')} />
           </div>
         </div>
       </form>
-    </Modal>
+    </Sheet>
   );
 }

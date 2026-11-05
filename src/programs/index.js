@@ -16,14 +16,23 @@ import { Briefcase, Tractor } from 'lucide-react';
 //             that is not built yet gets the holding page after sign-in
 //   home    — where the program's pages start
 //   accent  — a key of ACCENTS (Tailwind classes must be literal strings)
+//   price   — the public list price per month, { amount, currency }; what
+//             Settings shows the workspace it runs
 //
 // "/" is the public site for everyone, signed in or out, so no program may
 // claim it as its home. Business keeps its other historical routes at the root
 // (/transactions, /reports…); only its dashboard moved to /dashboard.
 export const PROGRAMS = [
-  { key: 'business',  icon: Briefcase, status: 'live',  built: true, home: '/dashboard', accent: 'brand', default: true },
-  { key: 'ganaderia', icon: Tractor,   status: 'pilot', built: true, home: '/ganaderia', accent: 'ranch' },
+  { key: 'business',  icon: Briefcase, status: 'live',  built: true, home: '/dashboard', accent: 'brand', default: true, price: { amount: 100, currency: 'USD' } },
+  { key: 'ganaderia', icon: Tractor,   status: 'pilot', built: true, home: '/ganaderia', accent: 'ranch', price: { amount: 150, currency: 'USD' } },
 ];
+
+// "$150" — the list price as the public site writes it, in either language.
+export function priceLabel(program) {
+  const p = program?.price;
+  if (!p) return '';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency, maximumFractionDigits: 0 }).format(p.amount);
+}
 
 export const DEFAULT_PROGRAM = 'business';
 

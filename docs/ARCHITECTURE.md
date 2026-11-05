@@ -13,7 +13,7 @@ the batch that changes a route, a table, an engine or a flow.
  │ /login …     auth pages                │   │ api/*.js functions → │──►│ Postgres + RLS + RPCs     │
  │ /app         AppEntry → program home   │──►│  Anthropic (server-  │   │ Storage (private buckets, │
  │ /dashboard … Business (AppLayout)      │   │  side key)           │   │  signed URLs)             │
- │ /ganaderia/* Ganadería (AppLayout)     │   └──────────────────────┘   └───────────────────────────┘
+ │ /ganaderia/* Ganadería (own shell)     │   └──────────────────────┘   └───────────────────────────┘
  │ /ceo/*       CEO shell (CeoLayout)     │──── supabase-js with the anon key; RLS decides everything ──►
  └───────────────────────────────────────┘
  ~/selric-business/ (outside the repo) ── publish.mjs with the service-role key ──► platform_* tables, platform-docs bucket
@@ -28,6 +28,8 @@ the batch that changes a route, a table, an engine or a flow.
 - `public.is_admin()` gates admin-only tables; `public.is_platform_admin()` (email in `platform_admins`)
   gates every `platform_*` table, the `ceo_overview()` RPC and the `platform-docs` bucket.
 - `organizations.is_internal = true` marks SelRic's own workspace; an internal account only ever sees `/ceo`.
+- `organizations.is_test = true` marks a smoke-test or demo workspace; `ceo_overview()` leaves test and
+  internal workspaces out of the workspace list and the platform totals (Overview and Pilots on `/ceo`).
 - `organizations.accounting_mode` ∈ `full|simple`; `organizations.config` holds the Simple-mode portal
   (template, modules on/off, custom names, dashboard sections, custom fields).
 
@@ -80,11 +82,21 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 | `/transactions` `/sales` `/customers` `/tasks` `/reports` `/inventory` | `ProtectedRoute` (+ `module=` for Simple portals) | Business, both modes |
 | `/accountant/*` `/bookkeeping/*` `/ledger` `/journal` `/accounts` `/cash-management` `/assets` `/payroll` | `adminOnly fullOnly` (+ `PinGate` on accountant) | Full package |
 | `/users` `/settings` | `adminOnly program={null}` | shared by every program |
-| `/ganaderia` `/ganaderia/animales[/:slug]` `/ganaderia/eventos` | `GanaderiaRoot` (program `ganaderia`) + `HerdProvider` | `src/programs/ganaderia/*` |
+| `/ganaderia` `/ganaderia/animales[/:slug]` `/ganaderia/eventos` `/ganaderia/lotes` `/ganaderia/informes` | `GanaderiaRoot` (program `ganaderia`) + `HerdProvider` + `RegistrarProvider` | `src/programs/ganaderia/*` (`informes` is a "Pronto" page; `_kit`, every herd component, exists only under `import.meta.env.DEV`) |
 | `/ceo/*` | internal account → `CeoLayout` | `pages/ceo/CeoPage` (tabs below) |
 
 `ProtectedRoute` order: not signed in → `/login`; internal → `/ceo`; wrong program → that program's home;
 `adminOnly`; `fullOnly` in Simple → `/transactions`; module off → `/dashboard`.
+
+**Ganadería shell** — `AppLayout` hands a `ganaderia` workspace to `GanaderiaShell` (also on `/users` and
+`/settings`): below 768 px a `BottomNav` (Inicio · Animales · raised Registrar · Eventos · Más, Más a sheet),
+above it a sidebar. `HerdProvider` and `RegistrarProvider` pass through when a parent already provides them,
+so the herd loads once and Registrar opens from any page. Every form is a `Sheet` (`Sheet.jsx`: a portal into
+`body`, full screen on a phone, 560 px on desktop; `ActionSheet` for menus). Registrar (`RegistrarSheet.jsx`)
+is three steps — what happened, which animal(s), the details — and saves through `recordEvents`, one
+`lv_record_event` per animal and one refresh. The pages' derived numbers are pure helpers in `lib.js` that take
+`today`. The program registry (`src/programs/index.js`) carries each program's list price (`price`,
+`priceLabel`), which Settings shows.
 
 **CEO tabs** (`/ceo`, `/ceo/<tab>`; rail in `CeoLayout`, drawer below `lg`): Overview · Pilots · Funnel
 (`FunnelPage`) · Research · Competition (`CompetitionPage`) · Model (`ModelPage`) · Documents
@@ -143,10 +155,22 @@ This repo and the bundle are public. Never staged, committed or pasted into code
 - anything from a customer's or pilot's workspace: names, amounts, statements, screenshots
 - keys and tokens (service role, Anthropic, EmailJS private values)
 
-`docs/` and `scripts/` are gitignored; only `docs/ARCHITECTURE.md` and `scripts/i18n_parity.mjs` (plus the
-scripts already tracked) are in git, added with `git add -f`.
+`docs/` and `scripts/` are gitignored; only `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs` and `scripts/smoke.mjs`
+(plus the scripts already tracked) are in git, added with `git add -f`. `.smoke/` (screenshots of real pages) is ignored.
 
 ## 8. Checks
 
-`npm run build` · `node scripts/i18n_parity.mjs` · `verify_model.mjs` (outside the repo) · the Browser-pane
-walk at desktop and 390 px in EN and ES. Tests, Playwright and hooks are not set up yet.
+`npm run check` = `npm run build` → `node scripts/i18n_parity.mjs` → `npm run test` → `npm run smoke`.
+- **Unit tests** (`tests/`, vitest, node): `ceoModel` invariants on synthetic assumptions, a no-constants
+  guard on the engine's numeric literals, and the golden fixture (`~/selric-business/fixtures/golden-v<N>.json`,
+  written by `make_golden.mjs` from one stored version) to the cent; `ceoDocs` parsing and tokens, and every
+  token in every seeded document (read from `~/selric-business/docs`); `ceoCompetition` on a synthetic market;
+  the herd helpers in `src/programs/ganaderia/lib.js` on a synthetic herd with `today` pinned.
+  The confidential suites skip where `SELRIC_PRIVATE_DIR` is absent.
+- **Smoke** (`scripts/smoke.mjs`, Playwright with the installed Chrome against `vite preview`): public pages,
+  every `/ceo` tab and Documents sub-tab (account `SMOKE_CEO_*`, a platform admin), the herd pages
+  (`SMOKE_GAN_*`, a Ganadería test workspace) at 1366 and 390 px — no console/page error, no failed request,
+  marks in every chart, no horizontal overflow. Screenshots and `report.json` in `.smoke/` (ignored).
+- **Commit guard** (`.claude/settings.json` → `.claude/hooks/guard-commit.mjs`): a `git commit` run by Claude is
+  blocked on a never-stage path, a key-like staged line, staging in the same command, or a failing check.
+- `verify_model.mjs` (outside the repo) when assumptions change.

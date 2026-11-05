@@ -65,7 +65,7 @@ export function slugify(name) {
     .slice(0, 60) || 'animal';
 }
 
-// Two letters for the avatar: "Cara Negra" → "CN", "Urraca" → "UR".
+// Two letters for the avatar: "Pinta Roja" → "PR", "Canela" → "CA".
 export function monogram(name) {
   const words = String(name || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return '·';
@@ -127,4 +127,185 @@ export function formatNum(n, max = 1) {
 // Sort helper: newest first by date, then by creation.
 export function byDateDesc(a, b) {
   return (b.date || '').localeCompare(a.date || '') || (b.created_at || '').localeCompare(a.created_at || '');
+}
+
+// ── What the pages derive from the herd ─────────────────────────────────────
+// Every helper takes `today` so the tests can pin it; the pages pass the
+// device's local date.
+
+export function daysUntil(iso, today = todayISO()) {
+  return daysBetween(today, iso);
+}
+
+// Months a pregnant animal carries today: what the check found plus the time
+// since the check.
+export function pregnancyMonths(animal, today = todayISO()) {
+  if (!animal?.pregnant) return null;
+  const atCheck = Number(animal.preg_months) || 0;
+  const since = animal.preg_date ? Math.max(0, daysBetween(animal.preg_date, today) || 0) : 0;
+  return Math.round((atCheck + since / 30.4) * 10) / 10;
+}
+
+// Length of a pregnancy in months, for the 0–9 track.
+export function gestationMonths(animal) {
+  return (GESTATION_DAYS[animal?.species] || GESTATION_DAYS.bovino) / 30.4;
+}
+
+// A breeding cow or heifer that is not known pregnant and has had no
+// palpación in `days`. The last check is the card's preg_date (the RPC sets
+// it on every palpación) or the newest palpación event, whichever is later.
+export function overdueForPalpation(animal, days = 90, today = todayISO(), animalEvents = []) {
+  if (!isActive(animal) || !['vaca', 'vaquilla'].includes(animal.category) || animal.pregnant === true) return false;
+  const lastEvent = animalEvents.find((e) => e.type === 'palpacion')?.date || null;
+  const last = [animal.preg_date, lastEvent].filter(Boolean).sort().pop();
+  return !last || daysBetween(last, today) > days;
+}
+
+// Litres recorded on one day.
+export function todayMilk(events, today = todayISO()) {
+  let liters = 0, milkings = 0;
+  for (const e of events) {
+    if (e.type !== 'leche' || e.date !== today) continue;
+    milkings += 1;
+    liters += Number(e.data?.liters) || 0;
+  }
+  return { liters: Math.round(liters * 10) / 10, milkings };
+}
+
+// Litres per day for the last `days` days, oldest first.
+export function milkSeries(events, days = 7, today = todayISO()) {
+  const from = addDays(today, -(days - 1));
+  const byDay = {};
+  for (const e of events) {
+    if (e.type !== 'leche' || e.date < from || e.date > today) continue;
+    byDay[e.date] = (byDay[e.date] || 0) + (Number(e.data?.liters) || 0);
+  }
+  return Array.from({ length: days }, (_, i) => {
+    const date = addDays(from, i);
+    return { date, liters: Math.round((byDay[date] || 0) * 10) / 10 };
+  });
+}
+
+// The animals that gave the most milk over the last `days` days.
+export function topMilkers(events, days = 7, today = todayISO(), n = 3) {
+  const from = addDays(today, -(days - 1));
+  const sum = {};
+  for (const e of events) {
+    if (e.type !== 'leche' || e.date < from || e.date > today) continue;
+    sum[e.animal_id] = (sum[e.animal_id] || 0) + (Number(e.data?.liters) || 0);
+  }
+  return Object.entries(sum)
+    .map(([animal_id, liters]) => ({ animal_id, liters: Math.round(liters * 10) / 10 }))
+    .sort((a, b) => b.liters - a.liters)
+    .slice(0, n);
+}
+
+// What a category counts as in a lot's composition bar.
+export const CATEGORY_GROUP = {
+  vaca: 'hembras', cerda: 'hembras',
+  vaquilla: 'jovenes', novillo: 'jovenes', engorde: 'jovenes',
+  ternero: 'crias', ternera: 'crias', lechon: 'crias',
+  toro: 'machos', verraco: 'machos',
+};
+export const GROUP_ORDER = ['hembras', 'jovenes', 'crias', 'machos'];
+
+// Active animals per lot: the head count, how many are pregnant, and the mix.
+// Biggest lot first; animals with no lot are one group under ''.
+export function lotComposition(animals) {
+  const lots = {};
+  for (const a of animals) {
+    if (!isActive(a)) continue;
+    const k = a.lot || '';
+    const l = (lots[k] ||= { lot: k, total: 0, pregnant: 0, cats: {}, groups: { hembras: 0, jovenes: 0, crias: 0, machos: 0 } });
+    l.total += 1;
+    if (a.pregnant === true) l.pregnant += 1;
+    l.cats[a.category] = (l.cats[a.category] || 0) + 1;
+    const g = CATEGORY_GROUP[a.category];
+    if (g) l.groups[g] += 1;
+  }
+  return Object.values(lots).sort((x, y) => y.total - x.total || x.lot.localeCompare(y.lot));
+}
+
+// Flags that ask for something to be done (the rest describe the animal).
+export const ACTION_FLAGS = ['por_confirmar', 'vender'];
+
+// "Hoy te toca": overdue calvings, calvings within `window` days, one line for
+// the cows due a palpación, one line per action flag — in that order.
+export function needsYou(animals, today = todayISO(), eventsByAnimal = {}, window = 45) {
+  const active = animals.filter(isActive);
+  const overdue = [], due = [];
+  for (const a of active) {
+    const date = expectedCalving(a);
+    if (!date) continue;
+    const days = daysBetween(today, date);
+    if (days < 0) overdue.push({ kind: 'overdue', animal: a, date, days: -days });
+    else if (days <= window) due.push({ kind: 'due', animal: a, date, days });
+  }
+  overdue.sort((x, y) => y.days - x.days);
+  due.sort((x, y) => x.days - y.days);
+  const rows = [...overdue, ...due];
+  const unchecked = active.filter((a) => overdueForPalpation(a, 90, today, eventsByAnimal[a.id] || [])).length;
+  if (unchecked) rows.push({ kind: 'unchecked', n: unchecked });
+  for (const flag of ACTION_FLAGS) {
+    const n = active.filter((a) => a.flags?.includes(flag)).length;
+    if (n) rows.push({ kind: 'flag', flag, n });
+  }
+  return rows;
+}
+
+// The record tiles in the order this workspace uses them: most recorded
+// first, the vocabulary's own order breaking ties.
+export function typeOrder(events) {
+  const count = {};
+  for (const e of events) count[e.type] = (count[e.type] || 0) + 1;
+  return EVENT_TYPES
+    .map((e, i) => ({ key: e.key, n: count[e.key] || 0, i }))
+    .sort((a, b) => b.n - a.n || a.i - b.i)
+    .map((e) => e.key);
+}
+
+// The next chapa: one more than the highest all-digit chapa in the herd,
+// padded to the same width ("0812" → "0813"). Empty when no chapa is a number.
+export function nextTag(animals) {
+  let best = null;
+  for (const a of animals) {
+    const tag = String(a.tag || '').trim();
+    if (!/^\d{1,9}$/.test(tag)) continue;
+    if (!best || Number(tag) > Number(best)) best = tag;
+  }
+  if (!best) return '';
+  return String(Number(best) + 1).padStart(best.length, '0');
+}
+
+// Search the herd. A number finds the chapa first (exact, then starts with,
+// then contains); words find the name, alias or chapa. Active animals first.
+export function matchAnimals(animals, q) {
+  const s = String(q || '').trim().toLowerCase();
+  if (!s) return animals;
+  const rank = (a) => {
+    const tag = String(a.tag || '').toLowerCase();
+    if (tag && tag === s) return 0;
+    if (tag && tag.startsWith(s)) return 1;
+    if (tag && tag.includes(s)) return 2;
+    if (a.name.toLowerCase().startsWith(s)) return 3;
+    if (a.name.toLowerCase().includes(s)) return 4;
+    if ((a.aliases || []).some((x) => x.toLowerCase().includes(s))) return 5;
+    if (a.brand && a.brand.toLowerCase().includes(s)) return 6;
+    if (a.dam_name && a.dam_name.toLowerCase().includes(s)) return 7;
+    return null;
+  };
+  return animals
+    .map((a) => ({ a, r: rank(a) }))
+    .filter((x) => x.r != null)
+    .sort((x, y) => x.r - y.r || (isActive(y.a) - isActive(x.a)) || x.a.name.localeCompare(y.a.name))
+    .map((x) => x.a);
+}
+
+// Sort by chapa when both have one (numerically), then by name.
+export function byTag(a, b) {
+  const ta = Number(a.tag), tb = Number(b.tag);
+  const na = !!a.tag && Number.isFinite(ta), nb = !!b.tag && Number.isFinite(tb);
+  if (na && nb) return ta - tb;
+  if (na !== nb) return na ? -1 : 1;
+  return a.name.localeCompare(b.name);
 }

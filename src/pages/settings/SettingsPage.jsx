@@ -8,7 +8,7 @@ import Spinner from '../../components/ui/Spinner';
 import { Building2, BookOpen, ArrowLeftRight, Check, Languages, BadgeCheck, ArrowRight, LayoutGrid, LayoutTemplate } from 'lucide-react';
 import PortalEditor from '../../components/PortalEditor';
 import { cn } from '../../lib/utils';
-import { PROGRAMS, getProgram, accentOf } from '../../programs';
+import { PROGRAMS, getProgram, accentOf, priceLabel } from '../../programs';
 
 // Workspace settings (admins only): the business, its programs, how it keeps
 // its books, language and plan. Writes go to the organization row and to
@@ -134,7 +134,7 @@ export default function SettingsPage() {
             <div className="text-xs text-surface-500">{t('settings.programRuns')}</div>
             <div className="font-medium text-surface-900">{t(`programs.${program.key}.name`)}</div>
           </div>
-          <span className="font-mono text-sm text-surface-700 shrink-0">{t(`programs.${program.key}.price`)} <span className="font-sans text-surface-500">{t('site.perMonth')}</span></span>
+          <span className="font-mono text-sm text-surface-700 shrink-0">{priceLabel(program)} <span className="font-sans text-surface-500">{t('site.perMonth')}</span></span>
         </div>
       </section>
 

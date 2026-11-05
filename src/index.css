@@ -154,6 +154,57 @@
   .week-row { opacity: 1; animation: none; }
 }
 
+/* Batavia Ganadería. Pages rise in with opacity only: a transform on the page
+   wrapper would make it the containing block for position: fixed and trap
+   every overlay inside the page column. */
+@keyframes rise {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-rise {
+  animation: rise 0.25s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise { animation: none; }
+}
+
+/* A row of chips that scrolls sideways; the fade on the right edge says
+   there is more. */
+.chip-row {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.chip-row::-webkit-scrollbar {
+  display: none;
+}
+
+/* The phone's bottom nav: 64px plus the raised Registrar button (30px above
+   it) plus the iPhone home bar. Content and sticky bars keep clear of it. */
+.pb-nav {
+  padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+}
+.h-nav {
+  height: calc(64px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+/* A sticky bar inside a .pb-nav scroller: browsers measure `bottom` from the
+   inner edge of the scroller's padding, so .pb-nav already clears the nav and
+   this only adds a gap. Adding the nav height again lifts the bar over the
+   last card. */
+.bottom-above-nav {
+  bottom: 8px;
+}
+.pb-safe {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 768px) {
+  .pb-nav { padding-bottom: 2rem; }
+}
+
 /* Toast overrides */
 [data-sonner-toaster] {
   font-family: 'DM Sans', system-ui, sans-serif !important;

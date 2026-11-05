@@ -12,11 +12,23 @@ import { byDateDesc } from './lib';
 //   saveAnimal(row, id?)   insert or update one lv_animals row
 //   deleteAnimal(id)       remove a card (its events go with it)
 //   recordEvent(p)         lv_record_event RPC — the event plus what it means
+//   recordEvents(ps)       the same for several animals, one after another,
+//                          then one refresh; returns { ok, data | error } each
 //   deleteEvent(id)        lv_delete_event RPC — undoes it
+//
+// The Ganadería shell and the /ganaderia routes both mount a provider, so the
+// Registrar button works on shared pages (Settings, Team) too. The inner one
+// sees the outer and steps aside, so the herd loads once.
 
 const HerdContext = createContext(null);
 
 export function HerdProvider({ children }) {
+  const parent = useContext(HerdContext);
+  if (parent) return children;
+  return <HerdStore>{children}</HerdStore>;
+}
+
+function HerdStore({ children }) {
   const { user } = useAuth();
   const [animals, setAnimals] = useState([]);
   const [events, setEvents] = useState([]);
@@ -71,6 +83,16 @@ export function HerdProvider({ children }) {
     return data;
   }, [refresh]);
 
+  const recordEvents = useCallback(async (ps) => {
+    const results = [];
+    for (const p of ps) {
+      const { data, error: err } = await supabase.rpc('lv_record_event', { p });
+      results.push(err ? { ok: false, error: err } : { ok: true, data });
+    }
+    await refresh();
+    return results;
+  }, [refresh]);
+
   const deleteEvent = useCallback(async (id) => {
     const { error: err } = await supabase.rpc('lv_delete_event', { p_id: id });
     if (err) throw err;
@@ -83,8 +105,8 @@ export function HerdProvider({ children }) {
     const eventsByAnimal = {};
     for (const ev of events) (eventsByAnimal[ev.animal_id] ||= []).push(ev);
     const lots = [...new Set(animals.map((a) => a.lot).filter(Boolean))].sort((x, y) => x.localeCompare(y));
-    return { animals, events, byId, bySlug, eventsByAnimal, lots, loading, error, refresh, saveAnimal, deleteAnimal, recordEvent, deleteEvent };
-  }, [animals, events, loading, error, refresh, saveAnimal, deleteAnimal, recordEvent, deleteEvent]);
+    return { animals, events, byId, bySlug, eventsByAnimal, lots, loading, error, refresh, saveAnimal, deleteAnimal, recordEvent, recordEvents, deleteEvent };
+  }, [animals, events, loading, error, refresh, saveAnimal, deleteAnimal, recordEvent, recordEvents, deleteEvent]);
 
   return <HerdContext.Provider value={value}>{children}</HerdContext.Provider>;
 }

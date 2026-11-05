@@ -49,3 +49,4 @@ migrations/2026-09-*.sql
 migrations/2026-07-22-book-bs-l20a-upstart-loan.sql
 .claude/settings.local.json
 .claude/launch.json
+/.smoke/

@@ -1,168 +1,213 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Search, Trash2, X } from 'lucide-react';
+import { Search, ChevronDown, MoreHorizontal, Trash2, Milk, CalendarDays } from 'lucide-react';
 import { useT } from '../../i18n/I18nContext';
-import Spinner from '../../components/ui/Spinner';
 import { cn } from '../../lib/utils';
 import { useHerd } from './HerdContext';
-import { AnimalAvatar, EventIcon, eventSummary, fmtDate } from './components';
-import { EVENT_TYPES, addDays, todayISO } from './lib';
-import EventForm from './EventForm';
+import { useRegistrar } from './RegistrarSheet';
+import { ActionSheet } from './Sheet';
+import {
+  ChapaTag, EventIcon, eventSummary, fmtDate, PageTitle, Card, Chip, ChipRow, Loading, LoadFailed, fieldCls,
+} from './components';
+import { addDays, todayISO, typeOrder, isActive, formatNum } from './lib';
 
-// Eventos: one tile per thing that happens in the corral (tap, pick the
-// animal, save) and the log of everything recorded, newest first.
+// Eventos: the notebook, newest day first. A line for the week, chips for the
+// type, one chip for the range. Each day says what it held; the day's milk
+// folds into one line that opens. When this morning's milk is not written
+// down yet, a dashed line asks for it.
 
-const PAGE = 60;
+const RANGES = ['7', '30', '90', '365', 'all'];
+const DAYS_PAGE = 21;
 
 export default function EventsPage() {
-  const { t, locale } = useT();
-  const { events, byId, loading, error, deleteEvent } = useHerd();
+  const { t, tn, locale } = useT();
+  const { animals, events, byId, loading, error, deleteEvent } = useHerd();
+  const registrar = useRegistrar();
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState('');
-  const [open, setOpen] = useState(null);     // null = closed, '' = open no type, 'parto' = open with type
-  const [limit, setLimit] = useState(PAGE);
-  const [confirmId, setConfirmId] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [openMilk, setOpenMilk] = useState({});
+  const [days, setDays] = useState(DAYS_PAGE);
+  const [menu, setMenu] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const today = todayISO();
 
   const type = params.get('type') || '';
-  const range = params.get('range') || 'all';
+  const range = RANGES.includes(params.get('range')) ? params.get('range') : '30';
   const setP = (k, v) => { const n = new URLSearchParams(params); if (v) n.set(k, v); else n.delete(k); setParams(n, { replace: true }); };
+
+  const week = useMemo(() => {
+    const from = addDays(today, -6);
+    const list = events.filter((e) => e.date >= from && e.date <= today);
+    const counts = {};
+    let liters = 0;
+    for (const e of list) {
+      if (e.type === 'leche') liters += Number(e.data?.liters) || 0;
+      else counts[e.type] = (counts[e.type] || 0) + 1;
+    }
+    return { counts, liters, any: list.length > 0 };
+  }, [events, today]);
+
+  const order = useMemo(() => typeOrder(events), [events]);
+  const typeCounts = useMemo(() => {
+    const m = {};
+    for (const e of events) m[e.type] = (m[e.type] || 0) + 1;
+    return m;
+  }, [events]);
 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const since = range === '30' ? addDays(todayISO(), -30) : range === '90' ? addDays(todayISO(), -90) : range === '365' ? addDays(todayISO(), -365) : null;
+    const since = range === 'all' ? null : addDays(today, -(Number(range) - 1));
     return events
       .filter((e) => !type || e.type === type)
       .filter((e) => !since || e.date >= since)
       .filter((e) => {
         if (!s) return true;
         const a = byId[e.animal_id];
-        return (a && (a.name.toLowerCase().includes(s) || (a.tag && a.tag.toLowerCase().includes(s)))) || (e.note && e.note.toLowerCase().includes(s)) || (e.source && e.source.toLowerCase().includes(s));
+        return (a && (a.name.toLowerCase().includes(s) || String(a.tag || '').toLowerCase().includes(s))) || (e.note && e.note.toLowerCase().includes(s));
       });
-  }, [events, byId, type, range, q]);
+  }, [events, byId, type, range, q, today]);
 
-  const counts = useMemo(() => {
-    const m = {};
-    for (const e of events) m[e.type] = (m[e.type] || 0) + 1;
-    return m;
-  }, [events]);
+  // Day groups: the day's events, and its milk set apart.
+  const groups = useMemo(() => {
+    const out = [];
+    for (const e of rows) {
+      let g = out[out.length - 1];
+      if (!g || g.date !== e.date) { g = { date: e.date, items: [], milk: [] }; out.push(g); }
+      (e.type === 'leche' && type !== 'leche' ? g.milk : g.items).push(e);
+    }
+    return out;
+  }, [rows, type]);
 
-  async function handleDelete(id) {
-    setBusy(true);
+  async function handleDelete(ev) {
     try {
-      await deleteEvent(id);
+      await deleteEvent(ev.id);
       toast.success(t('lv.ficha.eventDeleted'));
-      setConfirmId(null);
     } catch (err) {
       toast.error(err.message || t('lv.form.saveFailed'));
-    } finally {
-      setBusy(false);
     }
   }
 
-  if (loading) return <div className="flex items-center gap-3 text-surface-500 text-sm"><Spinner size="sm" /> {t('common.loading')}</div>;
-  if (error) return <div className="card p-6 text-sm text-red-700">{t('lv.loadFailed')}</div>;
+  if (loading) return <Loading />;
+  if (error) return <LoadFailed />;
 
-  // Group the visible rows by date so the log reads like the notebook.
-  const groups = [];
-  for (const e of rows.slice(0, limit)) {
-    const last = groups[groups.length - 1];
-    if (last && last.date === e.date) last.items.push(e); else groups.push({ date: e.date, items: [e] });
-  }
+  const weekParts = [
+    ...order.filter((k) => week.counts[k]).map((k) => tn(`lv.count.${k}`, week.counts[k])),
+    week.liters > 0 ? t('lv.events.weekMilk', { l: formatNum(week.liters, 0) }) : null,
+  ].filter(Boolean);
+  const milkedToday = events.some((e) => e.type === 'leche' && e.date === today);
+  const hasCows = animals.some((a) => isActive(a) && a.category === 'vaca');
+  const dayLabel = (d) => (d === today ? t('lv.events.today') : d === addDays(today, -1) ? t('lv.events.yesterday')
+    : fmtDate(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: d.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric' }));
+
+  const row = (ev, { showDate = false } = {}) => {
+    const a = byId[ev.animal_id];
+    const summary = eventSummary(ev, t, byId);
+    return (
+      <li key={ev.id} className="flex items-center gap-3 min-h-[60px] pl-3 pr-1 py-1.5">
+        <EventIcon type={ev.type} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[15px] truncate">
+            {a ? <Link to={`/ganaderia/animales/${a.slug}`} className="font-semibold text-finca-ink hover:underline">{a.name}</Link> : <span className="font-semibold">—</span>}
+            <span className="text-finca-ink2"> · {t(`lv.types.${ev.type}`)}</span>
+          </div>
+          {(summary || ev.note || showDate) && (
+            <div className="text-[13px] text-finca-ink2 truncate">{[summary, ev.note].filter(Boolean).join(' · ')}</div>
+          )}
+        </div>
+        {a && <ChapaTag animal={a} size="sm" className="hidden sm:inline-flex" />}
+        <button type="button" onClick={() => setMenu(ev)} className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center text-finca-ink2 hover:bg-finca-lineSoft hover:text-finca-ink"
+          aria-label={t('lv.ficha.eventActions', { type: t(`lv.types.${ev.type}`), date: fmtDate(ev.date, locale) })} data-testid="lv-event-menu">
+          <MoreHorizontal size={20} />
+        </button>
+      </li>
+    );
+  };
 
   return (
-    <div className="animate-fade-in">
-      <div>
-        <h1 className="page-title">{t('nav.lvEvents')}</h1>
-        <p className="text-surface-500 text-sm mt-1">{t('lv.events.sub')}</p>
-      </div>
+    <div className="animate-rise">
+      <PageTitle sub={weekParts.length ? `${t('lv.events.thisWeek')}: ${weekParts.join(' · ')}` : t('lv.events.weekEmpty')}>
+        {t('nav.lvEvents')}
+      </PageTitle>
 
-      {/* Record tiles */}
-      <div className="mt-5 grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-7 gap-2">
-        {EVENT_TYPES.map((e) => (
-          <button key={e.key} type="button" onClick={() => setOpen(e.key)}
-            className="card-hover flex flex-col items-center gap-2 px-2 py-3.5 text-xs font-medium text-surface-700">
-            <EventIcon type={e.key} size="lg" />
-            <span className="truncate max-w-full">{t(`lv.types.${e.key}`)}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="mt-6 flex flex-col lg:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} className="input-field pl-9" placeholder={t('lv.events.searchPh')} aria-label={t('lv.events.searchPh')} />
-        </div>
-        <div className="flex gap-2">
-          <select value={type} onChange={(e) => setP('type', e.target.value)} className="input-field w-auto" aria-label={t('lv.event.type')}>
-            <option value="">{t('lv.events.allTypes')}</option>
-            {EVENT_TYPES.map((e) => <option key={e.key} value={e.key}>{t(`lv.types.${e.key}`)}{counts[e.key] ? ` (${counts[e.key]})` : ''}</option>)}
-          </select>
-          <div className="flex rounded-lg bg-surface-100 p-0.5">
-            {['30', '90', '365', 'all'].map((r) => (
-              <button key={r} type="button" onClick={() => setP('range', r === 'all' ? '' : r)} aria-pressed={range === r}
-                className={cn('px-3 py-1.5 rounded-md text-xs font-medium transition-colors', range === r ? 'bg-white shadow-card text-surface-900' : 'text-surface-500 hover:text-surface-800')}>
-                {t(`lv.events.range.${r}`)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      {type && (
-        <div className="mt-3 flex items-center gap-2 text-xs">
-          <span className="text-surface-500">{t('lv.animals.showing', { n: rows.length })}</span>
-          <button type="button" onClick={() => setP('type', '')} className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-800 border border-brand-100 pl-2.5 pr-1.5 py-0.5 font-medium">{t(`lv.types.${type}`)} <X size={12} /></button>
-        </div>
+      {hasCows && !milkedToday && (
+        <button type="button" onClick={() => registrar.open({ type: 'leche' })} data-testid="lv-milk-cta"
+          className="mt-4 w-full min-h-[56px] flex items-center gap-3 px-4 rounded-2xl border-2 border-dashed border-finca-lecheInk/50 bg-finca-leche/40 text-left text-finca-lecheInk hover:bg-finca-leche/70 transition-colors">
+          <Milk size={20} aria-hidden="true" />
+          <span className="flex-1 text-[15px] font-semibold">{new Date().getHours() < 12 ? t('lv.events.milkCtaMorning') : t('lv.events.milkCta')}</span>
+        </button>
       )}
 
-      {/* Log */}
-      <div className="card mt-4">
-        {rows.length === 0 ? (
-          <p className="px-5 py-10 text-sm text-surface-500 text-center">{t('lv.events.empty')}</p>
-        ) : groups.map((g) => (
-          <div key={g.date} className="border-b border-surface-100 last:border-b-0">
-            <div className="px-5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-surface-500">{fmtDate(g.date, locale, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</div>
-            <ul>
-              {g.items.map((ev) => {
-                const a = byId[ev.animal_id];
-                const summary = eventSummary(ev, t, byId);
-                return (
-                  <li key={ev.id} className="group flex items-center gap-3 px-5 py-2.5 hover:bg-surface-50">
-                    <EventIcon type={ev.type} size="sm" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate">
-                        {a ? <Link to={`/ganaderia/animales/${a.slug}`} className="font-medium hover:underline">{a.name}</Link> : <span className="font-medium">—</span>}
-                        <span className="text-surface-500"> · {t(`lv.types.${ev.type}`)}</span>
-                        {summary && <span className="text-surface-700"> · {summary}</span>}
-                      </div>
-                      {(ev.note || (ev.source && ev.origin !== 'app')) && <div className="text-xs text-surface-500 truncate">{ev.note || ev.source}</div>}
-                    </div>
-                    {a && <AnimalAvatar animal={a} size="sm" className="hidden sm:flex" />}
-                    {confirmId === ev.id ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs shrink-0">
-                        <span className="text-surface-600">{t('lv.ficha.deleteEventConfirm')}</span>
-                        <button type="button" disabled={busy} onClick={() => handleDelete(ev.id)} className="rounded px-2 py-1 bg-red-600 text-white hover:bg-red-700">{t('tx.yes')}</button>
-                        <button type="button" onClick={() => setConfirmId(null)} className="rounded px-2 py-1 bg-surface-100 text-surface-700 hover:bg-surface-200">{t('tx.no')}</button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => setConfirmId(ev.id)} className="p-1.5 rounded text-surface-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0" aria-label={t('tx.delete')}><Trash2 size={15} /></button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+      <div className="relative mt-4 md:max-w-lg">
+        <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-finca-ink2" aria-hidden="true" />
+        <input type="search" value={q} onChange={(e) => setQ(e.target.value)} className={cn(fieldCls, 'pl-11')}
+          placeholder={t('lv.events.searchPh')} aria-label={t('lv.events.searchPh')} autoComplete="off" />
+      </div>
+
+      <ChipRow label={t('lv.event.type')} className="mt-3">
+        <Chip onClick={() => setRangeOpen(true)} aria-haspopup="dialog" data-testid="lv-range-chip" className="border-finca-field">
+          <CalendarDays size={15} aria-hidden="true" /> {t(`lv.events.rangeChip.${range}`)} <ChevronDown size={14} aria-hidden="true" />
+        </Chip>
+        <Chip on={!type} onClick={() => setP('type', '')}>{t('lv.events.allTypes')}</Chip>
+        {order.filter((k) => typeCounts[k]).map((k) => (
+          <Chip key={k} on={type === k} onClick={() => setP('type', type === k ? '' : k)} count={typeCounts[k]}>{t(`lv.types.${k}`)}</Chip>
         ))}
-        {rows.length > limit && (
-          <div className="px-5 py-3 border-t border-surface-100 text-center">
-            <button type="button" onClick={() => setLimit((l) => l + PAGE)} className="btn-ghost text-sm">{t('lv.events.more', { n: rows.length - limit })}</button>
+      </ChipRow>
+
+      <div className="mt-4 space-y-4">
+        {groups.length === 0 && <Card className="px-5 py-10 text-center text-[15px] text-finca-ink2">{t('lv.events.empty')}</Card>}
+        {groups.slice(0, days).map((g) => {
+          const milkL = g.milk.reduce((s, e) => s + (Number(e.data?.liters) || 0), 0)
+            + (type === 'leche' ? g.items.reduce((s, e) => s + (Number(e.data?.liters) || 0), 0) : 0);
+          const count = g.items.length + g.milk.length;
+          const open = !!openMilk[g.date];
+          return (
+            <section key={g.date} aria-label={dayLabel(g.date)}>
+              <h2 className="flex items-baseline gap-2 px-1 mb-1.5">
+                <span className="inline-block text-[15px] font-semibold text-finca-ink first-letter:uppercase">{dayLabel(g.date)}</span>
+                <span className="text-[13px] text-finca-ink2">· {tn('lv.events.dayCount', count)}{milkL > 0 ? ` · ${formatNum(milkL, 0)} L` : ''}</span>
+              </h2>
+              <Card className="overflow-hidden">
+                <ul className="divide-y divide-finca-line">
+                  {g.items.map((ev) => row(ev))}
+                  {g.milk.length > 0 && (
+                    <li>
+                      <button type="button" onClick={() => setOpenMilk((m) => ({ ...m, [g.date]: !open }))} aria-expanded={open}
+                        className="w-full flex items-center gap-3 min-h-[60px] px-3 text-left hover:bg-finca-lineSoft/50">
+                        <EventIcon type="leche" />
+                        <span className="flex-1 min-w-0 text-[15px]">
+                          <span className="font-semibold">{t('lv.types.leche')}</span>
+                          <span className="text-finca-ink2"> · {tn('lv.events.milkings', g.milk.length)} · {formatNum(milkL, 0)} L</span>
+                        </span>
+                        <ChevronDown size={20} className={cn('shrink-0 mr-3 text-finca-ink2 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+                      </button>
+                      {open && <ul className="divide-y divide-finca-line border-t border-finca-line bg-finca-lineSoft/30">{g.milk.map((ev) => row(ev))}</ul>}
+                    </li>
+                  )}
+                </ul>
+              </Card>
+            </section>
+          );
+        })}
+        {groups.length > days && (
+          <div className="text-center">
+            <button type="button" onClick={() => setDays((d) => d + DAYS_PAGE)} className="min-h-[48px] px-5 rounded-[14px] text-[15px] font-semibold text-finca-green hover:bg-finca-lineSoft">
+              {tn('lv.events.moreDays', groups.length - days)}
+            </button>
           </div>
         )}
       </div>
 
-      <EventForm open={open !== null} onClose={() => setOpen(null)} type={open || null} />
+      <ActionSheet open={rangeOpen} onClose={() => setRangeOpen(false)} title={t('lv.events.rangeTitle')}
+        actions={RANGES.map((r) => ({ key: r, label: t(`lv.events.rangeChip.${r}`), active: range === r, autoFocus: range === r, onClick: () => setP('range', r === '30' ? '' : r) }))} />
+
+      <ActionSheet open={!!menu} onClose={() => setMenu(null)}
+        title={menu ? `${byId[menu.animal_id]?.name || '—'} · ${t(`lv.types.${menu.type}`)}` : ''} subtitle={menu ? fmtDate(menu.date, locale) : ''}
+        actions={[{ key: 'delete', label: t('lv.ficha.deleteEvent'), icon: Trash2, danger: true, onClick: () => setConfirm(menu) }]} />
+
+      <ActionSheet open={!!confirm} onClose={() => setConfirm(null)} title={t('lv.ficha.deleteEventTitle')} subtitle={t('lv.ficha.deleteEventBody')}
+        actions={[{ key: 'yes', label: t('tx.delete'), icon: Trash2, danger: true, onClick: () => handleDelete(confirm) }]} />
     </div>
   );
 }

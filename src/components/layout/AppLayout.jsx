@@ -24,14 +24,12 @@ import {
   Settings,
   ShoppingBag,
   Contact,
-  Home,
-  Beef,
-  ClipboardList,
   Gauge,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM, accentOf } from '../../programs';
 import { MODULES } from '../../lib/workspaceConfig';
+import GanaderiaShell from '../../programs/ganaderia/GanaderiaShell';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
 // Which groups show depends on the workspace's accounting mode
@@ -100,20 +98,8 @@ const LIMITED_GROUPS = [
   ]},
 ];
 
-// Batavia Ganadería: the finca's pages, then the shared Team and Settings.
-// `exact` keeps Inicio from lighting up on every /ganaderia/* page.
-const GANADERIA_GROUPS = [
-  { key: 'finca', items: [
-    { key: 'lvHome',    icon: Home,          path: '/ganaderia', exact: true },
-    { key: 'lvAnimals', icon: Beef,          path: '/ganaderia/animales' },
-    { key: 'lvEvents',  icon: ClipboardList, path: '/ganaderia/eventos' },
-  ]},
-  { key: 'settings', items: [
-    { key: 'users',    icon: Users,    path: '/users' },
-    { key: 'settings', icon: Settings, path: '/settings' },
-  ]},
-];
-const GANADERIA_LIMITED_GROUPS = [GANADERIA_GROUPS[0]];
+// Batavia Ganadería has its own shell (src/programs/ganaderia/GanaderiaShell):
+// a bottom nav on the phone and a forest sidebar from 768 px.
 
 // Two-letter monogram for the business tile: "Lopez Bakery" → "LB".
 function monogram(name) {
@@ -133,9 +119,8 @@ export default function AppLayout() {
   // The program this workspace runs (each SelRic program is its own workspace).
   const program = PROGRAMS.find((p) => p.key === primaryProgram) || PROGRAMS.find((p) => p.key === DEFAULT_PROGRAM);
   const currentProgram = program.key;
-  const baseGroups = currentProgram === 'ganaderia'
-    ? (isAdmin ? GANADERIA_GROUPS : GANADERIA_LIMITED_GROUPS)
-    : !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? simpleGroups(config) : FULL_GROUPS;
+  if (currentProgram === 'ganaderia') return <GanaderiaShell />;
+  const baseGroups = !isAdmin ? LIMITED_GROUPS : accountingMode === 'simple' ? simpleGroups(config) : FULL_GROUPS;
   // Oversight is for whoever runs SelRic, not whoever runs this workspace, so it
   // is appended for platform admins regardless of program or accounting mode.
   const groups = isPlatformAdmin

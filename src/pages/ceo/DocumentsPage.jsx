@@ -66,7 +66,7 @@ function PlanEditor({ plan, R, onSave, busy }) {
       <p className="mt-1 text-xs text-surface-500">Read by the Plan tab, the Business Plan §12 and the Market Analysis §5. A milestone's text may hold tokens; its status comes from the funnel and the pilots.</p>
       <div className="mt-3 divide-y divide-surface-100 rounded-lg border border-surface-200">
         {d.milestones.map((m, i) => (
-          <div key={m.key} className="grid grid-cols-[110px_1fr_120px] gap-3 px-3 py-2 text-sm items-center">
+          <div key={m.key} className="grid sm:grid-cols-[110px_1fr_120px] gap-1 sm:gap-3 px-3 py-2 text-sm sm:items-center">
             {draft ? <input type="date" className={inputCls + ' font-mono text-xs'} value={m.due} onChange={(e) => setM(i, 'due', e.target.value)} /> : <span className="font-mono text-xs text-surface-500">{m.due}</span>}
             {draft ? <input className={inputCls} value={m.what} onChange={(e) => setM(i, 'what', e.target.value)} /> : <span className="text-surface-800">{resolve(m.what, R)}</span>}
             <span className="text-[11px] text-surface-400 font-mono">{m.metric || 'manual'}{m.target ? ` ≥ ${m.target}${m.per ? '/' + m.per : ''}` : m.targetPath ? ` ≥ ${resolve(`{{${m.targetPath}}}`, R)}` : ''}</span>
@@ -75,7 +75,7 @@ function PlanEditor({ plan, R, onSave, busy }) {
       </div>
       <div className="mt-3 divide-y divide-surface-100 rounded-lg border border-surface-200">
         {d.roadmap.map((r, i) => (
-          <div key={r.quarter} className="grid grid-cols-[90px_200px_1fr] gap-3 px-3 py-2 text-sm items-start">
+          <div key={r.quarter} className="grid sm:grid-cols-[90px_200px_1fr] gap-1 sm:gap-3 px-3 py-2 text-sm items-start">
             <span className="font-mono text-surface-500 pt-1.5">{r.quarter}</span>
             {draft ? <input className={inputCls} value={r.focus} onChange={(e) => setR(i, 'focus', e.target.value)} /> : <span className="font-medium text-surface-900 pt-1.5">{r.focus}</span>}
             {draft ? <textarea rows={2} className={inputCls} value={r.actions} onChange={(e) => setR(i, 'actions', e.target.value)} /> : <span className="text-surface-600 pt-1.5">{resolve(r.actions, R)}</span>}

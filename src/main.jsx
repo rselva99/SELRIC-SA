@@ -46,7 +46,14 @@ import GanaderiaHomePage from './programs/ganaderia/HomePage';
 import AnimalsPage from './programs/ganaderia/AnimalsPage';
 import AnimalPage from './programs/ganaderia/AnimalPage';
 import EventsPage from './programs/ganaderia/EventsPage';
+import LotsPage from './programs/ganaderia/LotsPage';
+import InformesPage from './programs/ganaderia/InformesPage';
+import { RegistrarProvider } from './programs/ganaderia/RegistrarSheet';
 import './index.css';
+
+// The Ganadería component kit, for the dev server only: the production build
+// replaces import.meta.env.DEV with false and drops the import with it.
+const GanaderiaKitPage = import.meta.env.DEV ? React.lazy(() => import('./programs/ganaderia/KitPage')) : null;
 
 // `fullOnly` pages belong to the full accounting package. A workspace in
 // simple mode is sent to its Transactions tab instead. While the organization
@@ -111,10 +118,11 @@ function AppEntry() {
 
 // /ganaderia/* — the Batavia Ganadería program. One herd context for all its
 // pages; a Business workspace that lands here is sent back to its dashboard.
+// The Ganadería shell mounts the same providers; these step aside when it has.
 function GanaderiaRoot() {
   return (
     <ProtectedRoute program="ganaderia">
-      <HerdProvider><Outlet /></HerdProvider>
+      <HerdProvider><RegistrarProvider><Outlet /></RegistrarProvider></HerdProvider>
     </ProtectedRoute>
   );
 }
@@ -176,6 +184,9 @@ function App() {
                 <Route path="animales" element={<AnimalsPage />} />
                 <Route path="animales/:slug" element={<AnimalPage />} />
                 <Route path="eventos" element={<EventsPage />} />
+                <Route path="lotes" element={<LotsPage />} />
+                <Route path="informes" element={<InformesPage />} />
+                {GanaderiaKitPage && <Route path="_kit" element={<React.Suspense fallback={null}><GanaderiaKitPage /></React.Suspense>} />}
               </Route>
               {/* Full accounting package — hidden (and redirected) in simple mode */}
               <Route path="accountant" element={<ProtectedRoute adminOnly fullOnly><PinGate><AccountantPage /></PinGate></ProtectedRoute>} />

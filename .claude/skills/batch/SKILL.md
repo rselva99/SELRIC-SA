@@ -21,33 +21,33 @@ Three phases, each ended by the owner's word. Never skip ahead; never treat "ok"
 1. Migration first, if any: the `migration` skill (write → dry-run → show → wait for **"aplicada"** → apply → README line).
 2. Code. Match the surrounding files. Keep engines constant-free.
 3. Seed or publish data, if any: the `seed` skill (runs outside the repo).
-4. Checks — all must pass before the report:
-   - `npm run build`
-   - `node scripts/i18n_parity.mjs` → `parity`
-   - `verify_model.mjs` → 0 differences, when the engine or assumptions changed
-5. Walk the affected pages in the Browser pane: desktop and 390 px, EN and ES. Read numbers from the
-   DOM; one screenshot per view. If an edit is part of the test (a version saved), restore it after and say so.
-6. Report: what changed, what was verified and how, the DB versions now current, and the exact
+4. If the change adds a page, a chart or a route, add it to `VIEWS` in `scripts/smoke.mjs`; if it adds
+   engine behaviour, add a test under `tests/` (synthetic inputs only — real numbers stay in `~/selric-business`).
+5. Run **`npm run check`** (build → EN/ES parity → unit tests → smoke at 1366 and 390 px). It must exit 0.
+   Read its 20-line report; screenshots are in `.smoke/`. `verify_model.mjs` too when assumptions changed.
+   A manual walk in the Browser pane only when the owner asks for one, or to show a new visual.
+6. Report: what changed, the `npm run check` result, the DB versions now current, and the exact
    file list for Phase 3. Hold.
 
 ## Phase 3 — commit (on "sube")
-1. Stage exactly the files listed in Phase 2's report, by name:
-   `git reset -q && git add <file> <file> …` — never `-A`, `.`, or a directory.
-   `git add -f` only for `docs/ARCHITECTURE.md` and `scripts/i18n_parity.mjs`.
-2. Guard before committing — abort if any fails:
-   - the staged count equals the listed count
-   - nothing staged matches the never-stage list (`.env*`, `reports/`, `.claude/settings.local.json`,
-     `.claude/launch.json`, `migrations/*fy2025*`, `migrations/2026-09-*`, `data/`, `.local/`, `~/selric-business` content)
-3. Show `git diff --cached --stat`.
-4. Commit with the format below, push `origin main`, report the hash (`git log -1 --format='%H %s'`).
-5. If routes, tables, engines or flows changed and `docs/ARCHITECTURE.md` was not in the list,
-   say so and offer a one-file follow-up commit.
+Two separate Bash calls — the commit guard (`.claude/hooks/guard-commit.mjs`) runs *before* a command,
+so it can only check what is already staged, and it refuses a command that stages and commits at once.
+1. **Call 1 — stage and show.** Exactly the files listed in Phase 2's report, by name:
+   `git reset -q && git add <file> <file> … && git diff --cached --stat` — never `-A`, `.`, a directory
+   or `commit -a`. `git add -f` only for `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs`.
+   Check the staged count equals the listed count.
+2. **Call 2 — commit and push.** `git commit -q -F - <<'EOF' … EOF` then `git push -q origin main` and
+   `git log -1 --format='%H %s'`. The guard blocks it if a staged path is on the never-stage list, a staged line
+   looks like a key, or `npm run check` fails — read its message, fix, and go back to call 1.
+3. Report the hash. If routes, tables, engines or flows changed and `docs/ARCHITECTURE.md` was not in
+   the list, say so and offer a one-file follow-up commit.
 
 ## Allow-list
 Committable: `src/**`, `api/**`, `public/**`, `migrations/<date>-*.sql` (not FY2025) and `migrations/README.md`,
 `index.html`, `package.json`, `package-lock.json` (only when a dependency changed and the owner allowed it),
-config files at the root, `CLAUDE.md`, `.claude/rules/**`, `.claude/skills/**`, `.mcp.json`,
-`docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`. Anything else: ask first.
+config files at the root, `tests/**`, `CLAUDE.md`, `.claude/rules/**`, `.claude/skills/**`, `.claude/hooks/**`,
+`.claude/settings.json`, `.mcp.json`, `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs`.
+Anything else: ask first.
 
 ## Commit message
 ```

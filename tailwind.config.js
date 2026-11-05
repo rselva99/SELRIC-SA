@@ -58,6 +58,33 @@ export default {
           600: '#9e4624',
           700: '#8c3d1d',
         },
+        // Batavia Ganadería's own ground: the corral notebook. Paper and ink,
+        // forest for the frame, clay for "te toca". clayText and field are the
+        // darker steps that keep small clay text and input borders readable
+        // on paper (4.5:1 and 3:1).
+        finca: {
+          paper: '#F3EEE3',
+          surface: '#FFFDF8',
+          ink: '#16211B',
+          ink2: '#5E6D63',
+          mist: '#9FC3AD',
+          forest: '#163827',
+          green: '#2E6B47',
+          greenSoft: '#DCEBE0',
+          clay: '#B8552E',
+          clayText: '#A04722',
+          claySoft: '#F6E1D6',
+          teal: '#3E7A6B',
+          tealSoft: '#DDEBE6',
+          amber: '#F3E3BD',
+          amberInk: '#5A3E07',
+          line: '#E4DDCF',
+          lineSoft: '#EEE8DB',
+          field: '#8C8273',
+          leche: '#DCE7F3',
+          lecheInk: '#2B5B8A',
+          straw: '#C8923A',
+        },
       },
       fontFamily: {
         display: ['"DM Serif Display"', 'Georgia', 'serif'],
@@ -68,6 +95,7 @@ export default {
         'card': '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
         'card-hover': '0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04)',
         'modal': '0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)',
+        'finca': '0 1px 0 #E4DDCF',
       }
     },
   },
