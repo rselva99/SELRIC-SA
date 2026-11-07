@@ -85,7 +85,7 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 | `/login` `/signup` `/forgot-password` `/reset-password` | `PublicRoute` | `pages/auth/*` (sign-up reads `?invite=`) |
 | `/app` | `AppEntry` → the program's home, `/setup`, or `/ceo` | — |
 | `/setup` | Simple-mode admin with an unconfigured portal | `SetupPage` |
-| `/dashboard` | any member | `DashboardPage` |
+| `/dashboard` | any member | `DashboardPage` — the month in three numbers; health, what needs you, products; twelve months in charts (`DashboardCharts`: profit and cash, sales by account, expense mix; full package adds the cash bridge, sales tax, card fees, checks by status); recent transactions |
 | `/transactions` `/sales` `/customers` `/tasks` `/reports` `/inventory` | `ProtectedRoute` (+ `module=` for Simple portals) | Business, both modes |
 | `/accountant/*` `/bookkeeping/*` `/ledger` `/journal` `/accounts` `/cash-management` `/assets` `/payroll` | `adminOnly fullOnly` (+ `PinGate` on accountant) | Full package |
 | `/checks` | `adminOnly` | `pages/checks/ChecksPage` — the last run of the integrity checks, run now, drill-down |
@@ -95,6 +95,12 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 
 `ProtectedRoute` order: not signed in → `/login`; internal → `/ceo`; wrong program → that program's home;
 `adminOnly`; `fullOnly` in Simple → `/transactions`; module off → `/dashboard`.
+
+**Shared charts** (`src/components/charts/`, Business and Ganadería; the CEO shell keeps its own in
+`pages/ceo/charts.jsx`): `theme.js` (light and dark tokens — categorical hues in fixed order, checked by
+`tests/chartsTheme.test.js`; dark applies under `<html data-theme="dark">`; locale formatters), `parts.jsx`
+(axis and grid helpers called as functions, the tooltip), `ChartCard` (title, hint, legend, table twin, empty state,
+`role="img"` with a summary), `charts.jsx` (`MonthLines`, `MonthBars`, `NamedBars`, `Waterfall`).
 
 **Ganadería shell** — `AppLayout` hands a `ganaderia` workspace to `GanaderiaShell` (also on `/users` and
 `/settings`): below 768 px a `BottomNav` (Inicio · Animales · raised Registrar · Eventos · Más, Más a sheet),
@@ -124,7 +130,9 @@ is three steps — what happened, which animal(s), the details — and saves thr
 | `src/pages/ceo/charts.jsx` | palette `C`, `ChartCard` (chart + table twin), axis/grid helpers (called, not rendered), `Tip`, `useNarrow` | every CEO chart |
 | `src/pages/ceo/docParts.jsx` | `Blocks`, `Section` (edit in place), `Versions`, `DocTable`, `saveBlob` | Documents, Competition |
 
-Business helpers in `src/lib/`: `finance.js`, `reports.js`, `postJournalEntry.js`, `periodClose.js`,
+Business helpers in `src/lib/`: `series.js` (month-by-month figures for charts and reports, on top of `finance.js`:
+`pnlByMonth` accrual or cash basis, `cashByMonth`, `revenueByCategory`, `expenseMix`, `salesTaxByMonth`, `merchantFeesByMonth`,
+`checkPool`, `cashBridge` + `waterfallBars`), `finance.js`, `reports.js`, `postJournalEntry.js`, `periodClose.js`,
 `periodLock.js`, `bookBalanceSheet.js`, `depreciation.js`, `statement*.js`, `workspaceConfig.js`,
 `productImages.js` (downscale, HEIC reject, signed URLs), `fetchAll.js` (paged reads), `claude.js` (→ `api/claude`).
 
@@ -183,7 +191,9 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   token in every seeded document (read from `~/selric-business/docs`); `ceoCompetition` on a synthetic market;
   the herd helpers in `src/programs/ganaderia/lib.js` on a synthetic herd with `today` pinned; every integrity
   check, clean and with one planted problem each, on the synthetic restaurant (`tests/fixtures/synthetic-business.js`),
-  the catalog against the translations, and the store through supabase-js on the mock.
+  the catalog against the translations, and the store through supabase-js on the mock; the chart series on the same
+  restaurant (the cash bridge closes on the last statement's printed balance) and the chart palettes (CVD distance,
+  contrast) for light and dark.
   The confidential suites skip where `SELRIC_PRIVATE_DIR` is absent.
 - **Smoke** (`scripts/smoke.mjs`, Playwright with the installed Chrome against `vite preview`): public pages,
   every `/ceo` tab and Documents sub-tab (account `SMOKE_CEO_*`, a platform admin), the herd pages

@@ -99,6 +99,7 @@ const VIEWS = [
   ['BIZ', '/dashboard', 'biz /dashboard'],
   ['BIZ', '/checks', 'biz /checks'],
   ['BIZ0', '/checks', 'biz new /checks'],
+  ['BIZ0', '/dashboard', 'biz new /dashboard'],
 ];
 
 async function serve() {

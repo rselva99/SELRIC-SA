@@ -5,7 +5,7 @@ import { fetchAll } from '../../lib/fetchAll';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useT } from '../../i18n/I18nContext';
-import { aggregateForPnL, debitOf } from '../../lib/finance';
+import { aggregateForPnL } from '../../lib/finance';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import {
   TrendingUp,
@@ -25,20 +25,11 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts';
+import DashboardCharts from './DashboardCharts';
+import { HealthTile } from '../checks/parts';
+import { BUSINESS_CHECKS, healthScore } from '../../lib/checks/index.js';
+import { loadLatest } from '../../lib/checks/store.js';
 
-const COLORS = ['#368a67', '#276e52', '#55a683', '#84c3a7', '#f59f00', '#1971c2', '#e03131'];
 // Get-started tiles: icon per link target (the copy lives in translations, dash.start.*).
 const START_ICONS = {
   '/settings': Settings,
@@ -73,13 +64,20 @@ export default function DashboardPage() {
   const [transactions, setTransactions] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [bills, setBills] = useState([]);
+  const [statements, setStatements] = useState([]);
+  const [paperChecks, setPaperChecks] = useState([]);
+  const [checkRun, setCheckRun] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const full = accountingMode !== 'simple';
+  const orgId = organization?.id;
 
-  // Six months of posted transactions (paginated — a 6-month window can pass
-  // PostgREST's 1,000-row cap) plus the small "what needs you" lists.
+  // Twelve months of posted transactions for the charts (paginated — a year
+  // can pass PostgREST's 1,000-row cap), the small "what needs you" lists,
+  // and for the full package the statements (the cash bridge's opening
+  // balance), the paper checks and the last run of the integrity checks.
   useEffect(() => {
     const inAWeek = format(addDays(new Date(), 7), 'yyyy-MM-dd');
-    const sixMonthsAgo = format(startOfMonth(subMonths(new Date(), 5)), 'yyyy-MM-dd');
+    const yearAgo = format(startOfMonth(subMonths(new Date(), 11)), 'yyyy-MM-dd');
 
     const jobs = [
       supabase.from('tasks').select('id, title, due_date, status').eq('status', 'open').lte('due_date', inAWeek).order('due_date')
@@ -89,15 +87,33 @@ export default function DashboardPage() {
       jobs.push(
         fetchAll(
           supabase.from('transactions').select('*')
-            .gte('date', sixMonthsAgo).eq('voided', false)
+            .gte('date', yearAgo).eq('voided', false)
             .order('date', { ascending: false })
         ).then((rows) => setTransactions(rows || []), () => setTransactions([])),
         supabase.from('invoices').select('id, supplier, amount, due_date, status').in('status', ['pending', 'overdue']).lte('due_date', inAWeek).order('due_date')
           .then(({ data }) => setBills(data || []), () => setBills([])),
       );
+      if (full) {
+        jobs.push(
+          supabase.from('bank_statements').select('id, period_start, period_end, statement_totals').gte('period_start', yearAgo)
+            .then(({ data }) => setStatements(data || []), () => setStatements([])),
+          fetchAll(supabase.from('checks').select('id, status, amount'))
+            .then((rows) => setPaperChecks(rows || []), () => setPaperChecks([])),
+        );
+        if (orgId) {
+          jobs.push(loadLatest(supabase, orgId).then((r) => setCheckRun(r), () => setCheckRun({ missing: true, byCheck: new Map(), runAt: null })));
+        }
+      }
     }
     Promise.allSettled(jobs).then(() => setLoaded(true));
-  }, [isAdmin]);
+  }, [isAdmin, full, orgId]);
+
+  // The health score of the last stored run (null until a run exists).
+  const health = useMemo(() => {
+    if (!checkRun?.byCheck?.size) return null;
+    const results = BUSINESS_CHECKS.map((c) => checkRun.byCheck.get(c.key)).filter(Boolean);
+    return results.length ? healthScore(results) : null;
+  }, [checkRun]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -125,26 +141,6 @@ export default function DashboardPage() {
     };
   }, [transactions, products, categories]);
 
-  const chartData = useMemo(() => {
-    const now = new Date();
-    return Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-      const label = d.toLocaleDateString(locale, { month: 'short' });
-      const agg = aggregateForPnL(transactions.filter((x) => sameMonth(x.date, d)), categories);
-      return { month: label, [t('dash.revenue')]: agg.totalRevenue, [t('dash.expenses')]: agg.totalExpenses };
-    });
-  }, [transactions, categories, locale, t]);
-
-  const categoryData = useMemo(() => {
-    const map = {};
-    for (const x of transactions) {
-      if (!x.category) continue;
-      const d = debitOf(x);
-      if (d > 0) map[x.category] = (map[x.category] || 0) + d;
-    }
-    return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 7);
-  }, [transactions]);
-
   // "What needs you" — one line per thing, each a link.
   const attention = useMemo(() => {
     const today = format(new Date(), 'yyyy-MM-dd');
@@ -171,9 +167,9 @@ export default function DashboardPage() {
   const rawDate = new Date().toLocaleDateString(locale, { weekday: 'long', month: 'long', day: 'numeric' });
   const dateLine = rawDate.charAt(0).toUpperCase() + rawDate.slice(1);
   const isEmptyWorkspace = isAdmin && loaded && transactions.length === 0 && products.length === 0;
-  // The wide column holds the chart and recent transactions — admin-only, and
-  // nothing to show until the first statement is in.
-  const hasWide = isAdmin && transactions.length > 0;
+  // Recent transactions — admin-only, and nothing to show until the first
+  // statement is in.
+  const hasRecent = isAdmin && transactions.length > 0 && show('recent');
 
   const Trend = ({ value, invert = false }) => {
     if (value == null) return <span className="text-xs text-brand-300">{t('dash.noPriorMonth')}</span>;
@@ -245,152 +241,109 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {/* ── Body ─────────────────────────────────────────────────────── */}
-      <div className={`mt-6 grid grid-cols-1 gap-6 ${hasWide ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
-        {hasWide && (
-        <div className="lg:col-span-2 space-y-6">
-          {isAdmin && !isEmptyWorkspace && show('chart') && (
-            <div className="card p-5">
-              <h3 className="section-title mb-4">{t('dash.chartTitle')}</h3>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} barGap={4}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e9ecef" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#868e96' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 12, fill: '#868e96' }} axisLine={false} tickLine={false} />
-                    <Tooltip
-                      formatter={(value) => formatCurrency(value)}
-                      contentStyle={{ borderRadius: 10, border: '1px solid #e9ecef', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 13 }}
-                    />
-                    <Bar dataKey={t('dash.revenue')} fill="#368a67" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey={t('dash.expenses')} fill="#c9c2b4" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
+      {/* ── Where things stand: health, what needs you, products ───── */}
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {isAdmin && full && <HealthTile health={health} runAt={checkRun?.runAt} to="/checks" />}
 
-          {isAdmin && transactions.length > 0 && show('recent') && (
-            <div className="card">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-surface-200">
-                <h3 className="section-title">{t('dash.recent')}</h3>
-                <Link to={simple ? '/transactions' : '/ledger'} className="text-sm text-brand-700 hover:text-brand-800 font-medium flex items-center gap-1">
-                  {t('common.viewAll')} <ArrowRight size={14} />
-                </Link>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-surface-100">
-                      <th className="table-header">{t('dash.date')}</th>
-                      <th className="table-header">{t('dash.description')}</th>
-                      <th className="table-header">{t('dash.category')}</th>
-                      <th className="table-header text-right">{t('dash.amount')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transactions.slice(0, 8).map((x) => (
-                      <tr key={x.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
-                        <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(x.date)}</td>
-                        <td className="table-cell font-medium">{x.description || x.supplier_name || '—'}</td>
-                        <td className="table-cell">{x.category ? <span className="badge-green">{x.category}</span> : '—'}</td>
-                        <td className={`table-cell text-right font-mono whitespace-nowrap ${x.type === 'credit' ? 'text-brand-700' : 'text-surface-800'}`}>
-                          {x.type === 'credit' ? '+' : '−'}{formatCurrency(Math.abs(x.amount))}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        {/* What needs you */}
+        <div className="card p-5">
+          <h3 className="section-title mb-3">{t('dash.needsYou')}</h3>
+          {attention.length === 0 ? (
+            <div className="flex items-center gap-3 text-sm text-surface-600 py-2">
+              <CheckCircle2 size={20} className="text-brand-500 shrink-0" />
+              {t('dash.allClear')}
+            </div>
+          ) : (
+            <ul className="divide-y divide-surface-100">
+              {attention.map((a) => {
+                const tone = a.tone === 'red' ? 'bg-red-50 text-red-600' : a.tone === 'amber' ? 'bg-amber-50 text-amber-700' : 'bg-brand-50 text-brand-700';
+                return (
+                  <li key={a.text}>
+                    <Link to={a.to} className="flex items-center gap-3 py-2.5 group">
+                      <span className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${tone}`}><a.icon size={16} /></span>
+                      <span className="flex-1 text-sm text-surface-800 group-hover:text-brand-800">{a.text}</span>
+                      <ArrowRight size={14} className="text-surface-400 group-hover:text-brand-700" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* Products (everyone, when the inventory module is on) */}
+        {moduleOn('inventory') && show('products') && (
+        <div className="card p-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-sm text-surface-500">{t('dash.products')}</p>
+              <p className="stat-value mt-1">{stats.totalProducts}</p>
+              <p className={`text-xs mt-1 ${stats.lowStock.length ? 'text-amber-700' : 'text-surface-500'}`}>
+                {tn('dash.lowStock', stats.lowStock.length)}
+              </p>
+            </div>
+            <div className="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center"><Package size={20} /></div>
+          </div>
+          {stats.lowStock.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {stats.lowStock.slice(0, 5).map((p) => (
+                <div key={p.id} className="flex items-center justify-between rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                  <span className="text-sm text-surface-800 truncate">{p.name}</span>
+                  <span className="badge-amber shrink-0">{t('dash.left', { n: p.current_stock })}</span>
+                </div>
+              ))}
+              <Link to="/inventory" className="inline-flex items-center gap-1 text-sm text-amber-800 hover:text-amber-900 font-medium pt-1">
+                {t('dash.viewInventory')} <ArrowRight size={14} />
+              </Link>
             </div>
           )}
         </div>
         )}
-
-        <div className={hasWide ? 'space-y-6' : 'contents'}>
-          {/* What needs you */}
-          <div className="card p-5">
-            <h3 className="section-title mb-3">{t('dash.needsYou')}</h3>
-            {attention.length === 0 ? (
-              <div className="flex items-center gap-3 text-sm text-surface-600 py-2">
-                <CheckCircle2 size={20} className="text-brand-500 shrink-0" />
-                {t('dash.allClear')}
-              </div>
-            ) : (
-              <ul className="divide-y divide-surface-100">
-                {attention.map((a) => {
-                  const tone = a.tone === 'red' ? 'bg-red-50 text-red-600' : a.tone === 'amber' ? 'bg-amber-50 text-amber-700' : 'bg-brand-50 text-brand-700';
-                  return (
-                    <li key={a.text}>
-                      <Link to={a.to} className="flex items-center gap-3 py-2.5 group">
-                        <span className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${tone}`}><a.icon size={16} /></span>
-                        <span className="flex-1 text-sm text-surface-800 group-hover:text-brand-800">{a.text}</span>
-                        <ArrowRight size={14} className="text-surface-400 group-hover:text-brand-700" />
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-
-          {/* Products (everyone, when the inventory module is on) */}
-          {moduleOn('inventory') && show('products') && (
-          <div className="card p-5">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm text-surface-500">{t('dash.products')}</p>
-                <p className="stat-value mt-1">{stats.totalProducts}</p>
-                <p className={`text-xs mt-1 ${stats.lowStock.length ? 'text-amber-700' : 'text-surface-500'}`}>
-                  {tn('dash.lowStock', stats.lowStock.length)}
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center"><Package size={20} /></div>
-            </div>
-            {stats.lowStock.length > 0 && (
-              <div className="mt-4 space-y-2">
-                {stats.lowStock.slice(0, 5).map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
-                    <span className="text-sm text-surface-800 truncate">{p.name}</span>
-                    <span className="badge-amber shrink-0">{t('dash.left', { n: p.current_stock })}</span>
-                  </div>
-                ))}
-                <Link to="/inventory" className="inline-flex items-center gap-1 text-sm text-amber-800 hover:text-amber-900 font-medium pt-1">
-                  {t('dash.viewInventory')} <ArrowRight size={14} />
-                </Link>
-              </div>
-            )}
-          </div>
-
-          )}
-
-          {/* Where the money went */}
-          {isAdmin && categoryData.length > 0 && show('breakdown') && (
-            <div className="card p-5">
-              <h3 className="section-title mb-2">{t('dash.breakdown')}</h3>
-              <div className="h-44">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={categoryData} cx="50%" cy="50%" innerRadius={42} outerRadius={70} dataKey="value" paddingAngle={2}>
-                      {categoryData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatCurrency(value)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-1.5 mt-2">
-                {categoryData.slice(0, 5).map((c, i) => (
-                  <div key={c.name} className="flex items-center gap-2 text-xs">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                    <span className="text-surface-600 truncate flex-1">{c.name}</span>
-                    <span className="font-mono text-surface-700">{formatCurrency(c.value)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
+
+      {/* ── Twelve months in charts ─────────────────────────────────── */}
+      {isAdmin && loaded && !isEmptyWorkspace && (
+        <DashboardCharts transactions={transactions} categories={categories} statements={statements} checks={paperChecks}
+          full={full} show={show} endMonth={format(new Date(), 'yyyy-MM')} />
+      )}
+
+      {/* ── Recent transactions ─────────────────────────────────────── */}
+      {hasRecent && (
+        <div className="mt-6">
+          <div className="card">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-surface-200">
+              <h3 className="section-title">{t('dash.recent')}</h3>
+              <Link to={simple ? '/transactions' : '/ledger'} className="text-sm text-brand-700 hover:text-brand-800 font-medium flex items-center gap-1">
+                {t('common.viewAll')} <ArrowRight size={14} />
+              </Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-surface-100">
+                    <th className="table-header">{t('dash.date')}</th>
+                    <th className="table-header">{t('dash.description')}</th>
+                    <th className="table-header">{t('dash.category')}</th>
+                    <th className="table-header text-right">{t('dash.amount')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.slice(0, 8).map((x) => (
+                    <tr key={x.id} className="border-b border-surface-50 hover:bg-surface-50 transition">
+                      <td className="table-cell font-mono text-xs whitespace-nowrap">{formatDate(x.date)}</td>
+                      <td className="table-cell font-medium">{x.description || x.supplier_name || '—'}</td>
+                      <td className="table-cell">{x.category ? <span className="badge-green">{x.category}</span> : '—'}</td>
+                      <td className={`table-cell text-right font-mono whitespace-nowrap ${x.type === 'credit' ? 'text-brand-700' : 'text-surface-800'}`}>
+                        {x.type === 'credit' ? '+' : '−'}{formatCurrency(Math.abs(x.amount))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

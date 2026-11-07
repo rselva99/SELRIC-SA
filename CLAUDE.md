@@ -68,7 +68,8 @@ A value or a sentence of the plan in `src/` is a bug. Field labels and units in 
 **EN/ES key parity is mandatory.** Every key added in one language is added in the other in the same
 edit. `node scripts/i18n_parity.mjs` must print `parity` before a batch is reported.
 
-**recharts axes and grid are real elements.** The helpers in `src/pages/ceo/charts.jsx` are called
+**recharts axes and grid are real elements.** The helpers in `src/pages/ceo/charts.jsx` and
+`src/components/charts/parts.jsx` (`{grid(th)}`, `{monthAxis(th, locale)}`) are called
 as functions — `{MonthAxis()}`, `{NumAxis({ fmt: usdK })}`, `{Grid()}` — never rendered as
 `<MonthAxis />`; recharts finds axes by element type and silently ignores wrapper components.
 

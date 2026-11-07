@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, MinusCircle, Circle, ChevronDown, ShieldCheck, RefreshCw } from 'lucide-react';
+import { ChevronDown, ShieldCheck, RefreshCw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n/I18nContext';
@@ -8,32 +8,13 @@ import { BUSINESS_CHECKS, healthScore, runChecks } from '../../lib/checks/index.
 import { fetchBusinessData } from '../../lib/checks/fetch.js';
 import { loadLatest, saveResults } from '../../lib/checks/store.js';
 import EmptyState from '../../components/ui/EmptyState';
+import { HealthTile, StatusChip, statusOf } from './parts';
 
 // /checks — the integrity checks of the books (src/lib/checks). Shows the
 // newest stored run per check; "Run checks now" runs them in the browser over
 // this workspace's rows (RLS limits the reads to it) and saves the run. Until
 // the integrity tables exist the run is shown but not saved, and the page
 // says so; with no run at all it says "no checks have run yet".
-
-export const STATUS_STYLE = {
-  green:   { icon: CheckCircle2, chip: 'bg-brand-50 text-brand-700 ring-brand-200' },
-  amber:   { icon: AlertTriangle, chip: 'bg-amber-50 text-amber-800 ring-amber-200' },
-  red:     { icon: XCircle, chip: 'bg-red-50 text-red-700 ring-red-200' },
-  skipped: { icon: MinusCircle, chip: 'bg-surface-100 text-surface-600 ring-surface-200' },
-  none:    { icon: Circle, chip: 'bg-surface-50 text-surface-500 ring-surface-200' },
-};
-export const statusOf = (r) => (!r ? 'none' : r.detail?.skipped ? 'skipped' : r.status);
-
-export function StatusChip({ status }) {
-  const { t } = useT();
-  const s = STATUS_STYLE[status] || STATUS_STYLE.none;
-  const Icon = s.icon;
-  return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset whitespace-nowrap', s.chip)}>
-      <Icon size={13} aria-hidden="true" /> {t(`checks.status.${status}`)}
-    </span>
-  );
-}
 
 function CheckRow({ check, result, open, onToggle }) {
   const { t } = useT();
@@ -85,28 +66,6 @@ function CheckRow({ check, result, open, onToggle }) {
         </div>
       )}
     </li>
-  );
-}
-
-export function HealthTile({ health, runAt, className }) {
-  const { t } = useT();
-  const tone = health?.score == null ? 'text-surface-400' : health.score >= 90 ? 'text-brand-700' : health.score >= 60 ? 'text-amber-700' : 'text-red-700';
-  return (
-    <div className={cn('card p-5', className)}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-surface-500 uppercase tracking-wider">{t('checks.health')}</p>
-          <p className={cn('stat-value mt-1 tabular-nums', tone)}>{health?.score == null ? '—' : health.score}</p>
-          <p className="text-xs text-surface-500 mt-1">
-            {health?.score == null ? t('checks.healthNone') : t('checks.healthOf', { green: health.green, amber: health.amber, red: health.red })}
-          </p>
-          <p className="text-xs text-surface-400 mt-1">{runAt ? t('checks.lastRun', { when: formatDate(runAt, 'dd MMM yyyy, HH:mm') }) : t('checks.never')}</p>
-        </div>
-        <div className="w-10 h-10 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
-          <ShieldCheck size={20} aria-hidden="true" />
-        </div>
-      </div>
-    </div>
   );
 }
 
