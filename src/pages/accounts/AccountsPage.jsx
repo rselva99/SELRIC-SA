@@ -661,17 +661,9 @@ function LedgerDrawer({ category, onClose }) {
   const totalCredit = rows.reduce((s, t) => s + creditOf(t), 0);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/40 flex items-end sm:items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100">
-          <div>
-            <div className="text-[10px] uppercase tracking-widest text-brand-600 font-semibold">YTD Ledger</div>
-            <h3 className="font-display text-lg">{category.name}</h3>
-            <div className="text-xs text-surface-500 mt-0.5 capitalize">{category.type}</div>
-          </div>
-          <button onClick={onClose} className="btn-ghost p-2"><X size={16} /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
+    <Modal open onClose={onClose} title={category.name} description={<span className="capitalize">YTD Ledger · {category.type}</span>} size="xl">
+        {/* The table runs edge to edge: undo the sheet's body padding. */}
+        <div className="-mx-4 sm:-mx-6 -my-5">
           {state === 'loading' && <div className="flex justify-center py-10"><Spinner size="lg" /></div>}
           {state === 'error'   && <div className="p-5 text-sm text-red-700">Failed to load: {err?.message || 'unknown'}</div>}
           {state === 'ready'   && (
@@ -709,7 +701,6 @@ function LedgerDrawer({ category, onClose }) {
             )
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

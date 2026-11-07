@@ -241,7 +241,9 @@ export default function TransactionsPage() {
           <h1 className="page-title">{t('tx.title')}</h1>
           <p className="text-surface-500 text-sm mt-1">{t('tx.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* On a phone the month picker takes its own line and the two
+            buttons wrap under it, rather than running off the screen. */}
+        <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex items-center rounded-lg border border-surface-300 bg-white">
             <button type="button" onClick={() => setMonth((m) => addMonths(m, -1))} className="px-2.5 py-2 text-surface-600 hover:text-brand-700" aria-label={t('tx.prevMonth')}>
               <ChevronLeft size={18} />
@@ -381,7 +383,9 @@ export default function TransactionsPage() {
         ) : visible.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-surface-500">{t('tx.noMatches')}</div>
         ) : (
-          <div className="overflow-x-auto">
+          // relative: the screen-reader-only labels inside are absolutely
+          // positioned and would otherwise widen the page, not this scroller.
+          <div className="relative overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100">

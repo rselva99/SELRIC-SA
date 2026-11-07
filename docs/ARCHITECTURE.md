@@ -102,11 +102,21 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 (axis and grid helpers called as functions, the tooltip), `ChartCard` (title, hint, legend, table twin, empty state,
 `role="img"` with a summary), `charts.jsx` (`MonthLines`, `MonthBars`, `NamedBars`, `Waterfall`).
 
+**Business shell** — `AppLayout`: the sidebar from 1024 px, a drawer below it. Below 768 px a
+`BusinessBottomNav` (the first four of Dashboard · Bookkeeping or Transactions · Sales · Reports · Inventory
+that the workspace's sidebar has, by `PHONE_ORDER`, then More, which opens the drawer); `main` keeps clear
+of it with `.pb-nav-flat`. Every Business dialog is `components/ui/Modal`, which is the shared `Sheet` in the
+business tone (same props as before: `title`, `description`, `footer`, `size`).
+
+**Sheets** (`src/components/ui/Sheet.jsx`, one for every program): `Sheet` — a portal into `body`, full screen
+on a phone, a panel of `size` on desktop (560 px by default), sticky header and footer; `ActionSheet` for menus.
+Escape and the backdrop close the top sheet; focus is trapped and returned. `tone` is `business` or `finca`;
+`programs/ganaderia/Sheet.jsx` re-exports both in the finca tone.
+
 **Ganadería shell** — `AppLayout` hands a `ganaderia` workspace to `GanaderiaShell` (also on `/users` and
 `/settings`): below 768 px a `BottomNav` (Inicio · Animales · raised Registrar · Eventos · Más, Más a sheet),
 above it a sidebar. `HerdProvider` and `RegistrarProvider` pass through when a parent already provides them,
-so the herd loads once and Registrar opens from any page. Every form is a `Sheet` (`Sheet.jsx`: a portal into
-`body`, full screen on a phone, 560 px on desktop; `ActionSheet` for menus). Registrar (`RegistrarSheet.jsx`)
+so the herd loads once and Registrar opens from any page. Every form is a `Sheet` (finca tone). Registrar (`RegistrarSheet.jsx`)
 is three steps — what happened, which animal(s), the details — and saves through `recordEvents`, one
 `lv_record_event` per animal and one refresh. The pages' derived numbers are pure helpers in `lib.js` that take
 `today`. The program registry (`src/programs/index.js`) carries each program's list price (`price`,
@@ -201,10 +211,13 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   The confidential suites skip where `SELRIC_PRIVATE_DIR` is absent.
 - **Smoke** (`scripts/smoke.mjs`, Playwright with the installed Chrome against `vite preview`): public pages,
   every `/ceo` tab and Documents sub-tab (account `SMOKE_CEO_*`, a platform admin), the herd pages
-  (`SMOKE_GAN_*`, a Ganadería test workspace), and the Business pages against the mock (`tests/fixtures/mock-supabase.js`
-  answers every Supabase request in the browser context from the synthetic restaurant — `BIZ`, with problems and a
-  stored run — or an empty workspace — `BIZ0`; no account, nothing reaches the database, any write fails the view) at 1366 and 390 px — no console/page error, no failed request,
-  marks in every chart, no horizontal overflow. Screenshots and `report.json` in `.smoke/` (ignored).
+  (`SMOKE_GAN_*`, a Ganadería test workspace), and **every Business route** against the mock (`tests/fixtures/mock-supabase.js`
+  answers every Supabase request in the browser context from the synthetic restaurant — `BIZ` full package, with
+  problems and a stored run; `BIZS` the same books in Simple mode with every module on; `BIZ0` an empty workspace;
+  `BIZU` a Simple workspace not set up yet, for `/setup`; no account, nothing reaches the database, any write fails
+  the view) at 1366 and 390 px — no console/page error, no failed request, marks in every chart, no horizontal
+  overflow, the page lands on the route it opened (no redirect passes for coverage), and on a phone the Business
+  bottom nav is there. `--only <text>` runs a subset. Screenshots and `report.json` in `.smoke/` (ignored).
 - **Commit guard** (`.claude/settings.json` → `.claude/hooks/guard-commit.mjs`): a `git commit` run by Claude is
   blocked on a never-stage path, a key-like staged line, staging in the same command, or a failing check.
 - `verify_model.mjs` (outside the repo) when assumptions change.

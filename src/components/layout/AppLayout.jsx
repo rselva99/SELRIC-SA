@@ -31,6 +31,7 @@ import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM, accentOf } from '../../programs';
 import { MODULES } from '../../lib/workspaceConfig';
 import GanaderiaShell from '../../programs/ganaderia/GanaderiaShell';
+import BusinessBottomNav from './BusinessBottomNav';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
 // Which groups show depends on the workspace's accounting mode
@@ -99,6 +100,16 @@ const LIMITED_GROUPS = [
     { key: 'inventory', icon: Package, path: '/inventory' },
   ]},
 ];
+
+// The phone's bottom nav takes the first four of these that the workspace's
+// sidebar has (full: Dashboard, Bookkeeping, Sales, Reports; simple:
+// Dashboard, Transactions, the sales module, Reports; limited: Dashboard,
+// Inventory), then More, which opens the sidebar as a drawer.
+const PHONE_ORDER = ['dashboard', 'bookkeeping', 'transactions', 'salesSimple', 'sales', 'reports', 'inventory', 'customers', 'tasks'];
+function phoneItems(groups) {
+  const all = groups.flatMap((g) => g.items);
+  return PHONE_ORDER.map((k) => all.find((i) => i.key === k)).filter(Boolean).slice(0, 4);
+}
 
 // Batavia Ganadería has its own shell (src/programs/ganaderia/GanaderiaShell):
 // a bottom nav on the phone and a forest sidebar from 768 px.
@@ -242,18 +253,21 @@ export default function AppLayout() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="lg:hidden flex items-center gap-4 px-4 py-3 bg-white border-b border-surface-200">
-          <button onClick={() => setSidebarOpen(true)} className="text-surface-600" aria-label={t('nav.menu')}>
+          {/* On a phone More in the bottom nav opens the drawer instead. */}
+          <button onClick={() => setSidebarOpen(true)} className="hidden md:block text-surface-600" aria-label={t('nav.menu')}>
             <Menu size={22} />
           </button>
           <div className="font-display text-lg truncate">{businessName}</div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto pb-nav-flat">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
             <Outlet />
           </div>
         </main>
       </div>
+
+      <BusinessBottomNav items={phoneItems(groups)} labelOf={labelOf} isActive={isActive} onMore={() => setSidebarOpen(true)} moreOpen={sidebarOpen} />
     </div>
   );
 }

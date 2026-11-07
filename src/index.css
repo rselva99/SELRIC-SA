@@ -201,8 +201,13 @@
 .pb-safe {
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
+/* The Business bottom nav has no raised button: just its 64px and the home bar. */
+.pb-nav-flat {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
 @media (min-width: 768px) {
   .pb-nav { padding-bottom: 2rem; }
+  .pb-nav-flat { padding-bottom: 0; }
 }
 
 /* Toast overrides */

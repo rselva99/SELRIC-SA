@@ -6,12 +6,17 @@
 // Two test accounts, from .env (never printed):
 //   SMOKE_CEO_EMAIL / SMOKE_CEO_PASSWORD   a platform admin → the /ceo tabs and the Documents sub-tabs
 //   SMOKE_GAN_EMAIL / SMOKE_GAN_PASSWORD   a Ganadería test workspace → the herd pages
-// and two mocked Business workspaces, served from tests/fixtures (no account,
+// and four mocked Business workspaces, served from tests/fixtures (no account,
 // no request reaches the real database — every Supabase call is answered by
 // tests/fixtures/mock-supabase.js inside the browser context):
-//   BIZ    the synthetic restaurant, twelve months of books, one planted problem per check
+//   BIZ    the synthetic restaurant, full package, twelve months of books, one
+//          planted problem per check — every full-package route
+//   BIZS   the same restaurant in Simple mode — every Simple route
 //   BIZ0   a brand-new Business workspace with nothing in it
-// plus the public pages, signed out. Every view is opened at 1366 and 390 px
+//   BIZU   a Simple workspace whose portal is not set up yet — /setup
+// plus the public pages, signed out. `--only <text>` runs the views whose
+// label contains the text (for a quick look; the full run is the gate).
+// Every view is opened at 1366 and 390 px
 // and must have no console or page error, no failed request, SVG marks in every
 // chart, no horizontal overflow, and (mocked views) no write. Screenshots and
 // the full report go to .smoke/ (gitignored); the console report is 20 lines at
@@ -46,11 +51,21 @@ function mockedWorkspace(who) {
       .map((r, i) => ({ id: `ir-${i}`, org_id: b.org.id, check_key: r.key, period: 'all', status: r.status, amount: r.amount, count: r.count, detail: r.detail, run_at: runAt }));
     return { ...b, tables: { ...b.tables, integrity_results, integrity_checks: [] } };
   }
-  const b = makeBusiness({ today: TODAY, months: 1, name: 'New Bistro (synthetic)' });
+  if (who === 'BIZS') {
+    // Every module on, so every Simple route opens instead of redirecting.
+    const b = makeBusiness({ today: TODAY, mode: 'simple' });
+    const modules = { sales: true, customers: true, inventory: true, tasks: true, reports: true };
+    const organizations = b.tables.organizations.map((o) => ({ ...o, config: { ...o.config, modules } }));
+    return { ...b, tables: { ...b.tables, organizations, integrity_results: [], integrity_checks: [] } };
+  }
+  const b = makeBusiness({ today: TODAY, months: 1, name: 'New Bistro (synthetic)', mode: who === 'BIZU' ? 'simple' : 'full' });
   const keep = ['organizations', 'profiles', 'org_programs', 'categories'];
-  return { ...b, tables: { ...Object.fromEntries(keep.map((k) => [k, b.tables[k]])), integrity_results: [], integrity_checks: [] } };
+  const tables = { ...Object.fromEntries(keep.map((k) => [k, b.tables[k]])), integrity_results: [], integrity_checks: [] };
+  // Not set up yet: no portal config, so an admin is sent to /setup.
+  if (who === 'BIZU') tables.organizations = tables.organizations.map((o) => ({ ...o, config: {} }));
+  return { ...b, tables };
 }
-const MOCKED = new Set(['BIZ', 'BIZ0']);
+const MOCKED = new Set(['BIZ', 'BIZS', 'BIZ0', 'BIZU']);
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, PATCH, PUT, DELETE, HEAD, OPTIONS', 'access-control-expose-headers': 'content-range, content-profile' };
 
 // A browser context whose Supabase is the mock: the session sits in
@@ -72,7 +87,7 @@ async function mockedContext(browser, who, viewport) {
     const res = handle({ method: req.method(), url: req.url(), headers: req.headers(), body: req.postData() });
     return route.fulfill({ status: res.status, headers: { ...CORS, ...res.headers }, body: res.body });
   });
-  return { ctx, writes: handle.writes };
+  return { ctx, writes: handle.writes, tables: w.tables };
 }
 
 // Views: [account, path, label, optional sub-tab button text]
@@ -96,14 +111,45 @@ const VIEWS = [
   ['GAN', '/ganaderia/eventos', '/ganaderia/eventos'],
   ['GAN', '/ganaderia/lotes', '/ganaderia/lotes'],
   ['GAN', '/ganaderia/informes', '/ganaderia/informes'],
+  // Business, full package: every route.
   ['BIZ', '/dashboard', 'biz /dashboard'],
-  ['BIZ', '/checks', 'biz /checks'],
+  ['BIZ', '/bookkeeping', 'biz /bookkeeping'],
+  ['BIZ', '/bookkeeping/reconcile', 'biz /bookkeeping/reconcile'],
+  ['BIZ', '/cash-management', 'biz /cash-management'],
+  ['BIZ', '/ledger', 'biz /ledger'],
+  ['BIZ', '/journal', 'biz /journal'],
+  ['BIZ', '/accounts', 'biz /accounts'],
+  ['BIZ', '/sales', 'biz /sales'],
+  ['BIZ', '/customers', 'biz /customers'],
+  ['BIZ', '/inventory', 'biz /inventory'],
+  ['BIZ', '/payroll', 'biz /payroll'],
+  ['BIZ', '/assets', 'biz /assets'],
+  ['BIZ', '/tasks', 'biz /tasks'],
+  ['BIZ', '/transactions', 'biz /transactions'],
+  ['BIZ', '/accountant', 'biz /accountant'],
+  ['BIZ', '/accountant/review-match/:stmt', 'biz /accountant/review-match'],
+  ['BIZ', '/accountant/book-balance-sheet', 'biz /accountant/book-balance'],
   ['BIZ', '/reports', 'biz /reports · P&L'],
   ['BIZ', '/reports', 'biz /reports · balance sheet', 'Balance sheet'],
   ['BIZ', '/reports', 'biz /reports · cash bridge', 'Cash bridge'],
+  ['BIZ', '/reports/fy2024-corrected', 'biz /reports/fy2024-corrected'],
+  ['BIZ', '/checks', 'biz /checks'],
+  ['BIZ', '/users', 'biz /users'],
+  ['BIZ', '/settings', 'biz /settings'],
+  // Business, Simple mode: every route.
+  ['BIZS', '/dashboard', 'simple /dashboard'],
+  ['BIZS', '/transactions', 'simple /transactions'],
+  ['BIZS', '/sales', 'simple /sales'],
+  ['BIZS', '/customers', 'simple /customers'],
+  ['BIZS', '/inventory', 'simple /inventory'],
+  ['BIZS', '/tasks', 'simple /tasks'],
+  ['BIZS', '/reports', 'simple /reports'],
+  ['BIZS', '/users', 'simple /users'],
+  ['BIZS', '/settings', 'simple /settings'],
+  ['BIZU', '/setup', 'simple new /setup'],
   ['BIZ0', '/checks', 'biz new /checks'],
   ['BIZ0', '/dashboard', 'biz new /dashboard'],
-];
+].filter((v) => !arg('--only') || v[2].includes(arg('--only')));
 
 async function serve() {
   const url = arg('--url');
@@ -144,7 +190,8 @@ const measure = () => {
   const de = document.scrollingElement || document.documentElement;
   const main = document.querySelector('main');
   const overflow = de.scrollWidth > window.innerWidth + 1 || (main && main.scrollWidth > main.clientWidth + 1);
-  return { charts: charts.length, empty, overflow, title: document.title };
+  const nav = document.querySelector('[data-testid="biz-bottom-nav"]');
+  return { charts: charts.length, empty, overflow, title: document.title, bottomNav: !!nav && nav.getBoundingClientRect().height > 0 };
 };
 
 async function run() {
@@ -173,7 +220,7 @@ async function run() {
           page.on('console', (msg) => { if (msg.type() === 'error') log.push(msg.text().slice(0, 160)); });
           page.on('pageerror', (e) => log.push(`pageerror: ${String(e.message).slice(0, 160)}`));
           page.on('response', (res) => { if (res.status() >= 400) log.push(`HTTP ${res.status()} ${res.url().replace(server.base, '').slice(0, 120)}`); });
-          contexts[key] = { ctx, page, log, signedIn: mocked, writes: m ? m.writes : null };
+          contexts[key] = { ctx, page, log, signedIn: mocked, writes: m ? m.writes : null, tables: m ? m.tables : null };
         }
         const S = contexts[key];
         try {
@@ -186,12 +233,20 @@ async function run() {
             if (!href) { r.problems.push('no animal to open (add one to the test herd)'); r.ok = false; continue; }
             target = href;
           }
+          // A mocked route that names a statement opens the workspace's first one.
+          if (path.includes(':stmt')) target = path.replace(':stmt', S.tables?.bank_statements?.[0]?.id || 'none');
           S.log.length = 0;
           await S.page.goto(`${server.base}${target}`);
           await settle(S.page);
           if (subTab) { await S.page.getByRole('button', { name: subTab, exact: true }).first().click(); await settle(S.page); }
           const m = await S.page.evaluate(measure);
           r.charts = m.charts;
+          // The route itself must have rendered: a gate or a redirect that
+          // lands somewhere else is not coverage of it.
+          const landed = new URL(S.page.url()).pathname;
+          if (landed !== target) { r.ok = false; r.problems.push(`landed on ${landed}`); }
+          // Inside the Business shell on a phone, the bottom nav is the way around.
+          if (mocked && w < 768 && target !== '/setup' && !m.bottomNav) { r.ok = false; r.problems.push('no bottom nav on the phone'); }
           if (S.log.length) { r.ok = false; r.problems.push(...S.log.slice(0, 3)); }
           if (m.empty) { r.ok = false; r.problems.push(`${m.empty} of ${m.charts} charts without marks`); }
           if (m.overflow) { r.ok = false; r.problems.push('horizontal overflow'); }
@@ -218,7 +273,9 @@ function report(results) {
   for (const r of results) { if (!byLabel.has(r.label)) byLabel.set(r.label, []); byLabel.get(r.label).push(r); }
   const failed = results.filter((r) => !r.ok);
   const lines = [`smoke — ${byLabel.size} views × ${WIDTHS.length} widths — ${failed.length ? `${failed.length} FAILED` : 'all passed'} (details: .smoke/report.json)`];
-  for (const [label, rs] of byLabel) {
+  // Failures first, so the 20-line cut never hides one.
+  const sorted = [...byLabel].sort(([, a], [, b]) => Number(a.every((r) => r.ok)) - Number(b.every((r) => r.ok)));
+  for (const [label, rs] of sorted) {
     const marks = rs.map((r) => `${r.ok ? '✓' : '✗'} ${r.width}`).join('  ');
     const first = rs.find((r) => !r.ok)?.problems[0];
     lines.push(`${marks}  ${label.padEnd(28)} ${first ? '— ' + first : rs[0].charts ? `charts ${rs[0].charts}` : ''}`.slice(0, 150));

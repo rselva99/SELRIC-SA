@@ -107,6 +107,8 @@ export const translations = {
       loginFailed: 'Login failed',
       pilot: 'Pilot',
       farmName: 'Name of the finca',
+      close: 'Close',
+      back: 'Back',
     },
     nav: {
       groups: {
@@ -145,6 +147,8 @@ export const translations = {
       documents: 'Documents',
       competition: 'Competition',
       menu: 'Menu',
+      more: 'More',
+      bottom: 'Main navigation',
       lvHome: 'Home',
       lvAnimals: 'Animals',
       lvEvents: 'Events',
@@ -1691,6 +1695,8 @@ export const translations = {
       loginFailed: 'No se pudo iniciar sesión',
       pilot: 'Piloto',
       farmName: 'Nombre de la finca',
+      close: 'Cerrar',
+      back: 'Atrás',
     },
     nav: {
       groups: {
@@ -1729,6 +1735,8 @@ export const translations = {
       documents: 'Documentos',
       competition: 'Competencia',
       menu: 'Menú',
+      more: 'Más',
+      bottom: 'Navegación principal',
       lvHome: 'Inicio',
       lvAnimals: 'Animales',
       lvEvents: 'Eventos',

@@ -90,7 +90,7 @@ export default function PortalEditor({ initial, onSave, saving, compact = false,
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wider text-surface-500 mb-1">{t('portal.modulesTitle')}</h3>
         <p className="text-xs text-surface-500 mb-2">{t('portal.modulesBody')}</p>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {MODULES.map((m) => {
             const Icon = MODULE_ICONS[m.key];
             const on = !!draft.modules[m.key];
@@ -120,7 +120,7 @@ export default function PortalEditor({ initial, onSave, saving, compact = false,
         {showNames && (
           <>
             <p className="text-xs text-surface-500 mt-1 mb-2">{t('portal.namesBody')}</p>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {enabledModules.map((m) => (
                 <label key={m.key} className="block">
                   <span className="block text-[11px] text-surface-500 mb-1">{t(m.labelKey)}</span>

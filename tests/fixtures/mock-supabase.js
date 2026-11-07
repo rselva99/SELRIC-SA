@@ -19,7 +19,9 @@ function parseValue(v) {
   if (v === 'null') return null;
   if (v === 'true') return true;
   if (v === 'false') return false;
-  return decodeURIComponent(v.replace(/\+/g, ' '));
+  // URLSearchParams has already decoded the value; a pattern such as
+  // ilike.%foo% is not a second escape and is kept as it is.
+  try { return decodeURIComponent(v.replace(/\+/g, ' ')); } catch { return v; }
 }
 const cmp = (a, b) => {
   if (a == null || b == null) return a == null && b == null ? 0 : a == null ? -1 : 1;

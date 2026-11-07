@@ -367,7 +367,7 @@ export default function LedgerPage() {
               className="input-field pl-9"
             />
           </div>
-          <div className="flex items-center gap-2 text-xs text-surface-500">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-surface-500">
             <span className="uppercase tracking-wider font-semibold">Range</span>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
               className="input-field text-xs py-1.5 w-auto" title="From" />
