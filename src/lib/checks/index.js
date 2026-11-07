@@ -61,22 +61,5 @@ export function runChecks(data, ctx = {}) {
   });
 }
 
-// Green counts 1, amber ½, red 0, averaged over the checks that had
-// something to check. Nothing checked at all is "no score", not 100.
-export function healthScore(results) {
-  const counted = (results || []).filter((r) => !r.detail?.skipped);
-  const tally = { green: 0, amber: 0, red: 0 };
-  for (const r of counted) tally[r.status] = (tally[r.status] || 0) + 1;
-  const score = counted.length ? Math.round((100 * (tally.green + tally.amber / 2)) / counted.length) : null;
-  return { score, ...tally, skipped: (results || []).length - counted.length, total: (results || []).length };
-}
-
-// The newest result per check out of a list of stored rows (any order).
-export function latestByCheck(rows) {
-  const by = new Map();
-  for (const r of rows || []) {
-    const cur = by.get(r.check_key);
-    if (!cur || String(r.run_at) > String(cur.run_at)) by.set(r.check_key, r);
-  }
-  return by;
-}
+// The score lives in ./score.js so a page that only shows it loads no check.
+export { healthScore, latestByCheck, healthOfStored } from './score.js';

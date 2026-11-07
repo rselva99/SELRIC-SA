@@ -13,7 +13,9 @@ import FunnelPage, { WEIGHT, monthly } from './FunnelPage';
 import ModelPage from './ModelPage';
 import DocumentsPage from './DocumentsPage';
 import CompetitionPage from './CompetitionPage';
-import { C, SEG, usd, usdK, num, pct, mon, nowLabel, Grid, MonthAxis, NumAxis, NumAxisX, CatAxisY, Tip, ChartCard, useNarrow } from './charts';
+import { C, SEG, usd, usdK, num, pct, mon, nowLabel, Grid, MonthAxis, NumAxis, NumAxisX, CatAxisY, Tip, ChartCard, useNarrow, Sparkline } from './charts';
+import { HealthChip } from '../checks/parts';
+import { healthOfStored } from '../../lib/checks/score.js';
 
 // CEO oversight — the only view that looks across every workspace at once.
 // Eight pages under /ceo: Overview, Pilots, Funnel, Research, Competition,
@@ -235,6 +237,10 @@ function Overview({ data, ws, animals, neverUsed, R, M, findings }) {
           <Link key={w.id} to="/ceo/pilots" className={`rounded-xl border p-4 transition-colors hover:shadow-sm ${w.h.tone}`}>
             <div className="flex items-center justify-between gap-2"><span className="font-medium truncate">{w.name}</span><span className={`w-2 h-2 rounded-full shrink-0 ${w.h.dot}`} /></div>
             <div className="mt-1.5 text-xs opacity-80">{w.h.label} · {w.activity_30d} actions in 30d</div>
+            <div className="mt-3 flex items-end justify-between gap-2">
+              {w.trend ? <Sparkline values={w.trend} end={data.generated_at} /> : <span className="text-xs">No weekly data yet</span>}
+              <HealthChip health={w.checksHealth} />
+            </div>
           </Link>
         ))}
       </div>
@@ -253,8 +259,8 @@ function Pilots({ data, ws, R, M }) {
         {num(M.pilotsConv)} of {M.pilotsN} convert to paying in {mon(M.pilotLabel)} ({pct(R.pilots.conversion)}) — and after that the model stops depending on them: {conv ? <>moving conversion from {conv.hiLabel} to {conv.loLabel} changes Year-3 ARR by only {usd(conv.swing)}.</> : null} Their value is the introduction, not the invoice. <Link to="/ceo/funnel" className="text-brand-700 hover:underline">Log the referrals in the funnel →</Link>
       </Card>
     )}
-    <Section icon={Activity} title="Pilot health" hint="Click a row for what is actually inside. Last activity counts anything a person put in — a sale, a customer, a stock move, an animal. Bookkeeping you back-filled yourself still counts, so a workspace that looks quiet here is definitely quiet.">
-      <Table head={<><TH>Workspace</TH><TH>Program</TH><TH>Mode</TH><TH right>Users</TH><TH right>30-day activity</TH><TH>Last activity</TH><TH>Portal</TH><TH /></>}>
+    <Section icon={Activity} title="Pilot health" hint="Click a row for what is actually inside. Last activity counts anything a person put in — a sale, a customer, a stock move, an animal. Bookkeeping you back-filled yourself still counts, so a workspace that looks quiet here is definitely quiet. The 12 weeks are the same count week by week, the last bar being the last 7 days. Checks is the score of the last integrity-check run in that workspace.">
+      <Table head={<><TH>Workspace</TH><TH>Program</TH><TH>Mode</TH><TH right>Users</TH><TH right>30-day activity</TH><TH>12 weeks</TH><TH>Last activity</TH><TH>Checks</TH><TH>Portal</TH><TH /></>}>
         {ws.map((w) => {
           const isOpen = open === w.id;
           const touched = COUNTS.filter(([k]) => k !== 'transactions').reduce((s, [k]) => s + (w.counts[k] || 0), 0);
@@ -265,13 +271,15 @@ function Pilots({ data, ws, R, M }) {
               <TD className="text-surface-600">{w.accounting_mode}</TD>
               <TD right mono>{w.users}</TD>
               <TD right mono className={w.activity_30d === 0 ? 'text-red-600' : ''}>{w.activity_30d}</TD>
-              <TD><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${w.h.tone}`}><span className={`w-1.5 h-1.5 rounded-full ${w.h.dot}`} />{w.h.label}</span></TD>
+              <TD>{w.trend ? <Sparkline values={w.trend} end={data.generated_at} /> : <span className="text-xs text-surface-500">not yet</span>}</TD>
+              <TD><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium whitespace-nowrap ${w.h.tone}`}><span className={`w-1.5 h-1.5 rounded-full ${w.h.dot}`} />{w.h.label}</span></TD>
+              <TD><HealthChip health={w.checksHealth} /></TD>
               <TD className="text-surface-600">{w.configured ? 'set up' : <span className="text-amber-700">not set up</span>}</TD>
               <TD right className="text-surface-400">{isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</TD>
             </tr>
             {isOpen && (
               <tr key={w.id + '-d'} className="bg-surface-50/60">
-                <td colSpan={8} className="px-4 pb-4 pt-1">
+                <td colSpan={10} className="px-4 pb-4 pt-1">
                   <div className="grid sm:grid-cols-4 lg:grid-cols-7 gap-2">
                     {COUNTS.map(([k, label]) => (
                       <div key={k} className="rounded-lg bg-white border border-surface-200 px-3 py-2">
@@ -281,6 +289,7 @@ function Pilots({ data, ws, R, M }) {
                     ))}
                   </div>
                   <p className="mt-3 text-xs text-surface-500 leading-relaxed">
+                    {w.checksHealth?.runAt && <>Checks {String(w.checksHealth.runAt).slice(0, 10)}: {w.checksHealth.green} passing · {w.checksHealth.amber} to review · {w.checksHealth.red} failing{w.checksHealth.skipped ? ` · ${w.checksHealth.skipped} with nothing to check` : ''}. </>}
                     Created {String(w.created_at).slice(0, 10)} · plan <span className="font-mono">{w.plan}</span> · {touched === 0 ? 'An account was created and nothing was ever put in it. This is a conversation, not a support ticket.' : touched < 5 ? 'A product and a sale is a demo, not adoption. Ask what stopped them.' : 'Real data is in here. This one is a reference customer in the making.'}
                   </p>
                 </td>
@@ -603,7 +612,13 @@ export default function CeoPage() {
     competition: (docRows.competition?.[0]?.sections || []).find((x) => x.kind === 'json')?.data || null,
   }), [docRows]);
   const findings = useMemo(() => (R ? docs.findings.map((s) => ({ key: s.key, title: plain(s.title, R, docs), body: plain(s.body, R, docs) })) : []), [R, docs]);
-  const ws = useMemo(() => (data?.workspaces || []).map((w) => ({ ...w, h: health(w) })), [data]);
+  // activity_weeks and checks come with migrations/2026-11-07-ceo-workspace-trends.sql;
+  // before it is applied they are absent and the page says "not yet" instead of drawing zeros.
+  const ws = useMemo(() => (data?.workspaces || []).map((w) => ({
+    ...w, h: health(w),
+    trend: Array.isArray(w.activity_weeks) && w.activity_weeks.length ? w.activity_weeks.map(Number) : null,
+    checksHealth: healthOfStored(w.checks),
+  })), [data]);
   const M = useModel(R, leads, events);
   const animals = ws.reduce((s, w) => s + (w.counts?.animals || 0), 0);
   const neverUsed = ws.filter((w) => w.h.key === 'never');

@@ -30,6 +30,9 @@ the batch that changes a route, a table, an engine or a flow.
 - `organizations.is_internal = true` marks SelRic's own workspace; an internal account only ever sees `/ceo`.
 - `organizations.is_test = true` marks a smoke-test or demo workspace; `ceo_overview()` leaves test and
   internal workspaces out of the workspace list and the platform totals (Overview and Pilots on `/ceo`).
+  Per workspace it returns aggregates only: counts, last activity, 30-day activity and — with
+  `2026-11-07-ceo-workspace-trends.sql` (**not yet applied**) — `activity_weeks` (12 weekly counts) and `checks`
+  (the newest `integrity_results` row per check); without it those keys are absent and the page says "not yet".
 - `organizations.accounting_mode` ∈ `full|simple`; `organizations.config` holds the Simple-mode portal
   (template, modules on/off, custom names, dashboard sections, custom fields).
 
@@ -137,6 +140,9 @@ written (`catLabel`). The program registry (`src/programs/index.js`) carries eac
 **CEO tabs** (`/ceo`, `/ceo/<tab>`; rail in `CeoLayout`, drawer below `lg`): Overview · Pilots · Funnel
 (`FunnelPage`) · Research · Competition (`CompetitionPage`) · Model (`ModelPage`) · Documents
 (`DocumentsPage`: Business Plan, Market Analysis & GTM, Competition, Financial Model, Findings & milestones) · Plan.
+Overview's pilot cards and the Pilots table show each workspace's twelve weeks as a `Sparkline` (`charts.jsx`, plain
+SVG) and its check score as a `HealthChip` (`pages/checks/parts.jsx`, scored by `healthOfStored` in
+`lib/checks/score.js` — the same `healthScore` as `/checks`); no run yet and no weekly data are said in words.
 
 ## 5. Engines (pure, constant-free, run in the browser and under node)
 
@@ -146,7 +152,7 @@ written (`catLabel`). The program registry (`src/programs/index.js`) carries eac
 | `src/lib/ceoDocs.js` | markdown subset → blocks; `{{path\|fmt}}` tokens (`resolve`, `FMT`); `{{table:name}}` computed tables (`TABLES`, `tableFor`); `parseSections` (`##`/`###` with `{#key}`) | Documents, Research findings, Plan, exports |
 | `src/lib/ceoCompetition.js` | ladders, medians, cheaper / free-tier counts, the grouped feature matrix; resolves SelRic's price from `R` via `priceToken` | Competition page and tables |
 | `src/lib/ceoFields.js` | the assumptions schema for the editor and the Excel (labels, types, units; no values) | Model tab, Financial Model, `exportXlsx` |
-| `src/lib/checks/` | the integrity checks: one module per check in `business/` and `ganaderia/` (`key`, `severity`, `run(data, ctx)` → `{ status, amount, count, detail }`), `index.js` (`BUSINESS_CHECKS` and `HERD_CHECKS` in display order, `runChecks`, `healthScore`, `latestByCheck`), `fetch.js` (one workspace's rows — `fetchBusinessData`, `fetchHerdData` — always filtered on `org_id`), `store.js` (`saveResults`, `loadLatest`; a missing table reads as "no runs yet"), `util.js` (account-name patterns, row/result helpers) | `/checks`, `/ganaderia/informes`, `scripts/checks.mjs` (`--program business|ganaderia`), tests |
+| `src/lib/checks/` | the integrity checks: one module per check in `business/` and `ganaderia/` (`key`, `severity`, `run(data, ctx)` → `{ status, amount, count, detail }`), `index.js` (`BUSINESS_CHECKS` and `HERD_CHECKS` in display order, `runChecks`; re-exports `score.js`), `score.js` (`healthScore`, `latestByCheck`, `healthOfStored` — the score without loading a check), `fetch.js` (one workspace's rows — `fetchBusinessData`, `fetchHerdData` — always filtered on `org_id`), `store.js` (`saveResults`, `loadLatest`; a missing table reads as "no runs yet"), `util.js` (account-name patterns, row/result helpers) | `/checks`, `/ganaderia/informes`, `scripts/checks.mjs` (`--program business|ganaderia`), tests |
 | `src/pages/ceo/exportDocx.js` | document sections + `R` → Word (`docx`), lazy-loaded | Documents, Competition, `build_docx.mjs` |
 | `src/pages/ceo/exportXlsx.js` | `R` → the workbook (`exceljs`), lazy-loaded | Financial Model, `build_xlsx.mjs` |
 | `src/pages/ceo/charts.jsx` | palette `C`, `ChartCard` (chart + table twin), axis/grid helpers (called, not rendered), `Tip`, `useNarrow` | every CEO chart |
@@ -217,7 +223,8 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   token in every seeded document (read from `~/selric-business/docs`); `ceoCompetition` on a synthetic market;
   the herd helpers in `src/programs/ganaderia/lib.js` on a synthetic herd with `today` pinned; every integrity
   check, clean and with one planted problem each, on the synthetic restaurant (`tests/fixtures/synthetic-business.js`)
-  and the synthetic finca (`tests/fixtures/synthetic-herd.js`),
+  and the synthetic finca (`tests/fixtures/synthetic-herd.js`), the score of a stored run (the CEO roll-up) and the
+  invented office (`tests/fixtures/synthetic-ceo.js`),
   the catalog against the translations, and the store through supabase-js on the mock; the chart series on the same
   restaurant (the cash bridge closes on the last statement's printed balance) and the chart palettes (CVD distance,
   contrast) for light and dark.
@@ -228,7 +235,8 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   answers every Supabase request in the browser context from the synthetic restaurant — `BIZ` full package, with
   problems and a stored run; `BIZS` the same books in Simple mode with every module on; `BIZ0` an empty workspace;
   `BIZU` a Simple workspace not set up yet, for `/setup`; `HERD` the synthetic finca, Inicio, Informes and Lotes with
-  every herd chart drawn; no account, nothing reaches the database, any write fails
+  every herd chart drawn; `CEOS` an invented SelRic office, Overview and Pilots with four invented workspaces'
+  sparklines and check scores and no plan loaded; no account, nothing reaches the database, any write fails
   the view) at 1366 and 390 px — no console/page error, no failed request, marks in every chart, no horizontal
   overflow, no untranslated key in the text, the page lands on the route it opened (no redirect passes for
   coverage), and on a phone the Business bottom nav is there. `--only <text>` runs a subset. Screenshots and `report.json` in `.smoke/` (ignored).

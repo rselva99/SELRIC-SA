@@ -4,7 +4,7 @@
 // show "no runs yet". Rows are only ever inserted: a run is a set of rows
 // with one run_at.
 import { isMissingTable } from './fetch.js';
-import { latestByCheck } from './index.js';
+import { latestByCheck } from './score.js';
 
 export const MIGRATION_FILE = 'migrations/2026-11-07-integrity-checks.sql';
 

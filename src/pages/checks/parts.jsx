@@ -27,11 +27,33 @@ export function StatusChip({ status }) {
   );
 }
 
+// A score read as a status: 90 and up passes, 60 and up wants a look, below
+// that something is failing. No score is "none", never green.
+export const scoreStatus = (score) => (score == null ? 'none' : score >= 90 ? 'green' : score >= 60 ? 'amber' : 'red');
+const SCORE_TONE = { green: 'text-brand-700', amber: 'text-amber-700', red: 'text-red-700', none: 'text-surface-400' };
+
+// One workspace's score as a chip, for a list of workspaces (the CEO roll-up).
+// `health` is healthOfStored(): no run at all, and a run where every check
+// skipped, are said in words rather than shown as a number.
+export function HealthChip({ health }) {
+  const { t } = useT();
+  const ran = !!health?.runAt;
+  const status = !ran ? 'none' : health.score == null ? 'skipped' : scoreStatus(health.score);
+  const s = STATUS_STYLE[status];
+  const Icon = s.icon;
+  const label = !ran ? t('checks.never') : health.score == null ? t('checks.healthNone') : t('checks.healthChip', { score: health.score });
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset whitespace-nowrap', s.chip)}>
+      <Icon size={13} aria-hidden="true" /> {label}
+    </span>
+  );
+}
+
 // The score, its three counts and when it was computed. With `to`, the tile
 // ends in a link to the checks page (the dashboard's version).
 export function HealthTile({ health, runAt, className, to }) {
   const { t } = useT();
-  const tone = health?.score == null ? 'text-surface-400' : health.score >= 90 ? 'text-brand-700' : health.score >= 60 ? 'text-amber-700' : 'text-red-700';
+  const tone = SCORE_TONE[scoreStatus(health?.score)];
   return (
     <div className={cn('card p-5', className)}>
       <div className="flex items-start justify-between gap-3">

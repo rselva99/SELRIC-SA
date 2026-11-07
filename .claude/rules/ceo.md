@@ -12,6 +12,9 @@ every sentence of the plan comes from `platform_documents`. A value or a plan se
 
 ## Data — four sources, loaded once in `CeoPage.load()`
 - `ceo_overview()` RPC — workspace aggregates only (raises `NOT_PLATFORM_ADMIN` otherwise)
+  - per workspace `activity_weeks` (12 counts, oldest first) and `checks` (newest `integrity_results` row per check)
+    come with `2026-11-07-ceo-workspace-trends.sql`; absent means "not yet", never zero. Score them with
+    `healthOfStored` (`lib/checks/score.js`) and show them with `Sparkline` / `HealthChip`, not a second copy.
 - `platform_assumptions` — newest `version` is current; `R = compute(versions[0].data)`
 - `platform_documents` — newest per `doc`: `business_plan`, `market_gtm`, `findings`, `plan`, `competition`
 - `platform_leads` + `platform_lead_events` — the funnel; events are written by trigger

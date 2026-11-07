@@ -6,7 +6,7 @@
 // Two test accounts, from .env (never printed):
 //   SMOKE_CEO_EMAIL / SMOKE_CEO_PASSWORD   a platform admin → the /ceo tabs and the Documents sub-tabs
 //   SMOKE_GAN_EMAIL / SMOKE_GAN_PASSWORD   a Ganadería test workspace → the herd pages
-// and five mocked workspaces, served from tests/fixtures (no account,
+// and six mocked workspaces, served from tests/fixtures (no account,
 // no request reaches the real database — every Supabase call is answered by
 // tests/fixtures/mock-supabase.js inside the browser context):
 //   BIZ    the synthetic restaurant, full package, twelve months of books, one
@@ -16,6 +16,8 @@
 //   BIZU   a Simple workspace whose portal is not set up yet — /setup
 //   HERD   the synthetic finca, a year of herd records and one planted problem
 //          per herd check — Inicio and Informes with every chart drawn
+//   CEOS   an invented SelRic office: /ceo and Pilots with four invented
+//          workspaces' twelve-week activity and check scores (no plan loaded)
 // plus the public pages, signed out. `--only <text>` runs the views whose
 // label contains the text (for a quick look; the full run is the gate).
 // Every view is opened at 1366 and 390 px
@@ -29,6 +31,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { chromium } from 'playwright';
 import { makeBusiness } from '../tests/fixtures/synthetic-business.js';
 import { makeHerd } from '../tests/fixtures/synthetic-herd.js';
+import { makeCeo } from '../tests/fixtures/synthetic-ceo.js';
 import { mockSupabase, fakeSession } from '../tests/fixtures/mock-supabase.js';
 import { runChecks } from '../src/lib/checks/index.js';
 
@@ -48,6 +51,7 @@ const SUPA = (process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || '').repl
 const TODAY = new Date().toISOString().slice(0, 10);
 function mockedWorkspace(who) {
   if (who === 'HERD') return makeHerd({ today: TODAY, issues: true });
+  if (who === 'CEOS') return makeCeo({ today: TODAY });
   if (who === 'BIZ') {
     const b = makeBusiness({ today: TODAY, issues: true });
     const runAt = `${TODAY}T06:00:00.000Z`;
@@ -69,7 +73,7 @@ function mockedWorkspace(who) {
   if (who === 'BIZU') tables.organizations = tables.organizations.map((o) => ({ ...o, config: {} }));
   return { ...b, tables };
 }
-const MOCKED = new Set(['BIZ', 'BIZS', 'BIZ0', 'BIZU', 'HERD']);
+const MOCKED = new Set(['BIZ', 'BIZS', 'BIZ0', 'BIZU', 'HERD', 'CEOS']);
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, PATCH, PUT, DELETE, HEAD, OPTIONS', 'access-control-expose-headers': 'content-range, content-profile' };
 
 // A browser context whose Supabase is the mock: the session sits in
@@ -79,7 +83,7 @@ const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers
 async function mockedContext(browser, who, viewport) {
   const w = mockedWorkspace(who);
   const session = fakeSession(w.user);
-  const handle = mockSupabase({ tables: w.tables, user: w.user, session, rpc: { is_platform_admin: false, get_signup_mode: 'invite', statement_totals: [] } });
+  const handle = mockSupabase({ tables: w.tables, user: w.user, session, rpc: { is_platform_admin: false, get_signup_mode: 'invite', statement_totals: [], ...w.rpc } });
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, locale: 'en-US' });
   const key = `sb-${new URL(SUPA).hostname.split('.')[0]}-auth-token`;
   await ctx.addInitScript(({ key, session }) => {
@@ -109,6 +113,9 @@ const VIEWS = [
   ['CEO', '/ceo/documents', '/ceo/documents · model', 'Financial Model'],
   ['CEO', '/ceo/documents', '/ceo/documents · findings', 'Findings & milestones'],
   ['CEO', '/ceo/plan', '/ceo/plan'],
+  // The invented office: sparklines and check scores with something in them.
+  ['CEOS', '/ceo', 'ceo synthetic /ceo'],
+  ['CEOS', '/ceo/pilots', 'ceo synthetic /ceo/pilots'],
   ['GAN', '/ganaderia', '/ganaderia'],
   ['GAN', '/ganaderia/animales', '/ganaderia/animales'],
   ['GAN', '/ganaderia/animales/:first', '/ganaderia/animales/:slug'],
@@ -269,7 +276,7 @@ async function run() {
           const landed = new URL(S.page.url()).pathname;
           if (landed !== target) { r.ok = false; r.problems.push(`landed on ${landed}`); }
           // Inside the Business shell on a phone, the bottom nav is the way around.
-          if (mocked && who !== 'HERD' && w < 768 && target !== '/setup' && !m.bottomNav) { r.ok = false; r.problems.push('no bottom nav on the phone'); }
+          if (mocked && !['HERD', 'CEOS'].includes(who) && w < 768 && target !== '/setup' && !m.bottomNav) { r.ok = false; r.problems.push('no bottom nav on the phone'); }
           if (S.log.length) { r.ok = false; r.problems.push(...S.log.slice(0, 3)); }
           if (m.empty) { r.ok = false; r.problems.push(`${m.empty} of ${m.charts} charts without marks`); }
           if (m.overflow) { r.ok = false; r.problems.push('horizontal overflow'); }

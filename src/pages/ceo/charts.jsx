@@ -130,3 +130,30 @@ export function ChartCard({ id, title, hint, legend = [], table, height = 260, c
     </section>
   );
 }
+
+// Twelve weeks of activity as a row of small bars, oldest first, the newest
+// week ending at `end` (when the overview was generated). One series, so one
+// hue; a week with nothing in it is a light stub on the baseline so the row
+// keeps its length. Each bar names its week on hover; screen readers get the
+// total and the newest week in the label instead.
+const DAY = 86400000;
+export function Sparkline({ values, end, width = 96, height = 22 }) {
+  const n = values.length, gap = 2, bw = (width - gap * (n - 1)) / n;
+  const max = Math.max(1, ...values);
+  const total = values.reduce((s, v) => s + v, 0);
+  const endMs = end ? new Date(end).getTime() : Date.now();
+  const weekEnd = (i) => { const d = new Date(endMs - (n - 1 - i) * 7 * DAY); return `${MON[d.getUTCMonth()]} ${d.getUTCDate()}`; };
+  const label = total === 0 ? 'Nothing put in for 12 weeks' : `${num(total)} put in over 12 weeks, ${num(values[n - 1])} in the last 7 days`;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label} className="block shrink-0 overflow-visible">
+      {values.map((v, i) => {
+        const h = v > 0 ? Math.max(3, (v / max) * height) : 2;
+        return (
+          <rect key={i} x={i * (bw + gap)} y={height - h} width={bw} height={h} rx={1} fill={v > 0 ? C.brand : C.grayL}>
+            <title>{`Week to ${weekEnd(i)}: ${num(v)}`}</title>
+          </rect>
+        );
+      })}
+    </svg>
+  );
+}

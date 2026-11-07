@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { BUSINESS_CHECKS, CHECKS, HERD_CHECKS, healthScore, latestByCheck, runChecks } from '../src/lib/checks/index.js';
+import { BUSINESS_CHECKS, CHECKS, HERD_CHECKS, healthOfStored, healthScore, latestByCheck, runChecks } from '../src/lib/checks/index.js';
 import { lenderStatementsFrom } from '../src/lib/checks/fetch.js';
 import { payableMonths } from '../src/lib/checks/business/payableKeptCurrent.js';
 import * as tb from '../src/lib/checks/business/tbBalanced.js';
@@ -12,6 +12,7 @@ import * as mc from '../src/lib/checks/business/merchantClearing.js';
 import { translations } from '../src/i18n/translations.js';
 import { makeBusiness } from './fixtures/synthetic-business.js';
 import { makeHerd } from './fixtures/synthetic-herd.js';
+import { makeCeo } from './fixtures/synthetic-ceo.js';
 
 // The Spanish and English catalog lines live in translations.js; the
 // migration's seed must say the same thing (see the last suite).
@@ -245,6 +246,47 @@ describe('checks — stored runs and the score', () => {
 
   it('has no score when nothing was checked', () => {
     expect(healthScore(runChecks({}, { today: TODAY })).score).toBeNull();
+  });
+});
+
+// The CEO roll-up scores the newest stored row per check, as ceo_overview()
+// returns it, with the same healthScore() as a fresh run.
+describe('checks — the score of a stored run (CEO roll-up)', () => {
+  it('is null when the overview carries no checks (migration not applied)', () => {
+    expect(healthOfStored(undefined)).toBeNull();
+    expect(healthOfStored(null)).toBeNull();
+  });
+
+  it('has no score and no run time when nothing was ever run', () => {
+    expect(healthOfStored([])).toMatchObject({ score: null, total: 0, runAt: null });
+  });
+
+  it('scores like a fresh run and keeps the newest run time', () => {
+    const rows = [
+      { key: 'a', status: 'green', skipped: false, run_at: '2026-11-01T06:00:00Z' },
+      { key: 'b', status: 'amber', skipped: false, run_at: '2026-11-03T06:00:00Z' },
+      { key: 'c', status: 'red', skipped: false, run_at: '2026-11-02T06:00:00Z' },
+      { key: 'd', status: 'green', skipped: true, run_at: '2026-11-03T06:00:00Z' },
+    ];
+    expect(healthOfStored(rows)).toMatchObject({ score: 50, green: 1, amber: 1, red: 1, skipped: 1, runAt: '2026-11-03T06:00:00Z' });
+  });
+
+  it('gives a stored copy of a run the same score as the run', () => {
+    const results = runChecks(makeBusiness({ today: TODAY, issues: true }).data, { today: TODAY, program: 'business' });
+    const stored = results.map((r) => ({ key: r.key, status: r.status, skipped: !!r.detail?.skipped, run_at: 'x' }));
+    expect(healthOfStored(stored).score).toBe(healthScore(results).score);
+  });
+
+  it('the invented office shows one workspace per state, and no internal one', () => {
+    const { overview, org } = makeCeo({ today: TODAY });
+    expect(org.is_internal).toBe(true);
+    expect(overview.workspaces.map((w) => w.id)).not.toContain(org.id);
+    for (const w of overview.workspaces) expect(w.activity_weeks).toHaveLength(12);
+    const scores = overview.workspaces.map((w) => healthOfStored(w.checks).score);
+    expect(scores[0]).toBeLessThan(60);           // the restaurant with its planted problems
+    expect(scores[1]).toBeLessThan(60);           // the finca with its planted problems
+    expect(scores[2]).toBe(100);                  // the clean restaurant
+    expect(scores[3]).toBeNull();                 // never run
   });
 });
 
