@@ -29,7 +29,7 @@ Read it instead of walking the tree; open a source file only when the task touch
 | `src/components/` | shared UI; `layout/AppLayout.jsx`, `layout/CeoLayout.jsx` |
 | `api/` | Vercel functions (Claude proxy, extraction) |
 | `migrations/` | every SQL change, one idempotent file each; `README.md` is the index |
-| `scripts/` | gitignored except force-added files; `i18n_parity.mjs` and `smoke.mjs` are committed |
+| `scripts/` | gitignored except force-added files; `i18n_parity.mjs`, `smoke.mjs` and `checks.mjs` are committed |
 | `tests/` | vitest suites for the engines; synthetic inputs only, the golden fixture is read from `~/selric-business` |
 | `docs/` | gitignored except `ARCHITECTURE.md` |
 | `.claude/rules/` | path-scoped rules (`ceo`, `ganaderia`, `migrations`, `i18n`) — load with the files |
@@ -48,7 +48,7 @@ committed, pasted into code or comments, or uploaded:
 - keys, tokens, project secrets (the Supabase project ref is public; keys are not)
 
 Stage files **by name** from an allow-list (see the `batch` skill) — never `git add -A`, `.` or a directory.
-`docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs` and `scripts/smoke.mjs` are tracked with `git add -f`; leave the ignore lines alone.
+`docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs` and `scripts/checks.mjs` are tracked with `git add -f`; leave the ignore lines alone.
 Stage in one Bash call and commit in the next: the commit guard checks what is already staged.
 
 **Commit and push only on the word "sube".** Not on "go", not on "ok". Before that, show
@@ -84,7 +84,9 @@ grant; a save is an INSERT, a restore is an INSERT of an old row's data. The tri
 ```
 npm run check                        # build → EN/ES parity → unit tests → smoke; must exit 0 before any report
 npm run test                         # vitest only (the golden suite skips without ~/selric-business)
-npm run smoke                        # Playwright: every /ceo tab and herd page at 1366 and 390 px → .smoke/
+npm run parity                       # EN/ES key parity; prints `parity`
+npm run smoke                        # Playwright: every /ceo tab, herd page and mocked Business page at 1366 and 390 px → .smoke/
+npm run checks -- --org <id> [--period YYYY-MM] [--no-save]   # the integrity checks for one workspace; exit 1 on any red
 cd ~/selric-business && env $(grep -E '^(VITE_SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY)=' ~/SELRIC-SA/.env | xargs) node verify_model.mjs --version <n>
 ```
 The dev server is started with the preview tool (`selric-dev` in `.claude/launch.json`), not Bash.

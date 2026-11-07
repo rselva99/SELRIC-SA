@@ -34,7 +34,7 @@ Two separate Bash calls — the commit guard (`.claude/hooks/guard-commit.mjs`) 
 so it can only check what is already staged, and it refuses a command that stages and commits at once.
 1. **Call 1 — stage and show.** Exactly the files listed in Phase 2's report, by name:
    `git reset -q && git add <file> <file> … && git diff --cached --stat` — never `-A`, `.`, a directory
-   or `commit -a`. `git add -f` only for `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs`.
+   or `commit -a`. `git add -f` only for `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs`, `scripts/checks.mjs`.
    Check the staged count equals the listed count.
 2. **Call 2 — commit and push.** `git commit -q -F - <<'EOF' … EOF` then `git push -q origin main` and
    `git log -1 --format='%H %s'`. The guard blocks it if a staged path is on the never-stage list, a staged line
@@ -46,7 +46,7 @@ so it can only check what is already staged, and it refuses a command that stage
 Committable: `src/**`, `api/**`, `public/**`, `migrations/<date>-*.sql` (not FY2025) and `migrations/README.md`,
 `index.html`, `package.json`, `package-lock.json` (only when a dependency changed and the owner allowed it),
 config files at the root, `tests/**`, `CLAUDE.md`, `.claude/rules/**`, `.claude/skills/**`, `.claude/hooks/**`,
-`.claude/settings.json`, `.mcp.json`, `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs`.
+`.claude/settings.json`, `.mcp.json`, `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs`, `scripts/checks.mjs`.
 Anything else: ask first.
 
 ## Commit message

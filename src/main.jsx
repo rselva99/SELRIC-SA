@@ -37,6 +37,7 @@ import CashManagementPage from './pages/cash-management/CashManagementPage';
 import PayrollPage from './pages/payroll/PayrollPage';
 import TransactionsPage from './pages/transactions/TransactionsPage';
 import SettingsPage from './pages/settings/SettingsPage';
+import ChecksPage from './pages/checks/ChecksPage';
 import CeoPage from './pages/ceo/CeoPage';
 import CeoLayout from './components/layout/CeoLayout';
 import SetupPage from './pages/setup/SetupPage';
@@ -208,6 +209,7 @@ function App() {
               <Route path="tasks" element={<ProtectedRoute adminOnly module="tasks"><TasksPage /></ProtectedRoute>} />
               <Route path="reports" element={<ProtectedRoute adminOnly module="reports"><ReportsRoute /></ProtectedRoute>} />
               <Route path="reports/fy2024-corrected" element={<ProtectedRoute adminOnly><FY2024CorrectedClosePage /></ProtectedRoute>} />
+              <Route path="checks" element={<ProtectedRoute adminOnly><ChecksPage /></ProtectedRoute>} />
               <Route path="inventory" element={<ProtectedRoute module="inventory"><InventoryPage /></ProtectedRoute>} />
               {/* Shared by every program */}
               <Route path="users" element={<ProtectedRoute adminOnly program={null}><ManageUsersPage /></ProtectedRoute>} />

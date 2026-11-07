@@ -26,7 +26,7 @@ export const NEVER = [
   [/^data\//, 'imported financial data'],
   [/^\.local\//, 'recovery artifacts'],
   [/^docs\/(?!ARCHITECTURE\.md$)/, 'local docs (only docs/ARCHITECTURE.md is tracked)'],
-  [/^scripts\/(?!i18n_parity\.mjs$|smoke\.mjs$)/, 'local scripts (only i18n_parity.mjs and smoke.mjs are tracked)'],
+  [/^scripts\/(?!i18n_parity\.mjs$|smoke\.mjs$|checks\.mjs$)/, 'local scripts (only i18n_parity.mjs, smoke.mjs and checks.mjs are tracked)'],
 ];
 const SECRET = /(eyJ[A-Za-z0-9_-]{60,}\.[A-Za-z0-9_-]{20,})|sb_secret_[A-Za-z0-9]{10,}|sk-ant-[A-Za-z0-9-]{10,}|SERVICE_ROLE_KEY\s*=\s*\S{20,}/;
 

@@ -53,6 +53,13 @@ the batch that changes a route, a table, an engine or a flow.
 `book_bs_line_adjustments`, `book_bs_line_asset_mappings`. Triggers on `transactions` keep the cash leg
 (`transactions_ensure_cash_leg`) and handle source deletes.
 
+**Integrity checks** — `integrity_checks` (the catalog: one row per check, program business|ganaderia,
+severity, name and what-to-do in EN and ES; members read it, nobody writes it from the app) and `integrity_results`
+(one row per check per run: org, check, period `all` or `YYYY-MM`, status green|amber|red, amount, count,
+`detail` jsonb, `run_at`; RESTRICTIVE `org_isolation`; members SELECT and INSERT, no UPDATE or DELETE).
+Migration `2026-11-07-integrity-checks.sql` — **not yet applied**; until it is, the app and the CLI read
+"no runs yet" and skip the save.
+
 **Ganadería** — `lv_animals` (one card per animal), `lv_events` (the timeline). RPCs `lv_record_event`
 (the event plus its effect on the card: calving → calvings+1 and not pregnant, optional calf card;
 palpation → pregnancy; weight → last weight; sale/death → status; move → lot) and `lv_delete_event`.
@@ -81,6 +88,7 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 | `/dashboard` | any member | `DashboardPage` |
 | `/transactions` `/sales` `/customers` `/tasks` `/reports` `/inventory` | `ProtectedRoute` (+ `module=` for Simple portals) | Business, both modes |
 | `/accountant/*` `/bookkeeping/*` `/ledger` `/journal` `/accounts` `/cash-management` `/assets` `/payroll` | `adminOnly fullOnly` (+ `PinGate` on accountant) | Full package |
+| `/checks` | `adminOnly` | `pages/checks/ChecksPage` — the last run of the integrity checks, run now, drill-down |
 | `/users` `/settings` | `adminOnly program={null}` | shared by every program |
 | `/ganaderia` `/ganaderia/animales[/:slug]` `/ganaderia/eventos` `/ganaderia/lotes` `/ganaderia/informes` | `GanaderiaRoot` (program `ganaderia`) + `HerdProvider` + `RegistrarProvider` | `src/programs/ganaderia/*` (`informes` is a "Pronto" page; `_kit`, every herd component, exists only under `import.meta.env.DEV`) |
 | `/ceo/*` | internal account → `CeoLayout` | `pages/ceo/CeoPage` (tabs below) |
@@ -110,6 +118,7 @@ is three steps — what happened, which animal(s), the details — and saves thr
 | `src/lib/ceoDocs.js` | markdown subset → blocks; `{{path\|fmt}}` tokens (`resolve`, `FMT`); `{{table:name}}` computed tables (`TABLES`, `tableFor`); `parseSections` (`##`/`###` with `{#key}`) | Documents, Research findings, Plan, exports |
 | `src/lib/ceoCompetition.js` | ladders, medians, cheaper / free-tier counts, the grouped feature matrix; resolves SelRic's price from `R` via `priceToken` | Competition page and tables |
 | `src/lib/ceoFields.js` | the assumptions schema for the editor and the Excel (labels, types, units; no values) | Model tab, Financial Model, `exportXlsx` |
+| `src/lib/checks/` | the integrity checks: one module per check in `business/` (`key`, `severity`, `run(data, ctx)` → `{ status, amount, count, detail }`), `index.js` (`BUSINESS_CHECKS` in display order, `runChecks`, `healthScore`, `latestByCheck`), `fetch.js` (one workspace's rows, always filtered on `org_id`), `store.js` (`saveResults`, `loadLatest`; a missing table reads as "no runs yet"), `util.js` (account-name patterns, row/result helpers) | `/checks`, `scripts/checks.mjs`, tests |
 | `src/pages/ceo/exportDocx.js` | document sections + `R` → Word (`docx`), lazy-loaded | Documents, Competition, `build_docx.mjs` |
 | `src/pages/ceo/exportXlsx.js` | `R` → the workbook (`exceljs`), lazy-loaded | Financial Model, `build_xlsx.mjs` |
 | `src/pages/ceo/charts.jsx` | palette `C`, `ChartCard` (chart + table twin), axis/grid helpers (called, not rendered), `Tip`, `useNarrow` | every CEO chart |
@@ -140,6 +149,13 @@ the funnel's paying leads. Saving on the Model or Documents tab INSERTs a new ve
 recomputes. Restore = INSERT of an old version's payload. Downloads build .docx/.xlsx in the browser from the
 same `R` and sections.
 
+**Checks run.** `/checks` → "Run checks now" (or `npm run checks -- --org <id> [--period YYYY-MM]`, service role,
+never on a workspace you were not asked to check) → `fetchBusinessData` → `runChecks` (pure; a check that throws
+comes out red with the error) → `saveResults` inserts one row per check with one `run_at` → the page reads the
+newest row per check. Health = green 1, amber ½, red 0, averaged over the checks that had something to check.
+The CLI prints the table and exits 1 on any red; without the tables it prints "results not saved: run migration …"
+and exits 0.
+
 **Migration.** File in `migrations/` → dry run through the Supabase MCP in a transaction that raises →
 owner says "aplicada" → `apply_migration` (recorded in history) → README index line. See the `migration` skill.
 
@@ -155,21 +171,25 @@ This repo and the bundle are public. Never staged, committed or pasted into code
 - anything from a customer's or pilot's workspace: names, amounts, statements, screenshots
 - keys and tokens (service role, Anthropic, EmailJS private values)
 
-`docs/` and `scripts/` are gitignored; only `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs` and `scripts/smoke.mjs`
+`docs/` and `scripts/` are gitignored; only `docs/ARCHITECTURE.md`, `scripts/i18n_parity.mjs`, `scripts/smoke.mjs` and `scripts/checks.mjs`
 (plus the scripts already tracked) are in git, added with `git add -f`. `.smoke/` (screenshots of real pages) is ignored.
 
 ## 8. Checks
 
-`npm run check` = `npm run build` → `node scripts/i18n_parity.mjs` → `npm run test` → `npm run smoke`.
+`npm run check` = `npm run build` → `npm run parity` (`scripts/i18n_parity.mjs`) → `npm run test` → `npm run smoke`.
 - **Unit tests** (`tests/`, vitest, node): `ceoModel` invariants on synthetic assumptions, a no-constants
   guard on the engine's numeric literals, and the golden fixture (`~/selric-business/fixtures/golden-v<N>.json`,
   written by `make_golden.mjs` from one stored version) to the cent; `ceoDocs` parsing and tokens, and every
   token in every seeded document (read from `~/selric-business/docs`); `ceoCompetition` on a synthetic market;
-  the herd helpers in `src/programs/ganaderia/lib.js` on a synthetic herd with `today` pinned.
+  the herd helpers in `src/programs/ganaderia/lib.js` on a synthetic herd with `today` pinned; every integrity
+  check, clean and with one planted problem each, on the synthetic restaurant (`tests/fixtures/synthetic-business.js`),
+  the catalog against the translations, and the store through supabase-js on the mock.
   The confidential suites skip where `SELRIC_PRIVATE_DIR` is absent.
 - **Smoke** (`scripts/smoke.mjs`, Playwright with the installed Chrome against `vite preview`): public pages,
   every `/ceo` tab and Documents sub-tab (account `SMOKE_CEO_*`, a platform admin), the herd pages
-  (`SMOKE_GAN_*`, a Ganadería test workspace) at 1366 and 390 px — no console/page error, no failed request,
+  (`SMOKE_GAN_*`, a Ganadería test workspace), and the Business pages against the mock (`tests/fixtures/mock-supabase.js`
+  answers every Supabase request in the browser context from the synthetic restaurant — `BIZ`, with problems and a
+  stored run — or an empty workspace — `BIZ0`; no account, nothing reaches the database, any write fails the view) at 1366 and 390 px — no console/page error, no failed request,
   marks in every chart, no horizontal overflow. Screenshots and `report.json` in `.smoke/` (ignored).
 - **Commit guard** (`.claude/settings.json` → `.claude/hooks/guard-commit.mjs`): a `git commit` run by Claude is
   blocked on a never-stage path, a key-like staged line, staging in the same command, or a failing check.

@@ -8,8 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "parity": "node scripts/i18n_parity.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "check": "npm run build && node scripts/i18n_parity.mjs && npm run test && npm run smoke"
+    "checks": "node scripts/checks.mjs",
+    "check": "npm run build && npm run parity && npm run test && npm run smoke"
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",

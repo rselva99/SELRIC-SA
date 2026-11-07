@@ -6,14 +6,23 @@
 // Two test accounts, from .env (never printed):
 //   SMOKE_CEO_EMAIL / SMOKE_CEO_PASSWORD   a platform admin → the /ceo tabs and the Documents sub-tabs
 //   SMOKE_GAN_EMAIL / SMOKE_GAN_PASSWORD   a Ganadería test workspace → the herd pages
+// and two mocked Business workspaces, served from tests/fixtures (no account,
+// no request reaches the real database — every Supabase call is answered by
+// tests/fixtures/mock-supabase.js inside the browser context):
+//   BIZ    the synthetic restaurant, twelve months of books, one planted problem per check
+//   BIZ0   a brand-new Business workspace with nothing in it
 // plus the public pages, signed out. Every view is opened at 1366 and 390 px
 // and must have no console or page error, no failed request, SVG marks in every
-// chart, and no horizontal overflow. Screenshots and the full report go to
-// .smoke/ (gitignored); the console report is 20 lines at most. Exit 1 on any
-// failure, including missing credentials — a skipped account is a failed check.
+// chart, no horizontal overflow, and (mocked views) no write. Screenshots and
+// the full report go to .smoke/ (gitignored); the console report is 20 lines at
+// most. Exit 1 on any failure, including missing credentials — a skipped
+// account is a failed check.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { makeBusiness } from '../tests/fixtures/synthetic-business.js';
+import { mockSupabase, fakeSession } from '../tests/fixtures/mock-supabase.js';
+import { runChecks } from '../src/lib/checks/index.js';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const OUT = `${ROOT}.smoke`;
@@ -24,6 +33,47 @@ const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? pro
 const env = {};
 if (existsSync(`${ROOT}.env`)) for (const line of readFileSync(`${ROOT}.env`, 'utf8').split('\n')) { const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line); if (m) env[m[1]] = m[2].replace(/^['"]|['"]$/g, ''); }
 const cred = (who) => ({ email: process.env[`SMOKE_${who}_EMAIL`] || env[`SMOKE_${who}_EMAIL`], password: process.env[`SMOKE_${who}_PASSWORD`] || env[`SMOKE_${who}_PASSWORD`] });
+const SUPA = (process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+
+// The mocked Business workspaces. The synthetic restaurant's last check run
+// is computed here, the way "Run checks now" would, and served as stored rows.
+const TODAY = new Date().toISOString().slice(0, 10);
+function mockedWorkspace(who) {
+  if (who === 'BIZ') {
+    const b = makeBusiness({ today: TODAY, issues: true });
+    const runAt = `${TODAY}T06:00:00.000Z`;
+    const integrity_results = runChecks(b.data, { today: TODAY, program: 'business' })
+      .map((r, i) => ({ id: `ir-${i}`, org_id: b.org.id, check_key: r.key, period: 'all', status: r.status, amount: r.amount, count: r.count, detail: r.detail, run_at: runAt }));
+    return { ...b, tables: { ...b.tables, integrity_results, integrity_checks: [] } };
+  }
+  const b = makeBusiness({ today: TODAY, months: 1, name: 'New Bistro (synthetic)' });
+  const keep = ['organizations', 'profiles', 'org_programs', 'categories'];
+  return { ...b, tables: { ...Object.fromEntries(keep.map((k) => [k, b.tables[k]])), integrity_results: [], integrity_checks: [] } };
+}
+const MOCKED = new Set(['BIZ', 'BIZ0']);
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, PATCH, PUT, DELETE, HEAD, OPTIONS', 'access-control-expose-headers': 'content-range, content-profile' };
+
+// A browser context whose Supabase is the mock: the session sits in
+// localStorage where supabase-js looks for it, the accountant PIN gate is
+// already passed for the tab, and every request to the project is answered
+// from the fixture. Writes are counted, never applied.
+async function mockedContext(browser, who, viewport) {
+  const w = mockedWorkspace(who);
+  const session = fakeSession(w.user);
+  const handle = mockSupabase({ tables: w.tables, user: w.user, session, rpc: { is_platform_admin: false, get_signup_mode: 'invite', statement_totals: [] } });
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, locale: 'en-US' });
+  const key = `sb-${new URL(SUPA).hostname.split('.')[0]}-auth-token`;
+  await ctx.addInitScript(({ key, session }) => {
+    try { localStorage.setItem(key, JSON.stringify(session)); localStorage.setItem('selric.lang', 'en'); sessionStorage.setItem('selric.accountant-pin-ok', '1'); } catch { /* storage off */ }
+  }, { key, session });
+  await ctx.route(`${SUPA}/**`, async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS, body: '' });
+    const res = handle({ method: req.method(), url: req.url(), headers: req.headers(), body: req.postData() });
+    return route.fulfill({ status: res.status, headers: { ...CORS, ...res.headers }, body: res.body });
+  });
+  return { ctx, writes: handle.writes };
+}
 
 // Views: [account, path, label, optional sub-tab button text]
 const VIEWS = [
@@ -46,6 +96,9 @@ const VIEWS = [
   ['GAN', '/ganaderia/eventos', '/ganaderia/eventos'],
   ['GAN', '/ganaderia/lotes', '/ganaderia/lotes'],
   ['GAN', '/ganaderia/informes', '/ganaderia/informes'],
+  ['BIZ', '/dashboard', 'biz /dashboard'],
+  ['BIZ', '/checks', 'biz /checks'],
+  ['BIZ0', '/checks', 'biz new /checks'],
 ];
 
 async function serve() {
@@ -103,21 +156,25 @@ async function run() {
         const [who, path, label, subTab] = view;
         const r = { label, width: w, ok: true, problems: [], charts: 0 };
         results.push(r);
-        const c = who ? cred(who) : null;
-        if (who && (!c.email || !c.password)) { r.ok = false; r.problems.push(`no credentials (SMOKE_${who}_EMAIL / _PASSWORD)`); continue; }
+        const mocked = MOCKED.has(who);
+        const c = who && !mocked ? cred(who) : null;
+        if (c && (!c.email || !c.password)) { r.ok = false; r.problems.push(`no credentials (SMOKE_${who}_EMAIL / _PASSWORD)`); continue; }
+        if (mocked && !SUPA) { r.ok = false; r.problems.push('no VITE_SUPABASE_URL to mock'); continue; }
         const key = who || 'public';
         if (!contexts[key]) {
-          const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+          const m = mocked ? await mockedContext(browser, who, { width: w, height: h }) : null;
+          const ctx = m ? m.ctx : await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
           const page = await ctx.newPage();
           const log = [];
-          page.on('console', (m) => { if (m.type() === 'error') log.push(m.text().slice(0, 160)); });
+          page.on('console', (msg) => { if (msg.type() === 'error') log.push(msg.text().slice(0, 160)); });
           page.on('pageerror', (e) => log.push(`pageerror: ${String(e.message).slice(0, 160)}`));
           page.on('response', (res) => { if (res.status() >= 400) log.push(`HTTP ${res.status()} ${res.url().replace(server.base, '').slice(0, 120)}`); });
-          contexts[key] = { ctx, page, log, signedIn: false };
+          contexts[key] = { ctx, page, log, signedIn: mocked, writes: m ? m.writes : null };
         }
         const S = contexts[key];
         try {
           if (who && !S.signedIn) { await signIn(S.page, server.base, c); S.signedIn = true; S.log.length = 0; }
+          const writesBefore = S.writes ? S.writes.length : 0;
           let target = path;
           if (path.endsWith('/:first')) {
             await S.page.goto(`${server.base}/ganaderia/animales`); await settle(S.page);
@@ -134,6 +191,7 @@ async function run() {
           if (S.log.length) { r.ok = false; r.problems.push(...S.log.slice(0, 3)); }
           if (m.empty) { r.ok = false; r.problems.push(`${m.empty} of ${m.charts} charts without marks`); }
           if (m.overflow) { r.ok = false; r.problems.push('horizontal overflow'); }
+          if (S.writes && S.writes.length > writesBefore) { r.ok = false; r.problems.push(`${S.writes.length - writesBefore} write(s) on open: ${S.writes.slice(writesBefore, writesBefore + 2).map((x) => `${x.method} ${x.table}`).join(', ')}`); }
           const file = `${OUT}/${w}-${label.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}.png`;
           await S.page.screenshot({ path: file });
         } catch (e) {

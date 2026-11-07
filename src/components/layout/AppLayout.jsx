@@ -25,6 +25,7 @@ import {
   ShoppingBag,
   Contact,
   Gauge,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM, accentOf } from '../../programs';
@@ -59,6 +60,7 @@ const FULL_GROUPS = [
   { key: 'close', items: [
     { key: 'accountant', icon: Calculator, path: '/accountant' },
     { key: 'reports',    icon: BarChart3,  path: '/reports' },
+    { key: 'checks',     icon: ShieldCheck, path: '/checks' },
   ]},
   { key: 'settings', items: [
     { key: 'users',    icon: Users,    path: '/users' },
