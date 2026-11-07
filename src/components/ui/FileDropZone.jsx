@@ -7,8 +7,6 @@ export default function FileDropZone({ onFile, onFiles, accept = '*', label = 'D
   const [selectedFiles, setSelectedFiles] = useState([]);
   const inputRef = useRef();
 
-  const callback = onFiles || onFile;
-
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);

@@ -97,7 +97,7 @@ describe('exceljs workbook', () => {
     expect(ws.getCell('A2').font.bold).toBe(true);
     const totalRow = s.rows.findIndex((r) => r.cells[0] === 'Total revenue') + 3;
     const c = ws.getCell(`B${totalRow}`);
-    expect(c.value.formula).toMatch(/^SUM\(B\d+:B\d+\)$/);
+    expect(/** @type {any} */ (c.value).formula).toMatch(/^SUM\(B\d+:B\d+\)$/);
     expect(c.numFmt).toBe(FMT.usd);
     const buf = await wb.xlsx.writeBuffer();
     expect(buf.byteLength).toBeGreaterThan(4000);

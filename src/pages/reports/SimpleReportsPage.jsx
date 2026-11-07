@@ -12,7 +12,6 @@ import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { useLabel } from '../../components/useLabel';
 import { useT } from '../../i18n/I18nContext';
 import { aggregateForPnL } from '../../lib/finance';
 import { generatePnLPdf } from '../../lib/reports';
@@ -88,14 +87,16 @@ function downloadCsv(filename, header, rows) {
   URL.revokeObjectURL(url);
 }
 
-function Delta({ value, invert = false, suffix = '' }) {
-  if (value == null || !Number.isFinite(value)) return <span className="text-xs text-surface-400">—</span>;
+// `dark` is the brand-950 headline tile: the light steps keep 4.5:1 there.
+function Delta({ value, invert = false, suffix = '', dark = false }) {
+  if (value == null || !Number.isFinite(value)) return <span className={cn('text-xs', dark ? 'text-brand-300' : 'text-surface-400')}>—</span>;
   const up = value > 0.05, down = value < -0.05;
   const good = invert ? down : up;
   const bad = invert ? up : down;
   const Icon = up ? ArrowUpRight : down ? ArrowDownRight : Minus;
+  const tone = dark ? (good ? 'text-brand-200' : bad ? 'text-red-300' : 'text-brand-300') : (good ? 'text-brand-700' : bad ? 'text-red-600' : 'text-surface-500');
   return (
-    <span className={cn('inline-flex items-center gap-0.5 text-xs font-medium', good ? 'text-brand-700' : bad ? 'text-red-600' : 'text-surface-500')}>
+    <span className={cn('inline-flex items-center gap-0.5 text-xs font-medium', tone)}>
       <Icon size={13} /> {Math.abs(value) >= 1000 ? '>999' : (Math.round(Math.abs(value) * 10) / 10).toFixed(1)}%{suffix}
     </span>
   );
@@ -104,7 +105,6 @@ function Delta({ value, invert = false, suffix = '' }) {
 export default function SimpleReportsPage() {
   const { products, categories } = useData();
   const { config } = useAuth();
-  const label = useLabel();
   const mod = (k) => config?.modules?.[k] !== false;
   const { t, tn, locale, lang } = useT();
 
@@ -472,7 +472,7 @@ export default function SimpleReportsPage() {
       <div className={cn('flex items-center gap-2 text-sm', dark ? 'text-brand-200' : 'text-surface-500')}>{Icon && <Icon size={15} className={dark ? '' : 'text-brand-600'} />} {label}</div>
       <div className={cn('font-mono text-2xl font-medium mt-2', dark ? 'text-white' : 'text-surface-900')}>{value}</div>
       <div className="mt-1.5 flex items-center gap-2 text-xs">
-        {compare && delta !== undefined && <Delta value={delta} invert={invert} />}
+        {compare && delta !== undefined && <Delta value={delta} invert={invert} dark={dark} />}
         {compare && delta !== undefined && <span className={dark ? 'text-brand-300' : 'text-surface-400'}>{t('rep.vsPrev')}</span>}
         {sub && <span className={dark ? 'text-brand-300' : 'text-surface-400'}>{sub}</span>}
       </div>
@@ -637,7 +637,7 @@ export default function SimpleReportsPage() {
                   </button>
                 </div>
               </header>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full">
                   <thead><tr className="border-b border-surface-100">
                     <Th k="name">{groupBy === 'category' ? t('dash.category') : t('sales.product')}</Th>
@@ -743,7 +743,7 @@ export default function SimpleReportsPage() {
                 </div>
               </header>
               {heat.length === 0 ? <p className="px-5 py-8 text-sm text-surface-500 text-center">{t('rep.nothingInPeriod')}</p> : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto" tabIndex={0}>
                   <table className="w-full text-xs">
                     <thead><tr className="border-b border-surface-100">
                       <th className="table-header sticky left-0 bg-white">{t('sales.product')}</th>
@@ -811,7 +811,7 @@ export default function SimpleReportsPage() {
                   </button>
                 </header>
                 {customerRows.length === 0 ? <Empty icon={Users} title={t('rep.noCustomersTitle')} body={t('rep.noCustomersBody')} /> : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto" tabIndex={0}>
                     <table className="w-full">
                       <thead><tr className="border-b border-surface-100"><th className="table-header">{t('crm.name')}</th><th className="table-header text-right">{t('crm.colSales')}</th><th className="table-header text-right">{t('crm.colSpent')}</th><th className="table-header text-right">{t('rep.avgTicket')}</th><th className="table-header">{t('rep.buys')}</th></tr></thead>
                       <tbody>
@@ -891,7 +891,7 @@ export default function SimpleReportsPage() {
                   <Download size={15} /> CSV
                 </button>
               </header>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full">
                   <thead><tr className="border-b border-surface-100">
                     <th className="table-header">{t('sales.product')}</th>

@@ -216,7 +216,12 @@ This repo and the bundle are public. Never staged, committed or pasted into code
 
 ## 8. Checks
 
-`npm run check` = `npm run build` → `npm run parity` (`scripts/i18n_parity.mjs`) → `npm run test` → `npm run smoke`.
+`npm run check` = `npm run lint` → `npm run typecheck` → `npm run build` → `npm run parity` (`scripts/i18n_parity.mjs`) →
+`npm run test` → `npm run smoke`.
+- **Lint** (`eslint.config.js`, ESLint 9 flat config): `src`, `api`, `tests`, the three tracked scripts and the commit guard —
+  undefined names, rules of hooks, JSX keys, unreachable code, unused names. `react-hooks/exhaustive-deps` is off.
+- **Typecheck** (`tsconfig.json`, `tsc --noEmit` with `checkJs`): every plain `.js` file in `src`, `tests` and `api` (and the
+  `.jsx` they import), not strict; where inference guesses too narrow a shape, a JSDoc type says what it is.
 - **Unit tests** (`tests/`, vitest, node): `ceoModel` invariants on synthetic assumptions, a no-constants
   guard on the engine's numeric literals, and the golden fixture (`~/selric-business/fixtures/golden-v<N>.json`,
   written by `make_golden.mjs` from one stored version) to the cent; `ceoDocs` parsing and tokens, and every
@@ -227,7 +232,10 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   invented office (`tests/fixtures/synthetic-ceo.js`),
   the catalog against the translations, and the store through supabase-js on the mock; the chart series on the same
   restaurant (the cash bridge closes on the last statement's printed balance) and the chart palettes (CVD distance,
-  contrast) for light and dark.
+  contrast) for light and dark; the report PDFs (`tests/reports.test.js`: jsPDF under node, the text each page draws
+  read back) and the aggregation they print; the posting helpers, the period lock and the opening-balances flow
+  against a scripted client (`tests/posting.test.js`). `npm run test` measures coverage of those money paths and the
+  checks and fails below each file's floor (`vitest.config.js`).
   The confidential suites skip where `SELRIC_PRIVATE_DIR` is absent.
 - **Smoke** (`scripts/smoke.mjs`, Playwright with the installed Chrome against `vite preview`): public pages,
   every `/ceo` tab and Documents sub-tab (account `SMOKE_CEO_*`, a platform admin), the herd pages
@@ -238,8 +246,14 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   every herd chart drawn; `CEOS` an invented SelRic office, Overview and Pilots with four invented workspaces'
   sparklines and check scores and no plan loaded; no account, nothing reaches the database, any write fails
   the view) at 1366 and 390 px — no console/page error, no failed request, marks in every chart, no horizontal
-  overflow, no untranslated key in the text, the page lands on the route it opened (no redirect passes for
+  overflow, no untranslated key in the text, no serious or critical axe-core violation (WCAG 2.x A/AA and
+  best practices), the page lands on the route it opened (no redirect passes for
   coverage), and on a phone the Business bottom nav is there. `--only <text>` runs a subset. Screenshots and `report.json` in `.smoke/` (ignored).
+  What keeps axe green: muted text uses `text-surface-400/500/600`, which `tailwind.config.js` maps to darker greys
+  than the `bg-`/`border-` steps of the same name (4.5:1 on every light ground); a control's name comes from a
+  `<label htmlFor>`, a wrapping `<label>` or `aria-label`, never a bare sibling label or `title` alone; a table
+  wrapper that scrolls sideways takes `tabIndex={0}`; text is not faded with `opacity-*`.
 - **Commit guard** (`.claude/settings.json` → `.claude/hooks/guard-commit.mjs`): a `git commit` run by Claude is
-  blocked on a never-stage path, a key-like staged line, staging in the same command, or a failing check.
+  blocked on a never-stage path, a key-like staged line, staging in the same command, a failing `npm run lint` or
+  `npm run typecheck` (run first, so the message names the step) or a failing `npm run check`.
 - `verify_model.mjs` (outside the repo) when assumptions change.

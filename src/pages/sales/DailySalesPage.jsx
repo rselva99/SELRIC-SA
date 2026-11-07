@@ -1,17 +1,17 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { format, parseISO, getDay, getISOWeek, startOfMonth, endOfMonth, subMonths } from 'date-fns';
+import { format, parseISO, getDay, getISOWeek, subMonths } from 'date-fns';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
-import { formatCurrency, formatDate, fileToBase64 } from '../../lib/utils';
+import { formatDate, fileToBase64 } from '../../lib/utils';
 import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import FileDropZone from '../../components/ui/FileDropZone';
 import toast from 'react-hot-toast';
-import { TrendingUp, Save, Upload, Edit3, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { TrendingUp, Save, Edit3, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const COLOR_HEX = {
   dark_red: '#991b1b', orange: '#f97316', green: '#22c55e',
@@ -302,11 +302,11 @@ export default function DailySalesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Date</label>
-                  <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="input-field" required />
+                  <input aria-label="Date" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="input-field" required />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Total Sales</label>
-                  <input type="number" min="0" step="0.01" value={form.total_sales} onChange={(e) => setForm({ ...form, total_sales: e.target.value })} className="input-field" placeholder="0.00" required />
+                  <input aria-label="Total Sales" type="number" min="0" step="0.01" value={form.total_sales} onChange={(e) => setForm({ ...form, total_sales: e.target.value })} className="input-field" placeholder="0.00" required />
                 </div>
               </div>
 
@@ -324,7 +324,7 @@ export default function DailySalesPage() {
                   ))}
                   <div>
                     <label className="block text-xs text-surface-500 mb-1">Notes</label>
-                    <input type="text" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="input-field" placeholder="Optional" />
+                    <input aria-label="Notes" type="text" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="input-field" placeholder="Optional" />
                   </div>
                 </div>
               )}
@@ -366,7 +366,7 @@ export default function DailySalesPage() {
             ) : sales.length === 0 ? (
               <EmptyState icon={TrendingUp} title="No sales data yet" description="Add your first entry above" />
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full">
                   <thead><tr className="border-b border-surface-100">
                     <th className="table-header">Date</th>

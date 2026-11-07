@@ -286,7 +286,7 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
       {allowPeriodChange && (
         <div>
           <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Period</label>
-          <input type="month" value={activePeriod}
+          <input aria-label="Period" type="month" value={activePeriod}
             onChange={e => setActivePeriod(e.target.value)}
             className="input-field w-auto" />
         </div>
@@ -333,13 +333,13 @@ function ReadyForm({ period, onPosted, allowPeriodChange, categories }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Total payroll for the period</label>
-          <input type="number" min="0" step="0.01" value={totalPayroll}
+          <input aria-label="Total payroll for the period" type="number" min="0" step="0.01" value={totalPayroll}
             onChange={e => setTotalPayroll(e.target.value)}
             className="input-field" placeholder="e.g. 15000.00" />
         </div>
         <div>
           <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Debit account</label>
-          <select value={accountId} onChange={e => setAccountId(e.target.value)} className="input-field">
+          <select aria-label="Debit account" value={accountId} onChange={e => setAccountId(e.target.value)} className="input-field">
             <option value="">— Choose account —</option>
             {accountGroups.map(([type, list]) => (
               <optgroup key={type} label={type}>

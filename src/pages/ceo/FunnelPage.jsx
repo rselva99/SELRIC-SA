@@ -323,7 +323,7 @@ export default function FunnelPage({ R, M, onChange }) {
       <div className="mt-6 flex items-start justify-between gap-4">
         <p className="text-sm text-surface-600 max-w-[70ch]">Two funnels, because a cold email to a St. Louis restaurant and a visit to a finca are different sales. Each is compared to a published band where one exists, and says so where one does not. Click a lead to move it.</p>
         <div className="flex gap-2 shrink-0">
-          <button onClick={load} className="btn-secondary"><RefreshCw size={15} /></button>
+          <button onClick={load} className="btn-secondary" aria-label="Refresh" title="Refresh"><RefreshCw size={15} /></button>
           <button onClick={() => setPicked({ ...EMPTY })} className="btn-primary"><Plus size={15} /> Lead</button>
         </div>
       </div>

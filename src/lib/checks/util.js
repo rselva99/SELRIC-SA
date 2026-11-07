@@ -54,10 +54,17 @@ export { debitOf, creditOf };
 
 // One drill-down row. `text` is what a person reads; `amount` is signed as
 // the check wants it shown.
+/** @returns {{ id: any, date: string | null, text: string, amount: number, [k: string]: any }} */
 export const row = (id, date, text, amount, extra = {}) => ({ id, date: date || null, text: String(text || '').slice(0, 140), amount: round2(amount || 0), ...extra });
 
 // The result a check returns. Issues decide the status; the rows are sorted
 // by size so the cap keeps the ones that matter most.
+/** @typedef {{ status: string, amount: number, count: number, detail: { rows: any[], total: number, skipped?: string, [k: string]: any } }} CheckResult */
+/**
+ * @param {string} severity
+ * @param {{ rows?: any[], amount?: number, count?: number, skipped?: string, [k: string]: any }} [found]
+ * @returns {CheckResult}
+ */
 export function result(severity, { rows = [], amount, count, skipped, ...more } = {}) {
   const sorted = [...rows].sort((a, b) => abs(b.amount) - abs(a.amount));
   const n = count ?? rows.length;
@@ -68,6 +75,7 @@ export function result(severity, { rows = [], amount, count, skipped, ...more } 
     detail: { rows: sorted.slice(0, MAX_ROWS), total: rows.length, ...(skipped ? { skipped } : {}), ...more },
   };
 }
+/** @returns {CheckResult} */
 export const skip = (reason) => ({ status: 'green', amount: 0, count: 0, detail: { rows: [], total: 0, skipped: reason } });
 
 // Rows of the transactions ledger that move a category, live and in period.

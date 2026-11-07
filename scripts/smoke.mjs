@@ -22,7 +22,8 @@
 // label contains the text (for a quick look; the full run is the gate).
 // Every view is opened at 1366 and 390 px
 // and must have no console or page error, no failed request, SVG marks in every
-// chart, no horizontal overflow, and (mocked views) no write. Screenshots and
+// chart, no horizontal overflow, no serious or critical axe violation, and
+// (mocked views) no write. Screenshots and
 // the full report go to .smoke/ (gitignored); the console report is 20 lines at
 // most. Exit 1 on any failure, including missing credentials — a skipped
 // account is a failed check.
@@ -212,6 +213,32 @@ const measure = () => {
   return { charts: charts.length, empty, overflow, rawKeys, title: document.title, bottomNav: !!nav && nav.getBoundingClientRect().height > 0 };
 };
 
+// Accessibility: axe-core runs in every view once it has settled, and a view
+// fails on any violation axe rates serious or critical (WCAG 2.x A and AA,
+// and axe's best practices). The source is evaluated rather than added as a
+// script tag, so the production CSP (script-src 'self') does not block it
+// under --url. Only rule ids and selectors are kept — no page text.
+const AXE = readFileSync(`${ROOT}node_modules/axe-core/axe.min.js`, 'utf8');
+const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
+async function axeSerious(page) {
+  await page.evaluate(AXE);
+  return page.evaluate(async (tags) => {
+    // Fade-ins (the landing's week rows) are measured where they end, not
+    // half-way: wait for every finite animation, at most 4 s.
+    const finite = document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity);
+    await Promise.race([Promise.all(finite.map((a) => a.finished.catch(() => null))), new Promise((ok) => setTimeout(ok, 4000))]);
+    const r = await window.axe.run(document, { runOnly: { type: 'tag', values: tags }, resultTypes: ['violations'] });
+    return r.violations
+      .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+      .map((v) => ({
+        id: v.id, impact: v.impact, nodes: v.nodes.length, targets: v.nodes.slice(0, 6).map((n) => n.target.join(' ')),
+        // For contrast, the colour pairs (text on ground, ratio) with the
+        // first element that shows each — what to fix.
+        ...(v.id === 'color-contrast' ? { pairs: Object.entries(Object.fromEntries(v.nodes.map((n) => { const d = n.any?.[0]?.data || {}; return [`${d.fgColor} on ${d.bgColor} ${d.contrastRatio}:1 ${d.fontSize || ''}`, n.target.join(' ')]; }).reverse())).map(([pair, at]) => `${pair} @ ${at}`) } : {}),
+      }));
+  }, AXE_TAGS);
+}
+
 // The first load stays under budget: the chunk index.html loads (every page
 // is a lazy chunk of its own). Only for a local build, not with --url.
 const ENTRY_BUDGET = 600 * 1000;
@@ -282,6 +309,8 @@ async function run() {
           if (m.overflow) { r.ok = false; r.problems.push('horizontal overflow'); }
           if (m.rawKeys.length) { r.ok = false; r.problems.push(`untranslated: ${m.rawKeys.slice(0, 3).join(', ')}`); }
           if (S.writes && S.writes.length > writesBefore) { r.ok = false; r.problems.push(`${S.writes.length - writesBefore} write(s) on open: ${S.writes.slice(writesBefore, writesBefore + 2).map((x) => `${x.method} ${x.table}`).join(', ')}`); }
+          r.axe = await axeSerious(S.page);
+          if (r.axe.length) { r.ok = false; r.problems.push(`axe: ${r.axe.map((v) => `${v.id} ×${v.nodes}`).join(', ')}`); }
           const file = `${OUT}/${w}-${label.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}.png`;
           await S.page.screenshot({ path: file });
         } catch (e) {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 
@@ -79,7 +79,7 @@ export default function BridgePanel({ line, onLinkCheck, onLinkTxn, onMarkNoDisb
 
   if (!line) {
     return (
-      <div className="rounded border border-gray-200 bg-white p-4 text-sm text-gray-500">
+      <div className="rounded border border-gray-200 bg-white p-4 text-sm text-gray-600">
         <div className="font-semibold text-gray-700 mb-2">Bridge panel</div>
         Select a paycheck above to see candidate checks and transactions.
       </div>
@@ -91,7 +91,7 @@ export default function BridgePanel({ line, onLinkCheck, onLinkTxn, onMarkNoDisb
       <div className="flex items-center justify-between">
         <div>
           <div className="font-semibold text-gray-700">Bridge: {line.employee_name}</div>
-          <div className="text-xs text-gray-500">Pay {line.pay_date} · Net {usd(line.net_pay)} · Status: {line.match_status}</div>
+          <div className="text-xs text-gray-600">Pay {line.pay_date} · Net {usd(line.net_pay)} · Status: {line.match_status}</div>
         </div>
         <div className="flex gap-2">
           <button className="btn-ghost text-xs" onClick={search} disabled={loading}>{loading ? '…' : 'Refresh'}</button>
@@ -101,7 +101,7 @@ export default function BridgePanel({ line, onLinkCheck, onLinkTxn, onMarkNoDisb
 
       <div>
         <div className="text-xs font-semibold text-gray-600 mt-2">CHECKS (±$0.50, {line.pay_date} −2..+14)</div>
-        {checkCands.length === 0 && <div className="text-xs text-gray-500 italic">No candidate checks.</div>}
+        {checkCands.length === 0 && <div className="text-xs text-gray-600 italic">No candidate checks.</div>}
         {checkCands.length > 0 && (
           <table className="w-full text-xs mt-1">
             <thead className="bg-gray-50"><tr>
@@ -130,7 +130,7 @@ export default function BridgePanel({ line, onLinkCheck, onLinkTxn, onMarkNoDisb
 
       <div>
         <div className="text-xs font-semibold text-gray-600 mt-3">TRANSACTIONS (±$0.50 in ±14d, OR name-match on last name)</div>
-        {txnCands.length === 0 && <div className="text-xs text-gray-500 italic">No candidate transactions.</div>}
+        {txnCands.length === 0 && <div className="text-xs text-gray-600 italic">No candidate transactions.</div>}
         {txnCands.length > 0 && (
           <table className="w-full text-xs mt-1">
             <thead className="bg-gray-50"><tr>
@@ -148,7 +148,7 @@ export default function BridgePanel({ line, onLinkCheck, onLinkTxn, onMarkNoDisb
                   <td className="px-2 py-1 text-right tabular-nums">{usd(t.amount)}</td>
                   <td className="px-2 py-1">{t.category}</td>
                   <td className="px-2 py-1 max-w-xs truncate" title={t.description}>{t.description}</td>
-                  <td className="px-2 py-1 text-center text-xs text-gray-500">{t.matchReason}</td>
+                  <td className="px-2 py-1 text-center text-xs text-gray-600">{t.matchReason}</td>
                   <td className="px-2 py-1 text-right"><button className="btn-primary text-xs py-0" onClick={() => onLinkTxn(line, t)}>link</button></td>
                 </tr>
               ))}

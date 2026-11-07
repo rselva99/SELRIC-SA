@@ -41,7 +41,7 @@ const KINDS = [
 const isSupply = (p) => p?.kind === 'supply';
 // Movement types; the label is t(`inv.types.${value}`).
 const LOG_TYPES = [
-  { value: 'received',   icon: ArrowDown,  color: 'text-green-600' },
+  { value: 'received',   icon: ArrowDown,  color: 'text-green-700' },
   { value: 'sold',       icon: ArrowUp,    color: 'text-blue-600' },
   { value: 'used',       icon: Minus,      color: 'text-amber-600' },
   { value: 'adjustment', icon: RotateCcw,  color: 'text-purple-600' },
@@ -148,7 +148,6 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
 
   const displayed = logs;
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const status = STOCK_STATUS(p);
 
   return (
     <div className="px-4 py-5 bg-brand-50/20 border-t border-surface-100 animate-fade-in">
@@ -192,7 +191,7 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
             <p className="text-sm text-surface-400 text-center py-6">{t('inv.noHistory')}</p>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-100">
@@ -208,7 +207,7 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
                         <tr key={log.id} className="border-b border-surface-50">
                           <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">{formatDate(log.date || log.created_at)}</td>
                           <td className="py-2 pr-3"><span className={`text-xs font-medium ${lt?.color || ''}`}>{typeLabel(t, log.type)}</span></td>
-                          <td className={`py-2 pr-3 font-mono text-xs font-semibold whitespace-nowrap ${log.quantity >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          <td className={`py-2 pr-3 font-mono text-xs font-semibold whitespace-nowrap ${log.quantity >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                             {log.quantity >= 0 ? '+' : ''}{formatQty(log.quantity)}
                           </td>
                           <td className="py-2 pr-3 text-xs text-surface-500 max-w-[140px] truncate">{log.notes || '—'}</td>
@@ -238,7 +237,7 @@ function ExpandedRow({ p, profileMap, onLog, onEdit }) {
           {/* Quick actions */}
           <div className="flex gap-2 mt-4 pt-4 border-t border-surface-100">
             <button onClick={() => onLog('received')} className="btn-secondary text-xs flex items-center justify-center gap-1.5 flex-1">
-              <ArrowDown size={13} className="text-green-600" /> {t('inv.addStock')}
+              <ArrowDown size={13} className="text-green-700" /> {t('inv.addStock')}
             </button>
             <button onClick={() => onLog('used')} className="btn-secondary text-xs flex items-center justify-center gap-1.5 flex-1">
               <Minus size={13} className="text-amber-600" /> {t('inv.logUsage')}
@@ -275,7 +274,7 @@ function MovementHistoryTab({ products }) {
 
   return (
     <div className="card overflow-hidden">
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" tabIndex={0}>
         <table className="w-full">
           <thead><tr className="border-b border-surface-100">
             <th className="table-header">{t('inv.date')}</th><th className="table-header">{t('inv.product')}</th>
@@ -290,7 +289,7 @@ function MovementHistoryTab({ products }) {
                   <td className="table-cell font-mono text-xs">{formatDate(log.date||log.created_at)}</td>
                   <td className="table-cell font-medium">{productMap[log.product_id]||'—'}</td>
                   <td className="table-cell"><span className={`text-xs font-medium ${lt?.color||''}`}>{typeLabel(t, log.type)}</span></td>
-                  <td className={`table-cell text-center font-mono text-sm font-semibold ${log.quantity>=0?'text-green-600':'text-red-600'}`}>{log.quantity>=0?'+':''}{formatQty(log.quantity)}</td>
+                  <td className={`table-cell text-center font-mono text-sm font-semibold ${log.quantity>=0?'text-green-700':'text-red-600'}`}>{log.quantity>=0?'+':''}{formatQty(log.quantity)}</td>
                   <td className="table-cell text-surface-500 text-xs max-w-[200px] truncate">{log.notes||'—'}</td>
                 </tr>
               );
@@ -766,7 +765,7 @@ export default function InventoryPage() {
 
           {/* Category filter for charts */}
           <div className="flex items-center gap-3">
-            <select value={dashCat} onChange={(e) => setDashCat(e.target.value)} className="input-field w-auto">
+            <select value={dashCat} aria-label={t('inv.category')} onChange={(e) => setDashCat(e.target.value)} className="input-field w-auto">
               <option value="">{t('inv.allCategories')}</option>
               {categories.map((c) => <option key={c} value={c}>{catName(t, c)}</option>)}
             </select>
@@ -842,7 +841,7 @@ export default function InventoryPage() {
                 {t('inv.allGood')}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-surface-100">
@@ -886,11 +885,11 @@ export default function InventoryPage() {
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
               <input type="text" placeholder={t('inv.searchPh')} value={search} onChange={(e) => setSearch(e.target.value)} className="input-field pl-9" />
             </div>
-            <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="input-field w-auto min-w-[140px]">
+            <select value={filterCat} aria-label={t('inv.category')} onChange={(e) => setFilterCat(e.target.value)} className="input-field w-auto min-w-[140px]">
               <option value="">{t('inv.allCategories')}</option>
               {categories.map((c) => <option key={c} value={c}>{catName(t, c)}</option>)}
             </select>
-            <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className="input-field w-auto min-w-[130px]">
+            <select value={filterKind} aria-label={t('inv.productKind')} onChange={(e) => setFilterKind(e.target.value)} className="input-field w-auto min-w-[130px]">
               <option value="">{t('inv.kindAll')}</option>
               <option value="sale">{t('inv.kindSale')}</option>
               <option value="supply">{t('inv.kindSupplies')}</option>
@@ -898,7 +897,7 @@ export default function InventoryPage() {
             <button type="button" onClick={() => { setCatEdits({}); setShowCatModal(true); }} className="btn-secondary px-3 text-sm whitespace-nowrap" title={t('inv.categoriesTip')}>
               <Tags size={15} /> {t('inv.categories')}
             </button>
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="input-field w-auto min-w-[150px]">
+            <select value={filterStatus} aria-label={t('inv.stockLevels')} onChange={(e) => setFilterStatus(e.target.value)} className="input-field w-auto min-w-[150px]">
               <option value="">{t('inv.allStock')}</option>
               <option value="low">{t('inv.lowCritical')}</option>
               <option value="out">{t('inv.outOfStock')}</option>
@@ -910,7 +909,7 @@ export default function InventoryPage() {
             <EmptyState icon={Package} title={t('inv.noProducts')} description={t('inv.addFirst')} action={{ label: t('inv.addProduct'), onClick: openAddProduct }} />
           ) : (
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-surface-100">
@@ -956,7 +955,7 @@ export default function InventoryPage() {
                               <span className="text-xs text-surface-400 mx-1">/</span>
                               <span className="font-mono text-xs text-surface-400">{formatQty(p.target_stock ?? 0)}</span>
                               <span className="text-xs text-surface-400 ml-1">{p.unit}</span>
-                              {status === 'critical' && <span className="ml-1 text-xs text-red-500 font-medium">{t('inv.lowTag')}</span>}
+                              {status === 'critical' && <span className="ml-1 text-xs text-red-700 font-medium">{t('inv.lowTag')}</span>}
                             </td>
                             {/* Value */}
                             <td className="table-cell text-right font-mono text-sm">
@@ -965,7 +964,7 @@ export default function InventoryPage() {
                             {/* Actions */}
                             <td className="table-cell" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1 justify-end">
-                                <button onClick={() => openLogModal(p.id, 'received')} className="p-1.5 text-surface-400 hover:text-green-600 transition" title={t('inv.addStock')} aria-label={t('inv.addStock')}>
+                                <button onClick={() => openLogModal(p.id, 'received')} className="p-1.5 text-surface-400 hover:text-green-700 transition" title={t('inv.addStock')} aria-label={t('inv.addStock')}>
                                   <Plus size={14} />
                                 </button>
                                 {isAdmin && (
@@ -1321,7 +1320,7 @@ export default function InventoryPage() {
                 onChange={(e) => { const u = [...countEntries]; u[idx] = { ...u[idx], counted: e.target.value }; setCountEntries(u); }}
                 className="input-field w-24 text-center" placeholder={t('inv.countPh')} />
               {entry.counted !== '' && parseFloat(entry.counted) !== Number(entry.system_stock) && (
-                <span className={`text-xs font-mono w-14 text-right ${parseFloat(entry.counted) > Number(entry.system_stock) ? 'text-green-600' : 'text-red-600'}`}>
+                <span className={`text-xs font-mono w-14 text-right ${parseFloat(entry.counted) > Number(entry.system_stock) ? 'text-green-700' : 'text-red-600'}`}>
                   {parseFloat(entry.counted) > Number(entry.system_stock) ? '+' : ''}{formatQty(parseFloat(entry.counted) - Number(entry.system_stock))}
                 </span>
               )}

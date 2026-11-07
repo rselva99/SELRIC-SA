@@ -55,7 +55,7 @@ export function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const base64 = reader.result.split(',')[1];
+      const base64 = /** @type {string} */ (reader.result).split(',')[1];
       resolve(base64);
     };
     reader.onerror = reject;

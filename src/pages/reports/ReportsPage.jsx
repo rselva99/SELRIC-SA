@@ -321,6 +321,7 @@ export default function ReportsPage() {
           <span className="text-sm font-medium text-surface-600">Report Period:</span>
           <select
             value={isFullYear ? 'year' : String(selectedMonth)}
+            aria-label="Report period"
             onChange={(e) => {
               const v = e.target.value;
               if (v === 'year') {
@@ -340,6 +341,7 @@ export default function ReportsPage() {
           </select>
           <select
             value={selectedYear}
+            aria-label="Year"
             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
             className="input-field w-auto"
           >
@@ -354,7 +356,7 @@ export default function ReportsPage() {
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
         <div className="card p-4">
           <p className="text-xs text-surface-500 uppercase tracking-wider">Revenue</p>
-          <p className="text-xl font-display text-green-600 mt-1">{formatCurrency(summary.revenue)}</p>
+          <p className="text-xl font-display text-green-700 mt-1">{formatCurrency(summary.revenue)}</p>
         </div>
         <div className="card p-4">
           <p className="text-xs text-surface-500 uppercase tracking-wider">Expenses</p>
@@ -362,7 +364,7 @@ export default function ReportsPage() {
         </div>
         <div className="card p-4">
           <p className="text-xs text-surface-500 uppercase tracking-wider">Net Profit</p>
-          <p className={`text-xl font-display mt-1 ${summary.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`text-xl font-display mt-1 ${summary.netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
             {formatCurrency(summary.netProfit)}
           </p>
         </div>
@@ -477,7 +479,7 @@ export default function ReportsPage() {
             <span className="text-surface-400">·</span>
             <span><span className="font-mono text-red-600">{formatCurrency(sourceDocsSummary.debits)}</span> total debits</span>
             <span className="text-surface-400">·</span>
-            <span><span className="font-mono text-green-600">{formatCurrency(sourceDocsSummary.credits)}</span> total credits</span>
+            <span><span className="font-mono text-green-700">{formatCurrency(sourceDocsSummary.credits)}</span> total credits</span>
             <span className="text-surface-400 ml-1">from PDF pulls</span>
           </div>
         )}
@@ -492,7 +494,7 @@ export default function ReportsPage() {
               No statements cover {periodLabel}. Tick <span className="font-semibold">All statements</span> to see the full list.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0}>
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-surface-100 bg-surface-50/50">
@@ -520,7 +522,7 @@ export default function ReportsPage() {
                         </td>
                         <td className="table-cell text-right font-mono text-xs">{s.totals.count}</td>
                         <td className="table-cell text-right font-mono text-xs text-red-600">{formatCurrency(s.totals.debits)}</td>
-                        <td className="table-cell text-right font-mono text-xs text-green-600">{formatCurrency(s.totals.credits)}</td>
+                        <td className="table-cell text-right font-mono text-xs text-green-700">{formatCurrency(s.totals.credits)}</td>
                       </tr>
                     );
                   })}
@@ -537,7 +539,7 @@ export default function ReportsPage() {
           <div className="px-5 py-4 border-b border-surface-100">
             <h3 className="section-title">Expense Breakdown — {periodLabel}</h3>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100">

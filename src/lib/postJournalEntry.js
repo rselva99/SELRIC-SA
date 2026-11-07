@@ -40,6 +40,10 @@ export class UnbalancedJournalEntryError extends Error {
   constructor(message) { super(message); this.name = 'UnbalancedJournalEntryError'; }
 }
 
+/**
+ * @param {{ entry?: Record<string, any>, lines?: Array<Record<string, any>>, txns?: Array<Record<string, any>>,
+ *   onRef?: (r: { reference: string, attempt: number }) => void }} [args]
+ */
 export async function postJournalEntry({ entry, lines, txns = [], onRef } = {}) {
   if (!entry) throw new Error('postJournalEntry: entry required');
   if (!Array.isArray(lines) || lines.length < 2) {

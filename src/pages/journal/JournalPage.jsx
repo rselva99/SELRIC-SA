@@ -726,7 +726,7 @@ export default function JournalPage() {
         ].map(t => (
           <button key={t.id} onClick={() => setMode(t.id)}
             className={`px-4 py-2 rounded-md text-sm font-medium transition ${mode===t.id?'bg-white shadow-sm text-surface-900':'text-surface-500 hover:text-surface-700'}`}>
-            {t.label}{t.count != null && <span className="ml-1 text-xs opacity-60">({t.count})</span>}
+            {t.label}{t.count != null && <span className="ml-1 text-xs">({t.count})</span>}
           </button>
         ))}
       </div>
@@ -739,13 +739,13 @@ export default function JournalPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Date</label>
-                <input type="date" value={simpleForm.date}
+                <input aria-label="Date" type="date" value={simpleForm.date}
                   onChange={e => setSimpleForm({...simpleForm, date: e.target.value})}
                   className="input-field" required />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Type</label>
-                <select value={simpleForm.type}
+                <select aria-label="Type" value={simpleForm.type}
                   onChange={e => setSimpleForm({...simpleForm, type: e.target.value})}
                   className="input-field">
                   <option value="debit">Debit (expense)</option>
@@ -755,20 +755,20 @@ export default function JournalPage() {
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Description</label>
-              <input type="text" value={simpleForm.description}
+              <input aria-label="Description" type="text" value={simpleForm.description}
                 onChange={e => setSimpleForm({...simpleForm, description: e.target.value})}
                 className="input-field" placeholder="e.g. Payroll — May 2026" required />
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Amount</label>
-              <input type="number" min="0" step="0.01" value={simpleForm.amount}
+              <input aria-label="Amount" type="number" min="0" step="0.01" value={simpleForm.amount}
                 onChange={e => setSimpleForm({...simpleForm, amount: e.target.value})}
                 className="input-field" placeholder="0.00" required />
             </div>
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Category</label>
-                <select value={simpleForm.category}
+                <select aria-label="Category" value={simpleForm.category}
                   onChange={e => setSimpleForm({...simpleForm, category: e.target.value})}
                   className="input-field">
                   <option value="">— Uncategorized —</option>
@@ -777,7 +777,7 @@ export default function JournalPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Account</label>
-                <select value={simpleForm.account_id}
+                <select aria-label="Account" value={simpleForm.account_id}
                   onChange={e => setSimpleForm({...simpleForm, account_id: e.target.value})}
                   className="input-field">
                   {accountOptions}
@@ -785,7 +785,7 @@ export default function JournalPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Reference</label>
-                <input type="text" value={simpleForm.reference}
+                <input aria-label="Reference" type="text" value={simpleForm.reference}
                   onChange={e => setSimpleForm({...simpleForm, reference: e.target.value})}
                   className="input-field" placeholder="optional" />
               </div>
@@ -809,26 +809,26 @@ export default function JournalPage() {
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Date</label>
-                <input type="date" value={advancedForm.date}
+                <input aria-label="Date" type="date" value={advancedForm.date}
                   onChange={e => setAdvancedForm({...advancedForm, date: e.target.value})}
                   className="input-field" required />
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Description</label>
-                <input type="text" value={advancedForm.description}
+                <input aria-label="Description" type="text" value={advancedForm.description}
                   onChange={e => setAdvancedForm({...advancedForm, description: e.target.value})}
                   className="input-field" placeholder="e.g. Owner contribution to bar account" required />
               </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Memo</label>
-              <input type="text" value={advancedForm.memo}
+              <input aria-label="Memo" type="text" value={advancedForm.memo}
                 onChange={e => setAdvancedForm({...advancedForm, memo: e.target.value})}
                 className="input-field" placeholder="Optional notes about this entry" />
             </div>
 
             {/* Lines table */}
-            <div className="overflow-x-auto border border-surface-200 rounded-lg">
+            <div className="overflow-x-auto border border-surface-200 rounded-lg" tabIndex={0}>
               <table className="w-full text-sm">
                 <thead className="bg-surface-50">
                   <tr>
@@ -892,7 +892,7 @@ export default function JournalPage() {
                   </tr>
                   <tr>
                     <td colSpan={3} className="px-3 py-2 text-right font-semibold text-sm">Difference</td>
-                    <td colSpan={2} className={`px-3 py-2 text-right font-mono text-sm font-semibold ${balanced ? 'text-green-600' : 'text-red-600'}`}>
+                    <td colSpan={2} className={`px-3 py-2 text-right font-mono text-sm font-semibold ${balanced ? 'text-green-700' : 'text-red-600'}`}>
                       {formatCurrency(Math.abs(diff))} {balanced ? '· Balanced' : '· Unbalanced'}
                     </td>
                     <td></td>
@@ -1108,13 +1108,13 @@ export default function JournalPage() {
         <form onSubmit={handleSaveRule} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Name</label>
-            <input type="text" value={ruleForm.name}
+            <input aria-label="Name" type="text" value={ruleForm.name}
               onChange={e => setRuleForm({...ruleForm, name: e.target.value})}
               className="input-field" placeholder="e.g. Amazon Netting" required />
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Rule Type</label>
-            <select value={ruleForm.rule_type}
+            <select aria-label="Rule Type" value={ruleForm.rule_type}
               onChange={e => setRuleForm({...ruleForm, rule_type: e.target.value})}
               className="input-field">
               <option value="net_to_zero">Net to Zero (sum matched transactions, offset)</option>
@@ -1126,7 +1126,7 @@ export default function JournalPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Match Category</label>
-                <select value={ruleForm.match_category}
+                <select aria-label="Match Category" value={ruleForm.match_category}
                   onChange={e => setRuleForm({...ruleForm, match_category: e.target.value})}
                   className="input-field">
                   <option value="">— any —</option>
@@ -1135,7 +1135,7 @@ export default function JournalPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Match Keyword</label>
-                <input type="text" value={ruleForm.match_keyword}
+                <input aria-label="Match Keyword" type="text" value={ruleForm.match_keyword}
                   onChange={e => setRuleForm({...ruleForm, match_keyword: e.target.value})}
                   className="input-field" placeholder="e.g. Amazon" />
               </div>
@@ -1144,13 +1144,13 @@ export default function JournalPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Amount</label>
-                <input type="number" min="0" step="0.01" value={ruleForm.fixed_amount}
+                <input aria-label="Amount" type="number" min="0" step="0.01" value={ruleForm.fixed_amount}
                   onChange={e => setRuleForm({...ruleForm, fixed_amount: e.target.value})}
                   className="input-field" required />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Debit or Credit</label>
-                <select value={ruleForm.fixed_type}
+                <select aria-label="Debit or Credit" value={ruleForm.fixed_type}
                   onChange={e => setRuleForm({...ruleForm, fixed_type: e.target.value})}
                   className="input-field">
                   <option value="debit">Debit</option>
@@ -1163,7 +1163,7 @@ export default function JournalPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Offset Account</label>
-              <select value={ruleForm.account_id}
+              <select aria-label="Offset Account" value={ruleForm.account_id}
                 onChange={e => setRuleForm({...ruleForm, account_id: e.target.value})}
                 className="input-field">
                 {accountOptions}
@@ -1171,7 +1171,7 @@ export default function JournalPage() {
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Offset Category</label>
-              <select value={ruleForm.category}
+              <select aria-label="Offset Category" value={ruleForm.category}
                 onChange={e => setRuleForm({...ruleForm, category: e.target.value})}
                 className="input-field">
                 <option value="">—</option>
@@ -1202,7 +1202,7 @@ export default function JournalPage() {
           <div className="flex items-end gap-3">
             <div className="flex-1">
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Month</label>
-              <input type="month" value={genMonth}
+              <input aria-label="Month" type="month" value={genMonth}
                 onChange={e => { setGenMonth(e.target.value); setGenPreview([]); }}
                 className="input-field" />
             </div>
@@ -1329,7 +1329,7 @@ function ReverseEntryModal({ target, onChangeDate, onCancel, onConfirm }) {
 
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Reversal date</label>
-            <input
+            <input aria-label="Reversal date"
               type="date"
               value={target.date || ''}
               onChange={e => onChangeDate(e.target.value)}

@@ -50,6 +50,7 @@ export function makeBusiness({ today = '2026-11-07', months = 12, issues = false
   const planted = {};
 
   // ── journal entries: header, lines, and one mirrored ledger row per line ──
+  /** @param {string} date @param {string} description @param {any[]} legs @param {{ reference?: string, createdAt?: string }} [opts] */
   function postJE(date, description, legs, { reference, createdAt } = {}) {
     const id = next('je');
     const ref = reference || `JE-SYN-${pad(n.je)}${pad(n.je % 97)}`;
@@ -82,7 +83,6 @@ export function makeBusiness({ today = '2026-11-07', months = 12, issues = false
   const K = months - 3; // the month the issues go into
   let balance = 25000;
   let prevTax = 0;
-  let loanLeft = 40000;
   const employees = ['Employee A', 'Employee B', 'Employee C'];
   let checkNo = 1001;
 
@@ -135,7 +135,7 @@ export function makeBusiness({ today = '2026-11-07', months = 12, issues = false
     if (has(16)) bank(stmt, at(16), 'BEVERAGE DISTRIBUTOR', round2(bar * 0.24), 'debit', 'Liquor Cost');
     if (has(9)) bank(stmt, at(9), 'RESTAURANT SUPPLY', round2(300 + r() * 250), 'debit', 'Supplies');
     if (has(25)) bank(stmt, at(25), 'REPAIRS BILL PAYMENT', 600, 'debit', 'Accounts Payable', { leg: false });
-    if (has(22)) { bank(stmt, at(22), 'LENDER PAYMENT PRINCIPAL', 800, 'debit', 'Equipment Loan', { leg: false }); loanLeft -= 800; bank(stmt, at(22), 'LENDER PAYMENT INTEREST', 150, 'debit', 'Interest Expense'); }
+    if (has(22)) { bank(stmt, at(22), 'LENDER PAYMENT PRINCIPAL', 800, 'debit', 'Equipment Loan', { leg: false }); bank(stmt, at(22), 'LENDER PAYMENT INTEREST', 150, 'debit', 'Interest Expense'); }
     // Sales tax for last month, remitted on the 20th.
     if (prevTax > 0 && has(20)) {
       if (issues && i === K) planted.sales_tax = { month, unpaid: prevTax };

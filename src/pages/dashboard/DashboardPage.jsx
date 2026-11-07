@@ -321,7 +321,7 @@ export default function DashboardPage() {
                 {t('common.viewAll')} <ArrowRight size={14} />
               </Link>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0}>
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-surface-100">

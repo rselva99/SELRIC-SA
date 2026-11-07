@@ -35,6 +35,11 @@ export const catAxisX = (th, p = {}) => (
 // One tooltip for every chart: the value strong, the series name after it,
 // keyed by a short stroke of the series colour. `title` turns the hovered
 // label into the heading; `fmt` (or per-key `fmts`) formats each value.
+// recharts fills in active, payload and label.
+/**
+ * @param {{ active?: boolean, payload?: any[], label?: any, th: any, title?: (l: any, payload?: any[]) => any,
+ *   fmt?: (v: any, p?: any) => any, fmts?: Record<string, (v: any, p?: any) => any>, extra?: any }} props
+ */
 export function ChartTooltip({ active, payload, label, th, title = (l) => l, fmt = (v) => v, fmts = {}, extra }) {
   if (!active || !payload?.length) return null;
   const rows = payload.filter((p) => p.value != null && !p.hide && p.dataKey !== '__base');

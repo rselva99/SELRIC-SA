@@ -24,8 +24,8 @@ import Modal from '../../components/ui/Modal';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
-  Plus, ChevronDown, ChevronRight, Edit3, Archive, RotateCcw,
-  Loader2, CheckCircle2, AlertCircle, Calculator, Sprout, Undo2, Info,
+  Plus, Edit3, Archive, RotateCcw,
+  Loader2, AlertCircle, Calculator, Sprout, Undo2, Info,
 } from 'lucide-react';
 
 // ── Seed spec — exactly what the dry-run promised. Asserted before insert. ──
@@ -245,7 +245,7 @@ export default function AssetsPage() {
                                 {a.status === 'active' ? (
                                   <button onClick={() => retireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-amber-600" title="Retire"><Archive size={13} /></button>
                                 ) : (
-                                  <button onClick={() => unretireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-green-600" title="Unretire"><RotateCcw size={13} /></button>
+                                  <button onClick={() => unretireAsset(a, load)} className="btn-ghost p-1.5 text-surface-400 hover:text-green-700" title="Unretire"><RotateCcw size={13} /></button>
                                 )}
                               </div>
                             </td>
@@ -445,10 +445,10 @@ function AssetForm({ asset, open, onClose, onSaved }) {
 
 function Field({ label, children }) {
   return (
-    <div>
-      <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">{label}</label>
+    <label className="block">
+      <span className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">{label}</span>
       {children}
-    </div>
+    </label>
   );
 }
 

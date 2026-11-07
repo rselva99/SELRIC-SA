@@ -217,7 +217,7 @@ export default function MarketingPage() {
           <div className="card p-5">
             <form onSubmit={handleGenerate} className="space-y-3">
               <label className="block text-sm font-semibold text-surface-700">Describe your event or promotion</label>
-              <textarea
+              <textarea aria-label="Describe your event or promotion"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 className="input-field resize-none"

@@ -9,7 +9,7 @@ import { useT } from '../../i18n/I18nContext';
 import { resolve } from '../../lib/ceoDocs.js';
 import { ladderRows, stats, matrix, sortByFeature, featureTotal } from '../../lib/ceoCompetition.js';
 import { C, usd, NumAxisX, CatAxisY, useNarrow, ChartCard } from './charts';
-import { Card, Section, Versions, Blocks, DocTable, saveBlob, localStamp } from './docParts';
+import { Card, Section, Versions, DocTable, saveBlob, localStamp } from './docParts';
 import CompetitorForm from './CompetitorForm';
 
 // Competition — the field, for the eye. Prose and the competitor dataset come
@@ -126,7 +126,7 @@ function Matrix({ M, T }) {
   const groupLabel = { infra: T('groupInfra'), market: T('groupMarket'), ours: T('groupOurs') };
   const groupTone = { infra: 'bg-surface-100 text-surface-600', market: 'bg-brand-50 text-brand-800', ours: 'bg-brand-100 text-brand-900' };
   return (
-    <div className="overflow-x-auto rounded-lg border border-surface-200">
+    <div className="overflow-x-auto rounded-lg border border-surface-200" tabIndex={0}>
       <table className="text-xs border-separate border-spacing-0">
         <thead>
           <tr>

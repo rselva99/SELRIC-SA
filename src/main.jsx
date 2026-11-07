@@ -140,7 +140,7 @@ function PageLoading() {
 
 // /setup is only for an admin whose Simple-mode workspace is not configured.
 function SetupGate() {
-  const { user, loading, accountingMode, config, isAdmin, isInternal } = useAuth();
+  const { user, loading, accountingMode, isAdmin, isInternal } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-brand-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   if (isInternal) return <Navigate to="/ceo" replace />;

@@ -341,9 +341,9 @@ export default function LedgerPage() {
             <span className="font-mono font-semibold text-red-600">{formatCurrency(summary.debits)}</span>
           </div>
           <div className="flex items-center gap-2">
-            <TrendingUp size={14} className="text-green-600" />
+            <TrendingUp size={14} className="text-green-700" />
             <span className="text-surface-500 text-xs">Credits</span>
-            <span className="font-mono font-semibold text-green-600">{formatCurrency(summary.credits)}</span>
+            <span className="font-mono font-semibold text-green-700">{formatCurrency(summary.credits)}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-surface-500 text-xs">{summary.net >= 0 ? 'Net' : 'Net'}</span>
@@ -370,15 +370,15 @@ export default function LedgerPage() {
           <div className="flex flex-wrap items-center gap-2 text-xs text-surface-500">
             <span className="uppercase tracking-wider font-semibold">Range</span>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              className="input-field text-xs py-1.5 w-auto" title="From" />
+              className="input-field text-xs py-1.5 w-auto" title="From" aria-label="From" />
             <span className="text-surface-300">→</span>
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-              className="input-field text-xs py-1.5 w-auto" title="To" />
+              className="input-field text-xs py-1.5 w-auto" title="To" aria-label="To" />
             {(dateFrom || dateTo) && (selectedPeriod || selectedYear) && (
               <span className="text-amber-700 text-[10px] uppercase tracking-wider">overrides period/year</span>
             )}
           </div>
-          <select value={txnType} onChange={e => setTxnType(e.target.value)}
+          <select value={txnType} onChange={e => setTxnType(e.target.value)} aria-label="Debits or credits"
             className="input-field text-xs py-1.5 w-auto">
             <option value="">All types</option>
             <option value="debit">Debits only</option>
@@ -388,25 +388,25 @@ export default function LedgerPage() {
 
         {/* Row 2: period / year / account / category / amount range */}
         <div className="flex flex-wrap items-center gap-3">
-          <select value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); if (e.target.value) setSelectedYear(''); }}
+          <select value={selectedPeriod} aria-label="Period" onChange={e => { setSelectedPeriod(e.target.value); if (e.target.value) setSelectedYear(''); }}
             className="input-field text-xs py-1.5 w-auto min-w-[130px]" disabled={!!(dateFrom || dateTo)}>
             <option value="">All periods</option>
             {periodOptions.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
           </select>
 
-          <select value={selectedYear} onChange={e => { setSelectedYear(e.target.value); if (e.target.value) setSelectedPeriod(''); }}
+          <select value={selectedYear} aria-label="Year" onChange={e => { setSelectedYear(e.target.value); if (e.target.value) setSelectedPeriod(''); }}
             className="input-field text-xs py-1.5 w-auto" disabled={!!(dateFrom || dateTo)}>
             <option value="">{yearListState === 'loading' ? 'Loading years…' : 'All years'}</option>
             {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
 
-          <select value={selectedAccountId} onChange={e => setSelectedAccountId(e.target.value)}
+          <select value={selectedAccountId} aria-label="Account" onChange={e => setSelectedAccountId(e.target.value)}
             className="input-field text-xs py-1.5 w-auto min-w-[140px]">
             <option value="">All accounts</option>
             {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
 
-          <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
+          <select value={selectedCategory} aria-label="Category" onChange={e => setSelectedCategory(e.target.value)}
             className="input-field text-xs py-1.5 w-auto min-w-[160px]">
             <option value="">All categories</option>
             {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -415,10 +415,10 @@ export default function LedgerPage() {
           <div className="flex items-center gap-1.5 text-xs text-surface-500">
             <span className="uppercase tracking-wider font-semibold">Amount</span>
             <input type="number" min="0" step="0.01" value={minAmount} onChange={e => setMinAmount(e.target.value)}
-              placeholder="Min" className="input-field text-xs py-1.5 w-24 font-mono text-right" />
+              placeholder="Min" aria-label="Minimum amount" className="input-field text-xs py-1.5 w-24 font-mono text-right" />
             <span className="text-surface-300">→</span>
             <input type="number" min="0" step="0.01" value={maxAmount} onChange={e => setMaxAmount(e.target.value)}
-              placeholder="Max" className="input-field text-xs py-1.5 w-24 font-mono text-right" />
+              placeholder="Max" aria-label="Maximum amount" className="input-field text-xs py-1.5 w-24 font-mono text-right" />
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
@@ -445,7 +445,7 @@ export default function LedgerPage() {
           description={hasFilters ? 'Try adjusting your filters' : 'Post transactions from the Bookkeeping page to see them here'} />
       ) : (
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100 bg-surface-50">
@@ -454,8 +454,8 @@ export default function LedgerPage() {
                   <th className="table-header">Description</th>
                   <th className="table-header">Category</th>
                   <th className="table-header">Account</th>
-                  <th className="table-header text-right text-red-500">Debit</th>
-                  <th className="table-header text-right text-green-600">Credit</th>
+                  <th className="table-header text-right text-red-700">Debit</th>
+                  <th className="table-header text-right text-green-800">Credit</th>
                   <th className="table-header text-right">Balance</th>
                 </tr>
               </thead>
@@ -481,7 +481,7 @@ export default function LedgerPage() {
                         <td className="table-cell text-right font-mono text-xs text-red-600">
                           {t.type === 'debit' ? formatCurrency(Math.abs(t.amount)) : ''}
                         </td>
-                        <td className="table-cell text-right font-mono text-xs text-green-600">
+                        <td className="table-cell text-right font-mono text-xs text-green-700">
                           {t.type === 'credit' ? formatCurrency(Math.abs(t.amount)) : ''}
                         </td>
                         <td className={`table-cell text-right font-mono text-xs font-semibold ${t._runningBalance >= 0 ? 'text-green-700' : 'text-red-700'}`}>
@@ -494,7 +494,7 @@ export default function LedgerPage() {
                         {group.label} Subtotal
                       </td>
                       <td className="table-cell text-right font-mono text-xs font-semibold text-red-600">{formatCurrency(group.debits)}</td>
-                      <td className="table-cell text-right font-mono text-xs font-semibold text-green-600">{formatCurrency(group.credits)}</td>
+                      <td className="table-cell text-right font-mono text-xs font-semibold text-green-700">{formatCurrency(group.credits)}</td>
                       <td className={`table-cell text-right font-mono text-xs font-semibold ${group.net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                         {group.net >= 0 ? '+' : ''}{formatCurrency(group.net)}
                       </td>

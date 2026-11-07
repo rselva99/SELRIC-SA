@@ -498,7 +498,7 @@ export default function SalesPage() {
                         <div className="col-span-12 lg:col-span-6">
                           {custom ? (
                             <div className="flex gap-2">
-                              <input type="text" value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} className="input-field py-2 text-sm"
+                              <input type="text" value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} className="input-field py-2 text-sm" aria-label={t('sales.product')}
                                 placeholder={t(noInventory ? 'sales.serviceNamePlaceholder' : 'sales.itemNamePlaceholder')} autoFocus={!noInventory} />
                               {!noInventory && <button type="button" onClick={() => setLine(i, { product_id: '', name: '', unit_price: '' })} className="btn-ghost px-2 shrink-0" aria-label={t('common.cancel')}><X size={15} /></button>}
                             </div>
@@ -614,7 +614,7 @@ export default function SalesPage() {
         ) : visible.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-surface-500">{t('sales.noMatches')}</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100">

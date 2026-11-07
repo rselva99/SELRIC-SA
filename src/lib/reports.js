@@ -352,6 +352,7 @@ function renderSection(doc, y, title, rows, total, totalLabel) {
   doc.text(safeText(title), PAGE_MARGIN, y);
   y += 6;
 
+  /** @type {any[][]} */
   const body = safeArray(rows).map((r) => [
     safeText(r?.account, '—'),
     safeText(formatCurrency(r?.amount)),
@@ -538,6 +539,7 @@ function renderDetailAccount(doc, y, account) {
   const visible    = sorted.slice(0, DETAIL_ROW_CAP);
   const omittedCount = Math.max(0, sorted.length - visible.length);
 
+  /** @type {any[][]} */
   const body = visible.map((t) => {
     const d = debitOf(t);
     const c = creditOf(t);
@@ -1321,6 +1323,8 @@ export function generateTrialBalancePdf(input, periodArg, opts = {}) {
 //     bookBSSnapshot:  Object | null,    // required for scope='year', ignored otherwise
 //   }
 
+// Kept on purpose (see generateAuditorPackagePdf): the trim can be reverted.
+// eslint-disable-next-line no-unused-vars
 function renderCoverPage(doc, { scope, year, periodLabel }) {
   const pageHeight = doc.internal.pageSize.height;
   addHeader(doc, 'Auditor Package', periodLabel);
@@ -1420,6 +1424,7 @@ export function generateAuditorPackagePdf(input, opts = {}) {
 // recognition method, the arithmetic, the year-by-year total, and every
 // disclosure verbatim per contract 2026-07-14 (see ~/Documents/SELRIC-JARIS.md
 // for the underlying statement analysis).
+// eslint-disable-next-line no-unused-vars
 function renderFinancingSchedulePage(doc, { periodLabel }) {
   addHeader(doc, 'Financing Schedule — Jaris / SpotOn Capital', periodLabel);
   let y = 44;
@@ -1572,6 +1577,7 @@ function renderFinancingSchedulePage(doc, { periodLabel }) {
 // This page displays the gap and the KNOWN CANDIDATES that MIGHT account for
 // it, without claiming any of them explain it. The final "question for the
 // CPA" is included verbatim.
+// eslint-disable-next-line no-unused-vars
 function renderMembersCapitalReconciliationPage(doc, { periodLabel, snapshot, transactions, categories }) {
   addHeader(doc, "Members' Capital — Reconciliation to CPA", periodLabel);
   let y = 44;

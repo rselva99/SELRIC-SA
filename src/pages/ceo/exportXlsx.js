@@ -11,6 +11,10 @@ import { GROUPS, PARAM_TYPE } from '../../lib/ceoFields.js';
 export const XLSX_FILE = 'SelRic_Financial_Model.xlsx';
 const USD = '"$"#,##0;[Red]-"$"#,##0', USD2 = '"$"#,##0.00', NUM1 = '#,##0.0', NUM = '#,##0', PCT = '0.0%', PCT0 = '0%';
 
+/**
+ * @param {any} R
+ * @param {{ version?: string | number, docs?: any }} [opts]
+ */
 export function xlsxWorkbook(R, { version = '—', docs = {} } = {}) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'SelRic LLC'; wb.created = new Date();

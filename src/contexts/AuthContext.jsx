@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { setReportBusinessName } from '../lib/reportName';
 import { resolveConfig, serializeConfig } from '../lib/workspaceConfig';
 
-const AuthContext = createContext({});
+const AuthContext = createContext(/** @type {any} */ ({}));
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);

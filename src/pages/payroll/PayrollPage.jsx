@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
 import { toast } from 'react-hot-toast';
@@ -193,7 +193,7 @@ export default function PayrollPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Payroll</h1>
-          <p className="text-sm text-gray-500">Individual paycheck rows from the 2024 register, bridged to checks and transactions.</p>
+          <p className="text-sm text-gray-600">Individual paycheck rows from the 2024 register, bridged to checks and transactions.</p>
         </div>
         <div className="flex gap-2 items-center">
           <span className="inline-flex items-center px-2 py-1 rounded bg-amber-100 text-amber-800 text-xs font-semibold">TENTATIVE — NOT POSTED</span>
@@ -205,7 +205,7 @@ export default function PayrollPage() {
       {isEmpty && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
           <div className="text-lg font-semibold text-gray-700">No payroll data loaded yet</div>
-          <p className="text-sm text-gray-500 mt-2 max-w-lg mx-auto">
+          <p className="text-sm text-gray-600 mt-2 max-w-lg mx-auto">
             The <code>payroll_lines</code> and <code>payroll_months</code> tables are empty. To populate:
           </p>
           <ol className="mt-3 text-left inline-block text-sm text-gray-600 space-y-1">
@@ -260,7 +260,7 @@ export default function PayrollPage() {
                     <td className="px-3 py-2 text-right tabular-nums">{usd(m.total_gross)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{usd(m.total_ee_tax)}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">{usd(m.total_net)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-500">{usd(m.total_er_tax)} <span className="text-xs">(est)</span></td>
+                    <td className="px-3 py-2 text-right tabular-nums text-gray-600">{usd(m.total_er_tax)} <span className="text-xs">(est)</span></td>
                     <td className="px-3 py-2 text-right tabular-nums">{usd(m.total_loaded)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-600">{usd(m.existing_plug_amount)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-600">{usd(m.existing_fragment_amount)}</td>
@@ -268,7 +268,7 @@ export default function PayrollPage() {
                     <td className={`px-3 py-2 text-right tabular-nums ${variance > 0 ? 'text-red-600' : 'text-green-700'}`}>{usd(variance)}</td>
                     <td className="px-3 py-2 text-center text-xs">
                       <div>{bridgedLines} of {m.line_count} lines</div>
-                      <div className="text-gray-500">{usd(bridgedNet)} bridged · <span className={unbridgedNet > 0 ? 'text-amber-700' : 'text-green-700'}>{usd(unbridgedNet)} unbridged</span></div>
+                      <div className="text-gray-600">{usd(bridgedNet)} bridged · <span className={unbridgedNet > 0 ? 'text-amber-700' : 'text-green-700'}>{usd(unbridgedNet)} unbridged</span></div>
                     </td>
                     <td className="px-3 py-2 text-center">
                       {bridgeReady
@@ -306,16 +306,16 @@ export default function PayrollPage() {
             const variance = Number(selectedMonthObj.total_loaded || 0) - bookedTotal;
             return (
               <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2 text-xs bg-white rounded border border-gray-200 p-3">
-                <div><div className="text-gray-500">Lines</div><div className="font-semibold tabular-nums">{selectedMonthObj.line_count}</div></div>
-                <div><div className="text-gray-500">Gross</div><div className="font-semibold tabular-nums">{usd(selectedMonthObj.total_gross)}</div></div>
-                <div><div className="text-gray-500">EE tax</div><div className="tabular-nums">{usd(selectedMonthObj.total_ee_tax)}</div></div>
-                <div><div className="text-gray-500">Net</div><div className="font-semibold tabular-nums">{usd(selectedMonthObj.total_net)}</div></div>
-                <div><div className="text-gray-500">ER tax (est)</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.total_er_tax)}</div></div>
-                <div><div className="text-gray-500">Loaded</div><div className="tabular-nums">{usd(selectedMonthObj.total_loaded)}</div></div>
-                <div><div className="text-gray-500">Plug</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.existing_plug_amount)}</div></div>
-                <div><div className="text-gray-500">Fragments</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.existing_fragment_amount)}</div></div>
-                <div><div className="text-gray-500">Booked total</div><div className="font-semibold tabular-nums">{usd(bookedTotal)}</div></div>
-                <div><div className="text-gray-500">Variance</div><div className={`font-semibold tabular-nums ${variance > 0 ? 'text-red-600' : 'text-green-700'}`}>{usd(variance)}</div></div>
+                <div><div className="text-gray-600">Lines</div><div className="font-semibold tabular-nums">{selectedMonthObj.line_count}</div></div>
+                <div><div className="text-gray-600">Gross</div><div className="font-semibold tabular-nums">{usd(selectedMonthObj.total_gross)}</div></div>
+                <div><div className="text-gray-600">EE tax</div><div className="tabular-nums">{usd(selectedMonthObj.total_ee_tax)}</div></div>
+                <div><div className="text-gray-600">Net</div><div className="font-semibold tabular-nums">{usd(selectedMonthObj.total_net)}</div></div>
+                <div><div className="text-gray-600">ER tax (est)</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.total_er_tax)}</div></div>
+                <div><div className="text-gray-600">Loaded</div><div className="tabular-nums">{usd(selectedMonthObj.total_loaded)}</div></div>
+                <div><div className="text-gray-600">Plug</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.existing_plug_amount)}</div></div>
+                <div><div className="text-gray-600">Fragments</div><div className="tabular-nums text-gray-600">{usd(selectedMonthObj.existing_fragment_amount)}</div></div>
+                <div><div className="text-gray-600">Booked total</div><div className="font-semibold tabular-nums">{usd(bookedTotal)}</div></div>
+                <div><div className="text-gray-600">Variance</div><div className={`font-semibold tabular-nums ${variance > 0 ? 'text-red-600' : 'text-green-700'}`}>{usd(variance)}</div></div>
               </div>
             );
           })()}
@@ -334,7 +334,7 @@ export default function PayrollPage() {
             <label>Search:
               <input className="ml-2 border rounded px-2 py-1 text-xs" placeholder="employee name" value={filter.search} onChange={e => setFilter(f => ({ ...f, search: e.target.value }))} />
             </label>
-            <span className="text-xs text-gray-500">Showing {filteredSortedLines.length} of {selectedMonthLines.length}</span>
+            <span className="text-xs text-gray-600">Showing {filteredSortedLines.length} of {selectedMonthLines.length}</span>
           </div>
 
           {/* Paycheck list */}
@@ -376,13 +376,13 @@ export default function PayrollPage() {
                         {l.match_status === 'matched_check' && <span className="text-green-700">check {l.match_confidence ? `(${l.match_confidence})` : ''}</span>}
                         {l.match_status === 'matched_txn' && <span className="text-green-700">txn {l.match_confidence ? `(${l.match_confidence})` : ''}</span>}
                         {l.match_status === 'unmatched' && <span className="text-amber-700">unmatched</span>}
-                        {l.match_status === 'no_disbursement' && <span className="text-gray-500">no disbursement</span>}
+                        {l.match_status === 'no_disbursement' && <span className="text-gray-600">no disbursement</span>}
                       </td>
                       <td className="px-2 py-1 text-xs text-gray-700">
                         {linkedCheck ? (
                           <>
                             <span className="font-medium">Ck#{linkedCheck.check_no}</span>
-                            <span className="text-gray-500 ml-1">cleared {linkedCheck.clear_date}</span>
+                            <span className="text-gray-600 ml-1">cleared {linkedCheck.clear_date}</span>
                           </>
                         ) : l.matched_transaction_id ? (
                           <>txn {l.matched_transaction_id.slice(0, 8)}</>
@@ -431,7 +431,7 @@ export default function PayrollPage() {
             >
               Post replacement JE (disabled — build placeholder)
             </button>
-            <span className="ml-3 text-gray-500">
+            <span className="ml-3 text-gray-600">
               This build has no post button. Future action must reverse BOTH the plug JE
               ({selectedMonthObj.existing_plug_je_id ? selectedMonthObj.existing_plug_je_id.slice(0, 8) : 'none'})
               AND all payroll-tagged fragment rows ({usd(Number(selectedMonthObj.existing_fragment_amount || 0))} for this month)

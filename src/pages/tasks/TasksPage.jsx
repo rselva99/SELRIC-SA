@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   format, parseISO, addDays, addWeeks, addMonths,
-  startOfWeek, isToday, isBefore,
+  startOfWeek, isToday,
 } from 'date-fns';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
@@ -198,6 +198,7 @@ export default function TasksPage() {
           type="checkbox"
           checked={done}
           onChange={() => toggleDone(task)}
+          aria-label={`Done: ${task.title}`}
           className="mt-0.5 w-4 h-4 rounded accent-brand-600 cursor-pointer shrink-0"
         />
         <div className="flex-1 min-w-0">
@@ -218,7 +219,7 @@ export default function TasksPage() {
               <span className="flex items-center gap-0.5"><RefreshCw size={10} /> {task.recurrence}</span>
             )}
             {done && task.completed_at && (
-              <span className="text-green-600">✓ Done {format(new Date(task.completed_at), 'MMM d')}</span>
+              <span className="text-green-700">✓ Done {format(new Date(task.completed_at), 'MMM d')}</span>
             )}
           </div>
         </div>
@@ -260,11 +261,11 @@ export default function TasksPage() {
             </button>
           ))}
         </div>
-        <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} className="input-field w-auto text-sm py-1.5">
+        <select value={filterPriority} aria-label="Priority" onChange={e => setFilterPriority(e.target.value)} className="input-field w-auto text-sm py-1.5">
           <option value="">All Priorities</option>
           {PRIORITIES.map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
         </select>
-        <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className="input-field w-auto text-sm py-1.5 min-w-[140px]">
+        <select value={filterAssignee} aria-label="Assignee" onChange={e => setFilterAssignee(e.target.value)} className="input-field w-auto text-sm py-1.5 min-w-[140px]">
           <option value="">All Assignees</option>
           {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.email}</option>)}
         </select>
@@ -309,7 +310,7 @@ export default function TasksPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Title</label>
-            <input type="text" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
+            <input aria-label="Title" type="text" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
               className="input-field" placeholder="e.g. Order beer stock" required />
           </div>
 
@@ -324,12 +325,12 @@ export default function TasksPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Due Date</label>
-              <input type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })}
+              <input aria-label="Due Date" type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })}
                 className="input-field" required />
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Priority</label>
-              <select value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })} className="input-field">
+              <select aria-label="Priority" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })} className="input-field">
                 {PRIORITIES.map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
               </select>
             </div>
@@ -338,14 +339,14 @@ export default function TasksPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Assignee</label>
-              <select value={form.assignee_id} onChange={e => setForm({ ...form, assignee_id: e.target.value })} className="input-field">
+              <select aria-label="Assignee" value={form.assignee_id} onChange={e => setForm({ ...form, assignee_id: e.target.value })} className="input-field">
                 <option value="">— Unassigned —</option>
                 {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name || p.email}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Recurrence</label>
-              <select value={form.recurrence} onChange={e => setForm({ ...form, recurrence: e.target.value })} className="input-field">
+              <select aria-label="Recurrence" value={form.recurrence} onChange={e => setForm({ ...form, recurrence: e.target.value })} className="input-field">
                 {RECURRENCES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
               </select>
             </div>

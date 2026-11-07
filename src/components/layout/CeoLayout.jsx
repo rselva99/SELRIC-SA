@@ -53,7 +53,7 @@ export default function CeoLayout() {
   );
   const brand = (
     <Link to="/ceo" className="flex items-center gap-3">
-      <span className="w-10 h-10 rounded-xl bg-brand-500 text-white font-display text-lg flex items-center justify-center">S</span>
+      <span className="w-10 h-10 rounded-xl bg-brand-600 text-white font-display text-lg flex items-center justify-center">S</span>
       <span className="min-w-0">
         <span className="block font-display text-[17px] leading-tight">SelRic</span>
         <span className="block text-[11px] uppercase tracking-wider text-white/50 mt-0.5">{t('nav.groups.platform')}</span>

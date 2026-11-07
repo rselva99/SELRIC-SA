@@ -8,7 +8,6 @@ import {
   postOpeningJE,
   findExistingOpeningJE,
   OPENING_REFERENCE,
-  OPENING_EXPECTED_TOTAL,
   OPENING_LINES,
   OPENING_DATE,
   sumDebits,
@@ -19,7 +18,7 @@ import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
   Plus, ChevronDown, ChevronRight, Edit3, Archive, RotateCcw,
-  Search, BookOpen, ArrowRightLeft, Loader2, CheckCircle2, AlertCircle, X,
+  Search, ArrowRightLeft, Loader2, CheckCircle2, AlertCircle, X,
 } from 'lucide-react';
 
 const SECTION_ORDER  = ['asset', 'liability', 'equity', 'revenue', 'expense'];
@@ -265,11 +264,11 @@ export default function AccountsPage() {
         <form onSubmit={handleAdd} className="space-y-4 p-1">
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Name</label>
-            <input value={newForm.name} onChange={e => setNewForm({ ...newForm, name: e.target.value })} className="input-field" placeholder="e.g. Bar Supplies" autoFocus />
+            <input aria-label="Name" value={newForm.name} onChange={e => setNewForm({ ...newForm, name: e.target.value })} className="input-field" placeholder="e.g. Bar Supplies" autoFocus />
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Type</label>
-            <select value={newForm.type} onChange={e => setNewForm({ ...newForm, type: e.target.value })} className="input-field">
+            <select aria-label="Type" value={newForm.type} onChange={e => setNewForm({ ...newForm, type: e.target.value })} className="input-field">
               {SECTION_ORDER.map(t => <option key={t} value={t}>{SECTION_LABELS[t]}</option>)}
             </select>
             {isBalanceSheetType(newForm.type) && (
@@ -327,7 +326,7 @@ function OpeningBalancesBar({ openingJE, checking, onClick }) {
     return (
       <div className="card p-3 mb-4 flex items-center justify-between bg-green-50 border-green-200">
         <div className="flex items-center gap-3 text-sm">
-          <CheckCircle2 size={16} className="text-green-600" />
+          <CheckCircle2 size={16} className="text-green-700" />
           <span>
             <span className="font-semibold">Opening balances posted</span>
             <span className="text-surface-500"> · {OPENING_REFERENCE} · {formatCurrency(openingJE.total_amount)}</span>
@@ -422,7 +421,7 @@ function AccountRow({ row, isEditing, editName, setEditName, onClick, onStartRen
               className="input-field h-8 text-sm"
               autoFocus
             />
-            <button onClick={() => onCommitRename(row)} disabled={busy} className="btn-ghost p-1.5 text-green-600"><CheckCircle2 size={14} /></button>
+            <button onClick={() => onCommitRename(row)} disabled={busy} className="btn-ghost p-1.5 text-green-700"><CheckCircle2 size={14} /></button>
             <button onClick={onCancelRename} className="btn-ghost p-1.5 text-surface-400"><X size={14} /></button>
           </div>
         ) : (
@@ -444,7 +443,7 @@ function AccountRow({ row, isEditing, editName, setEditName, onClick, onStartRen
               <button onClick={onStartRename} title="Rename" className="p-1.5 hover:text-brand-600"><Edit3 size={13} /></button>
               <button onClick={onMerge} title="Merge into another" className="p-1.5 hover:text-brand-600"><ArrowRightLeft size={13} /></button>
               {row.archived ? (
-                <button onClick={() => onArchive(row, false)} title="Restore" className="p-1.5 hover:text-green-600"><RotateCcw size={13} /></button>
+                <button onClick={() => onArchive(row, false)} title="Restore" className="p-1.5 hover:text-green-700"><RotateCcw size={13} /></button>
               ) : (
                 <button onClick={() => onArchive(row, true)} title="Archive" className="p-1.5 hover:text-amber-600"><Archive size={13} /></button>
               )}
@@ -518,7 +517,7 @@ function MergeModal({ from, categories, onClose, onDone }) {
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Merge into</label>
-            <select value={intoId} onChange={e => setIntoId(e.target.value)} className="input-field">
+            <select aria-label="Merge into" value={intoId} onChange={e => setIntoId(e.target.value)} className="input-field">
               <option value="">— Choose target —</option>
               {candidates.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>

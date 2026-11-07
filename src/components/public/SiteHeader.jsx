@@ -19,8 +19,8 @@ export default function SiteHeader() {
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-surface-200">
       <div className="max-w-6xl mx-auto px-5 sm:px-8 h-16 flex items-center justify-between gap-6">
-        <Link to="/" className="flex items-center gap-2.5" aria-label="SelRic home">
-          <span className="w-8 h-8 rounded-lg bg-brand-600 text-white font-display text-base flex items-center justify-center">S</span>
+        <Link to="/" className="flex items-center gap-2.5">
+          <span className="w-8 h-8 rounded-lg bg-brand-600 text-white font-display text-base flex items-center justify-center" aria-hidden="true">S</span>
           <span className="font-display text-xl text-brand-950">SelRic</span>
         </Link>
 

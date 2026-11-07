@@ -40,13 +40,13 @@ export default function StatementAnchorPrompt({ request, fileName, onResolve, on
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Month</label>
-            <select value={month} onChange={e => setMonth(+e.target.value)} className="input-field">
+            <select aria-label="Month" value={month} onChange={e => setMonth(+e.target.value)} className="input-field">
               {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Year</label>
-            <input type="number" value={year} onChange={e => setYear(+e.target.value)} className="input-field" />
+            <input aria-label="Year" type="number" value={year} onChange={e => setYear(+e.target.value)} className="input-field" />
           </div>
         </div>
         <div className="text-xs text-surface-500">

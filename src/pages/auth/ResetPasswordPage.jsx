@@ -39,7 +39,7 @@ export default function ResetPasswordPage() {
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.newPassword')}</label>
-            <input
+            <input aria-label={t('common.newPassword')}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -51,7 +51,7 @@ export default function ResetPasswordPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.confirmPassword')}</label>
-            <input
+            <input aria-label={t('common.confirmPassword')}
               type="password"
               value={confirmPw}
               onChange={(e) => setConfirmPw(e.target.value)}

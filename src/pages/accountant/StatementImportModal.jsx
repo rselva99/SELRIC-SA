@@ -58,7 +58,7 @@ export default function StatementImportModal({ open, period, onClose, onImported
       // 1. Upload the original full-quality PDF directly to private storage.
       setStage('uploading');
       setProgress('Uploading original PDF…');
-      const safeName = file.name.replace(/[^\w.\-]/g, '_');
+      const safeName = file.name.replace(/[^\w.-]/g, '_');
       const path = `${period}/${Date.now()}-${safeName}`;
       const { error: upErr } = await supabase.storage
         .from(STORAGE_BUCKET)
@@ -267,7 +267,7 @@ export default function StatementImportModal({ open, period, onClose, onImported
         <div className="space-y-4 p-1">
           {stage === 'done' ? (
             <div className="rounded-lg border border-green-200 bg-green-50 p-4 flex items-start gap-3">
-              <CheckCircle2 size={20} className="text-green-600 mt-0.5" />
+              <CheckCircle2 size={20} className="text-green-700 mt-0.5" />
               <div className="flex-1">
                 <div className="font-semibold text-green-900">Imported. Ready to match.</div>
                 <p className="text-sm text-green-800 mt-0.5">

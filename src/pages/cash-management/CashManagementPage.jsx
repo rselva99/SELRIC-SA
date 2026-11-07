@@ -8,8 +8,8 @@ import EmptyState from '../../components/ui/EmptyState';
 import Spinner from '../../components/ui/Spinner';
 import toast from 'react-hot-toast';
 import {
-  Landmark, AlertTriangle, CheckCircle2, ChevronDown, Search,
-  RotateCcw, Trash2, DollarSign, Ban, BookOpen, CornerDownLeft,
+  Landmark, AlertTriangle, Search,
+  RotateCcw, Trash2, DollarSign, Ban, CornerDownLeft,
 } from 'lucide-react';
 
 // Cash Management page — check register + classification workflow.
@@ -663,6 +663,7 @@ export default function CashManagementPage() {
 
         <select
           value={monthFilter}
+          aria-label="Month"
           onChange={e => setMonthFilter(e.target.value)}
           className="px-3 py-1.5 rounded-md text-sm border border-surface-200 bg-white"
         >
@@ -710,6 +711,7 @@ export default function CashManagementPage() {
                   checked={unclassifiedFilteredCount > 0 && selected.size === unclassifiedFilteredCount}
                   onChange={toggleAll}
                   title="Select all unclassified in view"
+                  aria-label="Select all unclassified in view"
                 />
               </th>
               <th className="p-3 text-left">Check #</th>
@@ -743,6 +745,7 @@ export default function CashManagementPage() {
                           type="checkbox"
                           checked={selected.has(c.id)}
                           onChange={() => toggle(c.id)}
+                          aria-label={`Select check ${c.check_no || ''}`}
                           disabled={c.status !== 'unclassified'}
                         />
                       </td>
@@ -945,6 +948,7 @@ function InlineForm({ check, outcome, expenseCats, balanceSheetCats, posting, on
               value={categoryId}
               onChange={handleCatChange}
               onKeyDown={handleKeyDown}
+              aria-label="Account"
               className="px-2 py-1.5 border border-surface-200 rounded text-sm bg-white"
             >
               <option value="">— select —</option>
@@ -967,7 +971,7 @@ function InlineForm({ check, outcome, expenseCats, balanceSheetCats, posting, on
           </div>
           <div className="flex flex-col gap-1 min-w-52">
             <label className="text-xs text-surface-500 uppercase tracking-wider">Description</label>
-            <input
+            <input aria-label="Description"
               ref={descRef}
               value={userDesc}
               onChange={e => setUserDesc(e.target.value)}
@@ -979,7 +983,7 @@ function InlineForm({ check, outcome, expenseCats, balanceSheetCats, posting, on
           {!check.clear_date && (
             <div className="flex flex-col gap-1">
               <label className="text-xs text-surface-500 uppercase tracking-wider">Clear date</label>
-              <input
+              <input aria-label="Clear date"
                 type="date"
                 value={dateOverride}
                 onChange={e => setDateOverride(e.target.value)}
@@ -992,7 +996,7 @@ function InlineForm({ check, outcome, expenseCats, balanceSheetCats, posting, on
       ) : (
         <div className="flex flex-col gap-1 min-w-64">
           <label className="text-xs text-surface-500 uppercase tracking-wider">Note (optional)</label>
-          <input
+          <input aria-label="Note (optional)"
             ref={noteRef}
             value={note}
             onChange={e => setNote(e.target.value)}
@@ -1136,6 +1140,7 @@ function BulkClassifyModal({ open, onClose, onConfirm, expenseCats, balanceSheet
             <select
               value={categoryId}
               onChange={handleCatChange}
+              aria-label="Account"
               className="w-full px-3 py-2 border border-surface-200 rounded-md"
             >
               <option value="">— select account —</option>
@@ -1183,7 +1188,7 @@ function BulkClassifyModal({ open, onClose, onConfirm, expenseCats, balanceSheet
           {outcome !== 'excluded' && (
             <div>
               <label className="block text-xs uppercase tracking-wider text-surface-500 mb-1">Date override (optional)</label>
-              <input
+              <input aria-label="Date override (optional)"
                 type="date"
                 value={dateOverride}
                 onChange={e => setDateOverride(e.target.value)}
@@ -1234,12 +1239,12 @@ function StatCard({ label, value, sub, tone = 'neutral', active = false, onClick
       onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
       className={`rounded-xl border p-4 ${tones[tone]} ${clickable} ${activeRing}`}
     >
-      <div className="text-xs uppercase tracking-wider opacity-70 flex items-center justify-between">
+      <div className="text-xs uppercase tracking-wider flex items-center justify-between">
         <span>{label}</span>
-        {active && <span className="text-[10px] font-bold uppercase opacity-70">Filtering</span>}
+        {active && <span className="text-[10px] font-bold uppercase">Filtering</span>}
       </div>
       <div className="text-2xl font-display font-bold mt-1">{value}</div>
-      <div className="text-sm opacity-80">{sub}</div>
+      <div className="text-sm">{sub}</div>
     </div>
   );
 }

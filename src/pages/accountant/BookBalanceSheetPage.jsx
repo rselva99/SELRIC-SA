@@ -1231,7 +1231,7 @@ function CompareTable({ rows, years }) {
   let lastSection = null;
 
   return (
-    <div className="card overflow-x-auto">
+    <div className="card overflow-x-auto" tabIndex={0}>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-surface-100 bg-surface-50">
@@ -1743,7 +1743,7 @@ function LineEditor({ line, section, initialMappings, initialAdjustments, initia
           <label className="block text-[10px] uppercase tracking-wider text-surface-500 font-semibold mb-1">
             Beginning balance
           </label>
-          <input
+          <input aria-label="Beginning balance"
             type="number"
             step="0.01"
             value={beginning}

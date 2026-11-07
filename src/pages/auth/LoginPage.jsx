@@ -33,7 +33,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex">
       <div className="hidden lg:flex lg:w-[45%] bg-brand-950 text-white flex-col justify-between p-12">
         <Link to="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-brand-500 flex items-center justify-center font-display text-lg">S</div>
+          <div className="w-10 h-10 rounded-lg bg-brand-600 flex items-center justify-center font-display text-lg">S</div>
           <span className="font-display text-2xl">SelRic</span>
         </Link>
         <div>
@@ -66,7 +66,7 @@ export default function LoginPage() {
                 <input id="li-pw" type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
                   className="input-field pr-10" placeholder="••••••••" autoComplete="current-password" required />
                 <button type="button" onClick={() => setShowPw(!showPw)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-surface-400 hover:text-surface-600"
                   aria-label={showPw ? 'Hide password' : 'Show password'}>
                   {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>

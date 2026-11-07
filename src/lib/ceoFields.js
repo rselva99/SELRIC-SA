@@ -7,6 +7,7 @@
 // Types: money · int · num · pct (stored as a fraction, edited as %) · month
 // ('YYYY-MM') · text · bool · ramp (four numbers at months 1/12/24/36) · scale
 // (a multiplier, 1 = unchanged).
+/** @returns {{ path: string, label: string, type: string, unit: string, [k: string]: any }} */
 const f = (path, label, type, unit, extra = {}) => ({ path, label, type, unit, ...extra });
 
 export const GROUPS = [

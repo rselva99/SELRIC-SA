@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { postJournalEntry } from '../lib/postJournalEntry';
 import {
-  PeriodClosedError,
   isPeriodLockedError,
   periodFromLockedError,
   checkPeriodStatus,
@@ -486,7 +484,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.totalCredits)}</td>
         <td className="px-3 py-2 text-center">
           {row.balanced
-            ? <CheckCircle2 size={14} className="text-green-600 inline" />
+            ? <CheckCircle2 size={14} className="text-green-700 inline" />
             : <XCircle size={14} className="text-red-600 inline" />}
         </td>
       </tr>
@@ -572,7 +570,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
               {scope === 'month' ? (
                 <div>
                   <label className="block text-[10px] uppercase tracking-wider text-surface-500 mb-1">Month</label>
-                  <input
+                  <input aria-label="Month"
                     type="month"
                     value={month}
                     onChange={e => setMonth(e.target.value)}
@@ -582,7 +580,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
               ) : (
                 <div>
                   <label className="block text-[10px] uppercase tracking-wider text-surface-500 mb-1">Year</label>
-                  <input
+                  <input aria-label="Year"
                     type="number"
                     min={MIN_YEAR}
                     max={NEXT_YEAR}
@@ -611,7 +609,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
           {previews.length > 0 && (
             <section className="space-y-2">
               <div className="text-xs font-semibold text-surface-600 uppercase tracking-wider">Preview</div>
-              <div className="overflow-x-auto border border-surface-200 rounded-lg">
+              <div className="overflow-x-auto border border-surface-200 rounded-lg" tabIndex={0}>
                 <table className="w-full text-sm">
                   <thead className="bg-surface-50">
                     <tr>
@@ -634,7 +632,7 @@ export default function AmazonReclassModal({ open, onClose, onPosted }) {
                         <td className="px-3 py-2 text-right font-mono text-xs font-semibold">{formatCurrency(grandTotal)}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs font-semibold">{formatCurrency(grandTotal)}</td>
                         <td className="px-3 py-2 text-center">
-                          <CheckCircle2 size={14} className="text-green-600 inline" />
+                          <CheckCircle2 size={14} className="text-green-700 inline" />
                         </td>
                       </tr>
                     </tfoot>

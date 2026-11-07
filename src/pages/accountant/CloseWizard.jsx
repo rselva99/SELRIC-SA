@@ -102,7 +102,7 @@ export default function CloseWizard({ period, onExit, onMinimize }) {
   const [loadedStepKey, setLoadedStepKey]   = useState('');
   const [completing, setCompleting]         = useState(false);
   const [accountsReviewed, setAccountsReviewed] = useState(new Set());
-  const [achievementsEarned, setAchievements]   = useState(new Set());
+  const [, setAchievements]                     = useState(new Set());
   const [skipped, setSkipped]                   = useState(new Set());
   const [streak, setStreak]                     = useState(0);
   const [showExitConfirm, setShowExitConfirm]   = useState(false);
@@ -676,7 +676,7 @@ export function CloseLauncher({ initialPeriod, periodStatuses, onLaunch, onCance
           </div>
         </div>
         <label className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Period</label>
-        <select value={period} onChange={e => setPeriod(e.target.value)} className="input-field w-full mt-1">
+        <select aria-label="Period" value={period} onChange={e => setPeriod(e.target.value)} className="input-field w-full mt-1">
           {options.map(p => {
             const status = periodStatuses?.[p] || 'open';
             const tag = status === 'closed' ? ' (already closed)'
@@ -1073,7 +1073,7 @@ function StepReconcile({ data, setData, navigate, reload }) {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <label className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Category</label>
-          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+          <select aria-label="Category" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
             className="input-field text-sm py-1.5 w-auto">
             <option value="">All ({list.length})</option>
             <option value="__uncat__">— Uncategorized —</option>
@@ -1454,7 +1454,7 @@ function StepGenerateBalanceSheet({ data, period, reload }) {
         {existing && (
           <button onClick={download}
             className="card p-5 text-left hover:border-green-400 hover:shadow-md transition flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-green-100 text-green-600 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-xl bg-green-100 text-green-700 flex items-center justify-center">
               <CheckCircle2 />
             </div>
             <div>
@@ -1829,7 +1829,7 @@ function StepGeneratePnL({ data, period, reload }) {
         {existing && (
           <button onClick={downloadPdf}
             className="card p-5 text-left hover:border-green-400 hover:shadow-md transition flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-green-100 text-green-600 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-xl bg-green-100 text-green-700 flex items-center justify-center">
               <CheckCircle2 />
             </div>
             <div>
@@ -1976,7 +1976,7 @@ function PreflightChecklist({ preflight, period, navigate }) {
         {items.map(it => (
           <li key={it.key} className="border-b border-surface-50 last:border-0 px-4 py-3 flex items-start gap-3">
             {it.count === 0 ? (
-              <CheckCircle2 size={16} className="text-green-600 mt-0.5 flex-shrink-0" />
+              <CheckCircle2 size={16} className="text-green-700 mt-0.5 flex-shrink-0" />
             ) : (
               <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
             )}

@@ -121,11 +121,13 @@ function Section({ icon: Icon, title, hint, children, right, id }) {
     </section>
   );
 }
-const Card = ({ children, className = '' }) => <div className={`rounded-xl border border-surface-200 bg-white ${className}`}>{children}</div>;
+const Card = ({ children, className = '', ...rest }) => <div {...rest} className={`rounded-xl border border-surface-200 bg-white ${className}`}>{children}</div>;
 const TH = ({ children, right }) => <th className={`px-3 py-2.5 font-semibold ${right ? 'text-right' : ''}`}>{children}</th>;
 const TD = ({ children, right, mono, className = '' }) => <td className={`px-3 py-3 ${right ? 'text-right' : ''} ${mono ? 'font-mono' : ''} ${className}`}>{children}</td>;
+// tabIndex: on a phone the table scrolls sideways, and a keyboard user can
+// only scroll a region that takes focus.
 const Table = ({ head, children }) => (
-  <Card className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-surface-50 text-left text-xs uppercase tracking-wide text-surface-500">{head}</tr></thead><tbody>{children}</tbody></table></Card>
+  <Card className="overflow-x-auto" tabIndex={0}><table className="w-full text-sm"><thead><tr className="bg-surface-50 text-left text-xs uppercase tracking-wide text-surface-500">{head}</tr></thead><tbody>{children}</tbody></table></Card>
 );
 const Meter = ({ value, max, tone = 'bg-brand-600' }) => <div className="h-2 rounded-full bg-brand-100 overflow-hidden"><div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.min(100, Math.max(0, (value / max) * 100))}%` }} /></div>;
 const Note = ({ children }) => (
@@ -236,7 +238,7 @@ function Overview({ data, ws, animals, neverUsed, R, M, findings }) {
         {ws.map((w) => (
           <Link key={w.id} to="/ceo/pilots" className={`rounded-xl border p-4 transition-colors hover:shadow-sm ${w.h.tone}`}>
             <div className="flex items-center justify-between gap-2"><span className="font-medium truncate">{w.name}</span><span className={`w-2 h-2 rounded-full shrink-0 ${w.h.dot}`} /></div>
-            <div className="mt-1.5 text-xs opacity-80">{w.h.label} · {w.activity_30d} actions in 30d</div>
+            <div className="mt-1.5 text-xs">{w.h.label} · {w.activity_30d} actions in 30d</div>
             <div className="mt-3 flex items-end justify-between gap-2">
               {w.trend ? <Sparkline values={w.trend} end={data.generated_at} /> : <span className="text-xs">No weekly data yet</span>}
               <HealthChip health={w.checksHealth} />

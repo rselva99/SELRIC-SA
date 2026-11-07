@@ -89,9 +89,6 @@ function amortReference(period) { return `${AMORT_REFERENCE_PREFIX}${period}`; }
 function isAmortizable(asset) {
   return (asset?.asset_type || '').toLowerCase() === 'amortizable';
 }
-function isDepreciable(asset) {
-  return !isAmortizable(asset);
-}
 export function assetKind(asset) {
   return isAmortizable(asset) ? KIND_AMORTIZATION : KIND_DEPRECIATION;
 }

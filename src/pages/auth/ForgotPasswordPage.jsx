@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
               <form onSubmit={handleSubmit} className="mt-6 space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-surface-600 mb-1.5">{t('common.email')}</label>
-                  <input
+                  <input aria-label={t('common.email')}
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}

@@ -426,12 +426,14 @@ export default function StatementReviewMatch() {
                           onChange={() => handleVerifiedToggle(t)}
                           disabled={savingId === t.id}
                           title="Verified"
+                          aria-label="Verified"
                         />
                       </td>
                       <td className="px-3 py-1.5 font-mono text-xs whitespace-nowrap">{formatDate(t.date)}</td>
                       <td className="px-3 py-1.5">
                         <input
                           defaultValue={t.description || ''}
+                          aria-label="Description"
                           onBlur={(e) => handleDescriptionBlur(t, e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                           className="w-full bg-transparent text-sm focus:bg-white focus:border focus:border-brand-300 rounded px-1 py-0.5"
@@ -440,6 +442,7 @@ export default function StatementReviewMatch() {
                       <td className="px-3 py-1.5 text-right">
                         <input
                           defaultValue={Math.abs(Number(t.amount) || 0).toFixed(2)}
+                          aria-label="Amount"
                           type="number"
                           step="0.01"
                           min="0"
@@ -483,7 +486,7 @@ function MatchCard({ label, stmt, live, match, format }) {
         {label}
         {!noStmt && (
           match.ok
-            ? <CheckCircle2 size={12} className="text-green-600" />
+            ? <CheckCircle2 size={12} className="text-green-700" />
             : <AlertCircle size={12} className="text-red-600" />
         )}
       </div>

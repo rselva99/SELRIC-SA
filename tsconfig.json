@@ -1,0 +1,22 @@
+{
+  // Typecheck only (`npm run typecheck` → tsc --noEmit); Vite builds the app.
+  // The code is JavaScript: TypeScript reads it with checkJs and the types it
+  // can infer — wrong argument counts, misspelled properties on known
+  // objects, calls on possibly-undefined imports. Not strict: there are no
+  // annotations to be strict about.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/**/*.js", "tests/**/*.js", "api/**/*.js"]
+}

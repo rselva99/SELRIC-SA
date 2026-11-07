@@ -92,7 +92,7 @@ function Field({ id, label, children, className }) {
 
 export default function RegistrarSheet({ request, onClose }) {
   const { t, tn, locale } = useT();
-  const { animals, events, byId, eventsByAnimal, lots, recordEvents, saveAnimal } = useHerd();
+  const { animals, events, byId, lots, recordEvents, saveAnimal } = useHerd();
   const [step, setStep] = useState(1);
   const [type, setType] = useState(null);
   const [ids, setIds] = useState([]);

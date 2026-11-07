@@ -172,7 +172,7 @@ export default function DeleteStatementDialog({ statement, onClose, onDeleted })
                 <div className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Total movement</div>
                 <div className="font-mono text-lg font-semibold mt-1">{formatCurrency(data.debits + data.credits)}</div>
                 <div className="text-[10px] text-surface-400">
-                  <span className="text-red-600">{formatCurrency(data.debits)} debits</span> · <span className="text-green-600">{formatCurrency(data.credits)} credits</span>
+                  <span className="text-red-600">{formatCurrency(data.debits)} debits</span> · <span className="text-green-700">{formatCurrency(data.credits)} credits</span>
                 </div>
               </div>
             </div>

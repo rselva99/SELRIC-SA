@@ -53,6 +53,10 @@ export async function nextJournalReference() {
 //
 // Throws the underlying Supabase error on any non-23505 failure, or a
 // terminal "Could not allocate" error after MAX_RETRIES exhausted.
+/**
+ * @param {Record<string, any>} row
+ * @param {{ onRef?: (r: { reference: string, attempt: number }) => void }} [opts]
+ */
 export async function insertJournalEntryWithRetry(row, { onRef } = {}) {
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {

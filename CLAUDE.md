@@ -34,7 +34,7 @@ Read it instead of walking the tree; open a source file only when the task touch
 | `docs/` | gitignored except `ARCHITECTURE.md` |
 | `.claude/rules/` | path-scoped rules (`ceo`, `ganaderia`, `migrations`, `i18n`) — load with the files |
 | `.claude/skills/` | `batch`, `migration`, `seed`, `i18n-check` |
-| `.claude/hooks/` | `guard-commit.mjs` — blocks a `git commit` on a never-stage path, a key-like line or a failing `npm run check` |
+| `.claude/hooks/` | `guard-commit.mjs` — blocks a `git commit` on a never-stage path, a key-like line, a failing lint or typecheck, or a failing `npm run check` |
 
 ## Standing rules
 
@@ -83,10 +83,12 @@ grant; a save is an INSERT, a restore is an INSERT of an old row's data. The tri
 ## Commands
 
 ```
-npm run check                        # build → EN/ES parity → unit tests → smoke; must exit 0 before any report
-npm run test                         # vitest only (the golden suite skips without ~/selric-business)
+npm run check                        # lint → typecheck → build → EN/ES parity → unit tests → smoke; must exit 0 before any report
+npm run lint                         # eslint (eslint.config.js)
+npm run typecheck                    # tsc --noEmit over the plain .js files (tsconfig.json)
+npm run test                         # vitest with coverage floors on the money paths (the golden suite skips without ~/selric-business)
 npm run parity                       # EN/ES key parity; prints `parity`
-npm run smoke                        # Playwright: every /ceo tab, herd page and mocked Business page at 1366 and 390 px → .smoke/
+npm run smoke                        # Playwright + axe: every /ceo tab, herd page and mocked Business page at 1366 and 390 px → .smoke/
 npm run checks -- --org <id> [--period YYYY-MM] [--no-save]   # the integrity checks for one workspace; exit 1 on any red
 cd ~/selric-business && env $(grep -E '^(VITE_SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY)=' ~/SELRIC-SA/.env | xargs) node verify_model.mjs --version <n>
 ```

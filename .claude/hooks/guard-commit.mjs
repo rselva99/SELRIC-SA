@@ -7,7 +7,10 @@
 //      so it could not see them; stage in one call, commit in the next
 //   2. a staged path is on the never-stage list (this repository is public)
 //   3. a staged diff carries something that looks like a key
-//   4. `npm run check` fails (build, EN/ES parity, unit tests, smoke)
+//   4. `npm run lint` or `npm run typecheck` fails (run first: seconds, and the
+//      message names the step)
+//   5. `npm run check` fails (lint, typecheck, build, EN/ES parity, unit tests
+//      with coverage floors, smoke with the axe pass)
 // The checks it runs are the same ones a human runs by hand; nothing here
 // writes to the repository.
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -43,6 +46,7 @@ export const isCommit = (cmd) => /(^|[\s;&|()])git(\s+-[Cc]\s+\S+)*\s+commit(\s|
 export const alsoStages = (cmd) => { const s = shellWords(cmd); return /(^|[\s;&|()])git(\s+-[Cc]\s+\S+)*\s+(add|rm|mv)\s/.test(s) || /\bgit\s+commit\b[^;&|\n]*\s-(a|am|-all)\b/.test(s); };
 export const checkStaged = (paths) => paths.map((p) => [p, NEVER.find(([re]) => re.test(p))]).filter(([, hit]) => hit).map(([p, [, why]]) => `${p} — ${why}`);
 
+const tail = (r) => `${r.stdout || ''}\n${r.stderr || ''}`.trim().split('\n').slice(-25).join('\n');
 function block(msg) { process.stderr.write(`guard-commit: ${msg}\n`); process.exit(2); }
 
 function main() {
@@ -64,11 +68,12 @@ function main() {
   const leak = diff.split('\n').find((l) => l.startsWith('+') && SECRET.test(l));
   if (leak) block(`a staged line looks like a key or token — remove it before committing:\n  ${leak.slice(0, 80)}…`);
 
-  const r = spawnSync('npm', ['run', 'check'], { cwd, encoding: 'utf8', timeout: 540000, maxBuffer: 64 * 1024 * 1024 });
-  if (r.status !== 0) {
-    const tail = `${r.stdout || ''}\n${r.stderr || ''}`.trim().split('\n').slice(-25).join('\n');
-    block(`\`npm run check\` failed${r.signal ? ` (${r.signal})` : ''} — fix it before committing:\n${tail}`);
+  for (const step of ['lint', 'typecheck']) {
+    const q = spawnSync('npm', ['run', step], { cwd, encoding: 'utf8', timeout: 180000, maxBuffer: 16 * 1024 * 1024 });
+    if (q.status !== 0) block(`\`npm run ${step}\` failed${q.signal ? ` (${q.signal})` : ''} — fix it before committing:\n${tail(q)}`);
   }
+  const r = spawnSync('npm', ['run', 'check'], { cwd, encoding: 'utf8', timeout: 540000, maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) block(`\`npm run check\` failed${r.signal ? ` (${r.signal})` : ''} — fix it before committing:\n${tail(r)}`);
   process.exit(0);
 }
 

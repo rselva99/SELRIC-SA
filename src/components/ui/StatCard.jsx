@@ -16,7 +16,7 @@ export default function StatCard({ icon: Icon, label, value, sublabel, trend, cl
         )}
       </div>
       {trend && (
-        <div className={cn('mt-3 text-xs font-medium', trend >= 0 ? 'text-green-600' : 'text-red-600')}>
+        <div className={cn('mt-3 text-xs font-medium', trend >= 0 ? 'text-green-700' : 'text-red-600')}>
           {trend >= 0 ? '↑' : '↓'} {Math.abs(trend)}% vs last period
         </div>
       )}

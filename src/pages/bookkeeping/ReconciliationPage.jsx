@@ -129,7 +129,7 @@ export default function ReconciliationPage() {
   return (
     <div className="animate-fade-in">
       <div className="flex items-center gap-3 mb-6">
-        <Link to="/bookkeeping" className="p-2 hover:bg-surface-100 rounded-lg transition">
+        <Link to="/bookkeeping" className="p-2 hover:bg-surface-100 rounded-lg transition" aria-label="Back to bookkeeping">
           <ArrowLeft size={18} />
         </Link>
         <div>
@@ -145,7 +145,7 @@ export default function ReconciliationPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
           <input type="text" placeholder="Search transactions…" value={search} onChange={e => setSearch(e.target.value)} className="input-field pl-9" />
         </div>
-        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} aria-label="Filter by category"
           className="input-field w-auto min-w-[170px]">
           <option value="">All categories ({transactions.length})</option>
           <option value="__uncat__">— Uncategorized —</option>

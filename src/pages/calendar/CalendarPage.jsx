@@ -214,13 +214,13 @@ export default function CalendarPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Event Name</label>
-            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-field" placeholder="e.g. SLU Billikens vs. Xavier" required />
+            <input aria-label="Event Name" type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-field" placeholder="e.g. SLU Billikens vs. Xavier" required />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Date</label>
-              <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="input-field" required />
+              <input aria-label="Date" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="input-field" required />
             </div>
             <div>
               <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Time <span className="text-surface-400 normal-case font-normal">(optional)</span></label>
@@ -230,7 +230,7 @@ export default function CalendarPage() {
 
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Event Type</label>
-            <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value })} className="input-field">
+            <select aria-label="Event Type" value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value })} className="input-field">
               {EVENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>

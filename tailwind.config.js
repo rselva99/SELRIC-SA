@@ -86,6 +86,18 @@ export default {
           straw: '#C8923A',
         },
       },
+      // The light surface greys are grounds, borders and dividers; as text they
+      // fall under 4.5:1 on white and on the paper grounds (surface 50/100).
+      // Only text-surface-400/500/600 take these darker steps, which keep
+      // 4.5:1 on every light ground the app uses; bg-, border- and
+      // placeholder- keep the palette above.
+      textColor: {
+        surface: {
+          400: '#646b72',
+          500: '#61686f',
+          600: '#5c636a',
+        },
+      },
       fontFamily: {
         display: ['"DM Serif Display"', 'Georgia', 'serif'],
         body: ['"DM Sans"', 'system-ui', 'sans-serif'],

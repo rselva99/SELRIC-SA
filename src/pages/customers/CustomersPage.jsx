@@ -330,7 +330,7 @@ export default function CustomersPage() {
         ) : visible.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-surface-500">{t('crm.noMatches')}</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100">

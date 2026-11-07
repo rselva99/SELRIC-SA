@@ -385,7 +385,7 @@ export default function TransactionsPage() {
         ) : (
           // relative: the screen-reader-only labels inside are absolutely
           // positioned and would otherwise widen the page, not this scroller.
-          <div className="relative overflow-x-auto">
+          <div className="relative overflow-x-auto" tabIndex={0}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100">

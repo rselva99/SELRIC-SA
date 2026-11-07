@@ -87,7 +87,7 @@ const STATUS_STYLES = {
 
 export default function AccountantPage() {
   const { user } = useAuth();
-  const { accounts, categories, aiCategorizeUncategorized, getSignedUrl } = useData();
+  const { categories, aiCategorizeUncategorized, getSignedUrl } = useData();
   const navigate = useNavigate();
 
   const today = new Date();
@@ -768,7 +768,7 @@ export default function AccountantPage() {
           </button>
           <div className="flex items-center gap-2">
             <span className="text-xs uppercase tracking-wider text-surface-500 font-semibold">Year</span>
-            <select value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-field w-auto">
+            <select value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-field w-auto" aria-label="Year">
               {[year - 2, year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
@@ -819,7 +819,7 @@ export default function AccountantPage() {
                   <span className={`w-2 h-2 rounded-full ${style.dot}`} />
                   <span className="font-mono text-xs font-bold">{periodLabel(p)}</span>
                 </div>
-                <div className={`text-[9px] uppercase tracking-wider mt-0.5 ${style.text} opacity-80`}>
+                <div className={`text-[9px] uppercase tracking-wider mt-0.5 ${style.text}`}>
                   {style.label}
                 </div>
               </button>
@@ -832,7 +832,7 @@ export default function AccountantPage() {
       <div className={`card p-4 flex items-center justify-between ${selectedStyle.bg} border-l-4`}
         style={{ borderLeftColor: 'currentColor' }}>
         <div className={selectedStyle.text}>
-          <div className="text-xs uppercase tracking-wider opacity-70 font-semibold">Working on</div>
+          <div className="text-xs uppercase tracking-wider font-semibold">Working on</div>
           <div className="font-display text-2xl">{periodFullLabel(selectedPeriod)}</div>
         </div>
         <div className={`flex items-center gap-2 ${selectedStyle.text}`}>
@@ -944,7 +944,7 @@ export default function AccountantPage() {
                 No reports generated yet
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0}>
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-surface-100">
@@ -1029,7 +1029,7 @@ export default function AccountantPage() {
                   <Link to="/bookkeeping/reconcile"
                     className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-50 transition text-sm">
                     <span className="text-surface-700">Unreconciled debits</span>
-                    <span className={`font-mono font-semibold ${openItems.unreconciledTotal > 0 ? 'text-amber-700' : 'text-green-600'}`}>
+                    <span className={`font-mono font-semibold ${openItems.unreconciledTotal > 0 ? 'text-amber-700' : 'text-green-700'}`}>
                       {openItems.unreconciledTotal}
                     </span>
                   </Link>
@@ -1041,7 +1041,7 @@ export default function AccountantPage() {
                   <Link to="/tasks"
                     className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-50 transition text-sm">
                     <span className="text-surface-700">Overdue tasks</span>
-                    <span className={`font-mono font-semibold ${openItems.overdueTasks > 0 ? 'text-red-700' : 'text-green-600'}`}>
+                    <span className={`font-mono font-semibold ${openItems.overdueTasks > 0 ? 'text-red-700' : 'text-green-700'}`}>
                       {openItems.overdueTasks}
                     </span>
                   </Link>
@@ -1084,7 +1084,7 @@ export default function AccountantPage() {
 
             <div className="flex items-center gap-2 ml-2">
               <label className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Year</label>
-              <select
+              <select aria-label="Year"
                 value={yerYear}
                 onChange={(e) => setYerYear(parseInt(e.target.value))}
                 className="input-field w-auto text-xs py-1.5"
@@ -1098,7 +1098,7 @@ export default function AccountantPage() {
             {yerScope === 'period' && (
               <div className="flex items-center gap-2">
                 <label className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">Period</label>
-                <input
+                <input aria-label="Period"
                   type="month"
                   value={yerPeriod}
                   onChange={(e) => setYerPeriod(e.target.value)}
@@ -1340,7 +1340,7 @@ function OpenItemGroup({ title, items, emptyText, onItemClick }) {
     <div>
       <div className="text-[11px] uppercase tracking-wider text-surface-500 font-semibold mb-1.5">{title}</div>
       {items.length === 0 ? (
-        <div className="text-xs text-green-600 px-3 py-1.5">{emptyText}</div>
+        <div className="text-xs text-green-700 px-3 py-1.5">{emptyText}</div>
       ) : (
         <div className="space-y-0.5">
           {items.map(([period, count]) => (

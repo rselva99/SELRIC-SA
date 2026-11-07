@@ -15,8 +15,8 @@ function initWorker() {
 /**
  * Render each page of a PDF File/Blob into a base64 JPEG string.
  * @param {File} file        — the PDF file
- * @param {number} scale     — render scale (1.5 = good balance of quality vs size)
- * @param {number} quality   — JPEG quality 0–1
+ * @param {{ scale?: number, quality?: number }} [opts]
+ *   scale: render scale (1.5 = good balance of quality vs size); quality: JPEG quality 0–1
  * @returns {Promise<string[]>} — array of base64 strings, one per page
  */
 export async function pdfToPageImages(file, { scale = 1.5, quality = 0.85 } = {}) {
@@ -34,7 +34,7 @@ export async function pdfToPageImages(file, { scale = 1.5, quality = 0.85 } = {}
     canvas.width  = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
 
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    await page.render({ canvas: null, canvasContext: canvas.getContext('2d'), viewport }).promise;
 
     // Strip the "data:image/jpeg;base64," prefix — only the raw base64 is needed
     const base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1];
@@ -81,7 +81,7 @@ export async function extractPdfText(file) {
 
     // Sort text items by vertical position (top → bottom) so table rows
     // come out in reading order regardless of internal PDF object order.
-    const sorted = [...content.items].sort((a, b) => {
+    const sorted = content.items.filter((it) => 'transform' in it).sort((a, b) => {
       const yDiff = b.transform[5] - a.transform[5]; // descending y (PDF coords are bottom-up)
       return Math.abs(yDiff) > 2 ? yDiff : a.transform[4] - b.transform[4]; // then left→right
     });

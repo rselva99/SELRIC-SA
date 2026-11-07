@@ -320,6 +320,7 @@ export function needsYou(animals, today = todayISO(), eventsByAnimal = {}, windo
   }
   overdue.sort((x, y) => y.days - x.days);
   due.sort((x, y) => x.days - y.days);
+  /** @type {Array<Record<string, any>>} */
   const rows = [...overdue, ...due];
   const unchecked = active.filter((a) => overdueForPalpation(a, 90, today, eventsByAnimal[a.id] || [])).length;
   if (unchecked) rows.push({ kind: 'unchecked', n: unchecked });
@@ -374,7 +375,7 @@ export function matchAnimals(animals, q) {
   return animals
     .map((a) => ({ a, r: rank(a) }))
     .filter((x) => x.r != null)
-    .sort((x, y) => x.r - y.r || (isActive(y.a) - isActive(x.a)) || x.a.name.localeCompare(y.a.name))
+    .sort((x, y) => x.r - y.r || (Number(isActive(y.a)) - Number(isActive(x.a))) || x.a.name.localeCompare(y.a.name))
     .map((x) => x.a);
 }
 

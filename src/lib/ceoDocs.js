@@ -36,7 +36,7 @@ export const FMT = {
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 
 // ── Tokens ──────────────────────────────────────────────────────────────────
-const TOKEN = /\{\{\s*([A-Za-z0-9_.$\[\]'"-]+)\s*(?:\|\s*([A-Za-z0-9]+))?\s*\}\}/g;
+const TOKEN = /\{\{\s*([A-Za-z0-9_.$[\]'"-]+)\s*(?:\|\s*([A-Za-z0-9]+))?\s*\}\}/g;
 const TABLE = /^\{\{\s*table:([A-Za-z0-9_.]+)\s*\}\}$/;
 
 export function get(obj, path) {
@@ -75,7 +75,6 @@ export function parseSections(md) {
 }
 export const joinSections = (sections) => sections.map((s) => `${'#'.repeat(s.level || 2)} ${s.title} {#${s.key}}\n\n${s.body}`).join('\n\n');
 
-const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 // Split a table row on `|` — but not on the `|` inside a {{path|fmt}} token.
 function cells(line) {
   const s = line.replace(/^\|/, '').replace(/\|$/, ''); const out = []; let cur = '', depth = 0;
@@ -147,8 +146,6 @@ export function plain(body, R, docs) {
 // Each returns { head, rows, align } with cells already formatted. `docs` is
 // { plan: { milestones, roadmap } } for the two tables that come from prose.
 const F = FMT;
-const tierLabel = (t) => (t.maxHead == null ? `over ${prevMax(t)} head` : `${t.tier.toLowerCase()}`);
-let _tiersRef = null; const prevMax = (t) => { const i = _tiersRef?.findIndex((x) => x.key === t.key) ?? -1; return i > 0 ? _tiersRef[i - 1].maxHead : '—'; };
 
 export const TABLES = {
   years: (R) => ({ head: ['', 'Year 1', 'Year 2', 'Year 3'], rows: [
@@ -265,5 +262,5 @@ function compMatrix(market) {
   const comps = [...(market.competitors || []).filter((c) => c.self), ...(market.competitors || []).filter((c) => !c.self)];
   return { head: ['', ...feats.map((f) => f.label)], rows: comps.map((c) => [c.self ? `**${c.name}**` : c.name, ...feats.map((f) => SCORE_MARK[c.features?.[f.key] ?? 0])]), align: ['l', ...feats.map(() => 'c')] };
 }
-export function tableFor(name, R, docs) { const f = TABLES[name]; if (!f) return null; _tiersRef = R.tiers; return f(R, docs); }
+export function tableFor(name, R, docs) { const f = TABLES[name]; if (!f) return null; return f(R, docs); }
 export const TABLE_NAMES = Object.keys(TABLES);

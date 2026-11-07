@@ -17,7 +17,9 @@ export function DocTable({ head, rows, align = [], compact = false }) {
   const keyValue = head.every((h) => !String(h).trim());
   const cellCls = compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm';
   return (
-    <div className="my-3 overflow-x-auto rounded-lg border border-surface-200">
+    // tabIndex: a table wider than the phone scrolls, and only a focusable
+    // region can be scrolled from the keyboard.
+    <div className="my-3 overflow-x-auto rounded-lg border border-surface-200" tabIndex={0}>
       <table className="w-full">
         {!keyValue && <thead><tr className="bg-surface-50 text-left text-[11px] uppercase tracking-wide text-surface-500">{head.map((h, i) => <th key={i} className={`${cellCls} font-semibold ${align[i] === 'r' ? 'text-right' : align[i] === 'c' ? 'text-center' : ''}`}><Inline text={h} /></th>)}</tr></thead>}
         <tbody>{rows.map((r, i) => <tr key={i} className="border-t border-surface-100 align-top">{r.map((c, j) => <td key={j} className={`${cellCls} text-surface-700 ${align[j] === 'r' ? 'text-right font-mono tabular-nums' : align[j] === 'c' ? 'text-center' : ''} ${keyValue && j === 0 ? 'font-medium text-surface-900 w-32' : ''}`}><Inline text={c} /></td>)}</tr>)}</tbody>

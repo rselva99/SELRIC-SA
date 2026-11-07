@@ -21,7 +21,6 @@ import {
   Landmark, MoreVertical,
 } from 'lucide-react';
 import CapitalizeModal from '../../components/CapitalizeModal';
-import { CAPITALIZE_THRESHOLD } from '../../lib/capitalize';
 import { debitOf } from '../../lib/finance';
 import { fetchStatementTotals } from '../../lib/statementTotals';
 import DeleteStatementDialog from '../../components/DeleteStatementDialog';
@@ -176,7 +175,7 @@ export default function BookkeepingPage() {
     addTransaction, updateTransaction, deleteTransaction,
     postTransaction, unpostTransaction, learnSupplierCategory,
     propagateCategories, aiCategorizeUncategorized,
-    addBankStatement, addInvoice, updateInvoice,
+    addBankStatement, addInvoice,
     uploadFile, getSignedUrl,
   } = useData();
 
@@ -190,7 +189,6 @@ export default function BookkeepingPage() {
   const [filterCategory, setFilterCategory] = useState('');
   const [editingField, setEditingField] = useState(null); // {id, field: 'category'|'description'|'amount'}
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
-  const [collapsedYears, setCollapsedYears]   = useState(new Set());
 
   // ── Bulk selection & smart filters ───────────────────────────────────────
   const [selectedTxnIds, setSelectedTxnIds] = useState(new Set());
@@ -447,9 +445,6 @@ export default function BookkeepingPage() {
 
   function toggleGroup(key) {
     setCollapsedGroups(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
-  function toggleYear(yr) {
-    setCollapsedYears(prev => { const n = new Set(prev); n.has(yr) ? n.delete(yr) : n.add(yr); return n; });
   }
 
   async function handleCategorize(txn, category) {
@@ -777,7 +772,7 @@ export default function BookkeepingPage() {
           // Namespace the storage path with a uuid AND timestamp so re-uploading
           // a file with the same name (e.g. Dec-24.pdf after a delete) can never
           // collide with whatever the storage bucket still has lingering.
-          const safeName = file.name.replace(/[^\w.\-]/g, '_');
+          const safeName = file.name.replace(/[^\w.-]/g, '_');
           const uploadPath = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
           const uploadResult = await uploadFile('documents', uploadPath, file);
 
@@ -930,7 +925,7 @@ export default function BookkeepingPage() {
         <tr className={`border-b border-surface-50 transition ${notesOpen ? 'bg-blue-50/30' : isSelected ? 'bg-brand-50/40' : 'hover:bg-surface-50'}`}>
           {selectable && (
             <td className="pl-4 pr-1 py-2 w-10">
-              <input type="checkbox" checked={isSelected}
+              <input type="checkbox" checked={isSelected} aria-label="Select transaction"
                 onChange={e => toggleSelectTxn(t.id, e.target.checked)}
                 className="rounded accent-brand-600 cursor-pointer"
               />
@@ -958,7 +953,7 @@ export default function BookkeepingPage() {
           </td>
           <td className="table-cell">
             {editingField?.id === t.id && editingField?.field === 'category' ? (
-              <select autoFocus defaultValue={t.category||''} onChange={e => handleCategorize(t, e.target.value)} onBlur={() => setEditingField(null)} className="input-field text-xs py-1 w-44">
+              <select autoFocus aria-label="Category" defaultValue={t.category||''} onChange={e => handleCategorize(t, e.target.value)} onBlur={() => setEditingField(null)} className="input-field text-xs py-1 w-44">
                 <option value="">Uncategorized</option>
                 {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -976,7 +971,7 @@ export default function BookkeepingPage() {
               </div>
             )}
           </td>
-          <td className={`table-cell text-right font-mono text-sm ${t.type==='credit'?'text-green-600':'text-red-600'}`}>
+          <td className={`table-cell text-right font-mono text-sm ${t.type==='credit'?'text-green-700':'text-red-600'}`}>
             {editingField?.id === t.id && editingField?.field === 'amount' ? (
               <input type="number" step="0.01" min="0" autoFocus defaultValue={Math.abs(t.amount)}
                 onBlur={e => handleEditField(t, 'amount', e.target.value)}
@@ -1072,7 +1067,7 @@ export default function BookkeepingPage() {
   const TABLE_HEAD_SEL = (
     <thead><tr className="border-b border-surface-100">
       <th className="pl-4 pr-1 py-3 w-10">
-        <input type="checkbox" checked={allPageChecked}
+        <input type="checkbox" checked={allPageChecked} aria-label="Select all shown"
           onChange={e => setSelectedTxnIds(e.target.checked ? new Set(allVisibleTxns.map(t => t.id)) : new Set())}
           className="rounded accent-brand-600 cursor-pointer"
         />
@@ -1114,7 +1109,7 @@ export default function BookkeepingPage() {
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             className={`px-4 py-2 rounded-md text-sm font-medium transition ${activeTab===tab.id?'bg-white shadow-sm text-surface-900':'text-surface-500 hover:text-surface-700'}`}>
-            {tab.label}{tab.count != null && <span className="ml-1 text-xs opacity-60">({tab.count.toLocaleString()})</span>}
+            {tab.label}{tab.count != null && <span className="ml-1 text-xs">({tab.count.toLocaleString()})</span>}
           </button>
         ))}
       </div>
@@ -1128,7 +1123,7 @@ export default function BookkeepingPage() {
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
               <input type="text" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} className="input-field pl-9" />
             </div>
-            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="input-field w-auto min-w-[180px]">
+            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="input-field w-auto min-w-[180px]" aria-label="Filter by category">
               <option value="">All Categories</option>
               {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
@@ -1149,7 +1144,7 @@ export default function BookkeepingPage() {
             {/* Group by */}
             <div className="flex items-center gap-1.5">
               <Layers size={14} className="text-surface-400" />
-              <select value={groupBy} onChange={e => { setGroupBy(e.target.value); setSelectedTxnIds(new Set()); }}
+              <select value={groupBy} aria-label="Group by" onChange={e => { setGroupBy(e.target.value); setSelectedTxnIds(new Set()); }}
                 className="input-field w-auto text-sm py-1.5">
                 <option value="none">By Statement</option>
                 <option value="category">By Category</option>
@@ -1187,7 +1182,7 @@ export default function BookkeepingPage() {
                 className="bg-white text-brand-700 text-xs px-3 py-1.5 rounded-lg font-semibold hover:bg-brand-50 transition flex items-center gap-1.5">
                 {bulkPosting ? <Spinner size="sm" /> : <BookCheck size={13} />} Post Selected
               </button>
-              <select onChange={e => { if (e.target.value) { handleBulkCategorize(e.target.value); e.target.value = ''; } }}
+              <select aria-label="Categorize selected" onChange={e => { if (e.target.value) { handleBulkCategorize(e.target.value); e.target.value = ''; } }}
                 defaultValue=""
                 className="bg-brand-600 text-white text-xs px-2 py-1.5 rounded-lg border border-brand-500 hover:bg-brand-500 transition cursor-pointer">
                 <option value="" disabled>Categorize Selected…</option>
@@ -1225,7 +1220,7 @@ export default function BookkeepingPage() {
                   return (
                     <div key={stmt.id} className="card overflow-hidden">
                       <div className="flex items-center gap-2 px-4 py-3 bg-surface-50 border-b border-surface-100">
-                        <input type="checkbox" checked={allSelected}
+                        <input type="checkbox" checked={allSelected} aria-label="Select all in this statement"
                           onChange={e => selectGroup(grpTxns, e.target.checked)}
                           className="rounded accent-brand-600 cursor-pointer shrink-0"
                         />
@@ -1244,7 +1239,7 @@ export default function BookkeepingPage() {
                             {pull && pull.count > 0 && (
                               <div className="text-[11px] text-surface-500 mt-0.5">
                                 <span className="uppercase tracking-wider text-surface-400 mr-1">Pulled from PDF:</span>
-                                {pull.count} transaction{pull.count !== 1 ? 's' : ''} · <span className="font-mono text-red-600">{formatCurrency(pull.debits)} debits</span> · <span className="font-mono text-green-600">{formatCurrency(pull.credits)} credits</span>
+                                {pull.count} transaction{pull.count !== 1 ? 's' : ''} · <span className="font-mono text-red-600">{formatCurrency(pull.debits)} debits</span> · <span className="font-mono text-green-700">{formatCurrency(pull.credits)} credits</span>
                               </div>
                             )}
                           </div>
@@ -1262,12 +1257,12 @@ export default function BookkeepingPage() {
                             <Trash2 size={14} />
                           </button>
                         )}
-                        <button onClick={() => toggleGroup(stmt.id)} className="shrink-0">
+                        <button onClick={() => toggleGroup(stmt.id)} className="shrink-0" aria-label={isCollapsed ? 'Expand statement' : 'Collapse statement'} aria-expanded={!isCollapsed}>
                           {isCollapsed ? <ChevronRight size={16} className="text-surface-400" /> : <ChevronDown size={16} className="text-surface-400" />}
                         </button>
                       </div>
                       {!isCollapsed && grpTxns.length > 0 && (
-                        <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD_SEL}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table></div>
+                        <div className="overflow-x-auto" tabIndex={0}><table className="w-full">{TABLE_HEAD_SEL}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table></div>
                       )}
                       {!isCollapsed && grpTxns.length === 0 && <div className="px-5 py-3 text-sm text-surface-400">No matching transactions in this statement</div>}
                     </div>
@@ -1279,7 +1274,7 @@ export default function BookkeepingPage() {
                   return (
                     <div className="card overflow-hidden">
                       <div className="flex items-center gap-2 px-4 py-3 bg-surface-50 border-b border-surface-100">
-                        <input type="checkbox" checked={allSel}
+                        <input type="checkbox" checked={allSel} aria-label="Select all in this group"
                           onChange={e => selectGroup(grpTxns, e.target.checked)}
                           className="rounded accent-brand-600 cursor-pointer shrink-0"
                         />
@@ -1296,7 +1291,7 @@ export default function BookkeepingPage() {
                         </button>
                       </div>
                       {!collapsedGroups.has('manual') && (
-                        <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD_SEL}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table></div>
+                        <div className="overflow-x-auto" tabIndex={0}><table className="w-full">{TABLE_HEAD_SEL}<tbody>{grpTxns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table></div>
                       )}
                     </div>
                   );
@@ -1313,7 +1308,7 @@ export default function BookkeepingPage() {
                 return (
                   <div key={catName} className="card overflow-hidden">
                     <div className="flex items-center gap-3 px-4 py-3 bg-surface-50 border-b border-surface-100">
-                      <input type="checkbox" checked={allSel}
+                      <input type="checkbox" checked={allSel} aria-label="Select all in this group"
                         onChange={e => selectGroup(txns, e.target.checked)}
                         className="rounded accent-brand-600 cursor-pointer shrink-0"
                       />
@@ -1325,7 +1320,7 @@ export default function BookkeepingPage() {
                         <BookCheck size={12} /> Post Group
                       </button>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto" tabIndex={0}>
                       <table className="w-full">{TABLE_HEAD}<tbody>{txns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table>
                     </div>
                   </div>
@@ -1341,7 +1336,7 @@ export default function BookkeepingPage() {
                 return (
                   <div key={vendor} className="card overflow-hidden">
                     <div className="flex items-center gap-3 px-4 py-3 bg-surface-50 border-b border-surface-100">
-                      <input type="checkbox" checked={allSel}
+                      <input type="checkbox" checked={allSel} aria-label="Select all in this group"
                         onChange={e => selectGroup(txns, e.target.checked)}
                         className="rounded accent-brand-600 cursor-pointer shrink-0"
                       />
@@ -1353,7 +1348,7 @@ export default function BookkeepingPage() {
                         <BookCheck size={12} /> Post Group
                       </button>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto" tabIndex={0}>
                       <table className="w-full">{TABLE_HEAD}<tbody>{txns.map(t => <TxnRow key={t.id} t={t} showPost selectable />)}</tbody></table>
                     </div>
                   </div>
@@ -1371,7 +1366,7 @@ export default function BookkeepingPage() {
           <EmptyState icon={BookCheck} title="Nothing posted yet" description="Click the post icon on any transaction" />
         ) : (
           <div className="card overflow-hidden">
-            <div className="overflow-x-auto"><table className="w-full">{TABLE_HEAD}<tbody>{postedTxns.map(t => <TxnRow key={t.id} t={t} showUnpost />)}</tbody></table></div>
+            <div className="overflow-x-auto" tabIndex={0}><table className="w-full">{TABLE_HEAD}<tbody>{postedTxns.map(t => <TxnRow key={t.id} t={t} showUnpost />)}</tbody></table></div>
             <PageBar page={postedPage} total={postedTotal} pageSize={POSTED_PAGE_SIZE} onPage={setPostedPage} />
           </div>
         )
@@ -1414,7 +1409,7 @@ export default function BookkeepingPage() {
       {activeTab === 'invoices' && (
         <>
           <div className="flex items-center gap-3 mb-4">
-            <select value={invoiceYear} onChange={e => setInvoiceYear(parseInt(e.target.value))} className="input-field w-auto">
+            <select value={invoiceYear} onChange={e => setInvoiceYear(parseInt(e.target.value))} className="input-field w-auto" aria-label="Invoice year">
               {invoiceYears.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
             <span className="text-sm text-surface-500">{invoices.length} invoices</span>

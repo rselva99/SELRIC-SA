@@ -229,7 +229,7 @@ export default function ManageUsersPage() {
         />
       ) : (
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-100">
@@ -295,7 +295,7 @@ export default function ManageUsersPage() {
         <form onSubmit={handleCreateUser} className="space-y-4 p-1">
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Full Name</label>
-            <input
+            <input aria-label="Full Name"
               type="text"
               value={formData.full_name}
               onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
@@ -306,7 +306,7 @@ export default function ManageUsersPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Email</label>
-            <input
+            <input aria-label="Email"
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -337,7 +337,7 @@ export default function ManageUsersPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-surface-600 uppercase tracking-wider mb-1.5">Role</label>
-            <select
+            <select aria-label="Role"
               value={formData.role}
               onChange={(e) => setFormData({ ...formData, role: e.target.value })}
               className="input-field"

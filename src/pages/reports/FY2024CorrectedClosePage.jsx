@@ -191,7 +191,7 @@ export default function FY2024CorrectedClosePage() {
                   <h2 className="text-sm font-semibold text-gray-800">{title}</h2>
                   <span className="text-xs text-gray-500">{sectionLines.length} lines</span>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto" tabIndex={0}>
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 text-xs text-gray-600">
                       <tr>

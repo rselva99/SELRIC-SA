@@ -1,5 +1,3 @@
-import React from 'react';
-
 const usd = (n) => {
   const num = Number(n || 0);
   return (num < 0 ? '-$' : '$') + Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -58,7 +56,7 @@ export default function JEPreview({ month, basis, onBasisChange }) {
       <div className="flex items-center justify-between">
         <div>
           <div className="font-semibold text-gray-700">Tentative JE preview — {month.pay_month}</div>
-          <div className="text-xs text-gray-500">Recomputed live. No posting occurs.</div>
+          <div className="text-xs text-gray-600">Recomputed live. No posting occurs.</div>
         </div>
         <div className="text-xs">
           <label>Basis:
@@ -97,7 +95,7 @@ export default function JEPreview({ month, basis, onBasisChange }) {
       <div className="grid grid-cols-2 gap-3 text-xs">
         <div>
           <div>Balanced: <span className={balanced ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>{balanced ? 'YES' : 'NO'}</span></div>
-          <div>Booked today (plug + fragments): <span className="tabular-nums">{usd(bookedToday)}</span> <span className="text-gray-500">(plug {usd(plug)} + frag {usd(fragments)})</span></div>
+          <div>Booked today (plug + fragments): <span className="tabular-nums">{usd(bookedToday)}</span> <span className="text-gray-600">(plug {usd(plug)} + frag {usd(fragments)})</span></div>
           <div>Net change if posted: <span className={`tabular-nums ${netChange > 0 ? 'text-red-700' : 'text-green-700'}`}>{usd(netChange)}</span></div>
         </div>
         <div className="text-right">

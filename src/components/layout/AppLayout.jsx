@@ -144,7 +144,7 @@ export default function AppLayout() {
   // A module's custom name (Settings → Your portal) wins over the translation.
   const labelOf = (item) => (item.module && config?.labels?.[item.module]) || t(`nav.${item.key}`);
   const businessName = organization?.name || 'SelRic';
-  const tile = currentProgram === 'business' ? 'bg-brand-500' : accentOf(program).tile;
+  const tile = currentProgram === 'business' ? 'bg-brand-600' : accentOf(program).tile;
 
   async function handleSignOut() {
     await signOut();
