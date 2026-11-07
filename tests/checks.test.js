@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { BUSINESS_CHECKS, CHECKS, healthScore, latestByCheck, runChecks } from '../src/lib/checks/index.js';
+import { BUSINESS_CHECKS, CHECKS, HERD_CHECKS, healthScore, latestByCheck, runChecks } from '../src/lib/checks/index.js';
 import { lenderStatementsFrom } from '../src/lib/checks/fetch.js';
 import { payableMonths } from '../src/lib/checks/business/payableKeptCurrent.js';
 import * as tb from '../src/lib/checks/business/tbBalanced.js';
@@ -11,6 +11,7 @@ import * as returned from '../src/lib/checks/business/returnedUnpaired.js';
 import * as mc from '../src/lib/checks/business/merchantClearing.js';
 import { translations } from '../src/i18n/translations.js';
 import { makeBusiness } from './fixtures/synthetic-business.js';
+import { makeHerd } from './fixtures/synthetic-herd.js';
 
 // The Spanish and English catalog lines live in translations.js; the
 // migration's seed must say the same thing (see the last suite).
@@ -244,6 +245,77 @@ describe('checks — stored runs and the score', () => {
 
   it('has no score when nothing was checked', () => {
     expect(healthScore(runChecks({}, { today: TODAY })).score).toBeNull();
+  });
+});
+
+describe('checks — the herd', () => {
+  // A made-up finca with one of every problem the four herd checks look for.
+  const animal = (id, o) => ({ id, slug: id, name: id, species: 'bovino', category: 'vaca', sex: 'H', status: 'activo', tag: '', dam_id: null, dam_name: '', ...o });
+  const animals = [
+    animal('Canela', { pregnant: true, preg_date: '2026-09-01', preg_months: 5 }),
+    animal('Lucero', { category: '' }),
+    animal('Pinta', { category: 'vaka' }),
+    animal('Rosa', { species: 'porcino', category: 'vaca' }),
+    animal('Cerdita', { species: 'porcino', category: 'cerda' }),
+    animal('Luna', { pregnant: true }),
+    animal('Mora', { pregnant: true }),
+    animal('Vendida', { pregnant: true, status: 'vendido' }),
+    animal('Toro', { category: 'toro', sex: 'M' }),
+    animal('Nube', { category: 'ternera', dam_id: 'Canela' }),
+    animal('Sol', { category: 'ternero', sex: 'M', dam_id: 'gone' }),
+    animal('Rayo', { category: 'ternero', sex: 'M', dam_id: 'Toro' }),
+    animal('Brisa', { category: 'ternera', dam_name: ' canela ' }),
+    animal('Trueno', { category: 'ternero', sex: 'M', dam_name: 'Vieja Blanca' }),
+  ];
+  const events = [
+    { id: 'e1', animal_id: 'Canela', type: 'palpacion', date: '2026-09-01', data: { result: 'S', months: 5 } },
+    { id: 'e2', animal_id: 'Mora', type: 'palpacion', date: '2026-10-01', data: { result: 'N' } },
+    { id: 'e3', animal_id: 'Canela', type: 'leche', date: '2026-11-06', data: { liters: 9 } },
+    { id: 'e4', animal_id: 'deleted-cow', type: 'parto', date: '2026-10-12', data: {} },
+  ];
+  const R = byKey(runChecks({ animals, events }, { today: TODAY, program: 'ganaderia' }));
+
+  it('runs the four herd checks and nothing else', () => {
+    expect(Object.keys(R)).toEqual(['herd_orphan_events', 'herd_no_category', 'herd_pregnant_no_palpacion', 'herd_dam_unresolved']);
+    expect(Object.values(R).every((r) => r.program === 'ganaderia' && r.amount === 0)).toBe(true);
+  });
+
+  it('finds the event whose animal is gone', () => {
+    expect(R.herd_orphan_events).toMatchObject({ status: 'red', count: 1 });
+    expect(R.herd_orphan_events.detail.rows[0]).toMatchObject({ id: 'e4', type: 'parto', date: '2026-10-12' });
+  });
+
+  it('finds an empty category and one the species does not have', () => {
+    expect(R.herd_no_category).toMatchObject({ status: 'amber', count: 3 });
+    expect(R.herd_no_category.detail.rows.map((r) => [r.name, r.kind])).toEqual([['Lucero', 'none'], ['Pinta', 'unknown'], ['Rosa', 'unknown']]);
+  });
+
+  it('finds active animals marked pregnant with no positive palpación', () => {
+    expect(R.herd_pregnant_no_palpacion).toMatchObject({ status: 'amber', count: 2 });
+    expect(R.herd_pregnant_no_palpacion.detail.rows.map((r) => [r.name, r.kind])).toEqual([['Luna', 'none'], ['Mora', 'negative_only']]);
+  });
+
+  it('finds mothers that do not resolve: a missing card, a male, a name with no card', () => {
+    expect(R.herd_dam_unresolved).toMatchObject({ status: 'amber', count: 3 });
+    expect(R.herd_dam_unresolved.detail.rows.map((r) => [r.name, r.kind, r.dam])).toEqual([
+      ['Rayo', 'male', 'Toro'], ['Sol', 'missing', ''], ['Trueno', 'unlinked', 'Vieja Blanca'],
+    ]);
+  });
+
+  it('passes the clean synthetic finca and finds exactly what was planted in the other', () => {
+    const clean = runChecks(makeHerd({ today: TODAY }).data, { today: TODAY, program: 'ganaderia' });
+    expect(clean.map((r) => [r.key, r.status, r.count])).toEqual(HERD_CHECKS.map((c) => [c.key, 'green', 0]));
+    const h = makeHerd({ today: TODAY, issues: true });
+    const found = byKey(runChecks(h.data, { today: TODAY, program: 'ganaderia' }));
+    for (const c of HERD_CHECKS) expect([c.key, found[c.key].status, found[c.key].count]).toEqual([c.key, c.severity, h.planted[c.key]]);
+  });
+
+  it('says there is nothing to check on an empty herd', () => {
+    const empty = runChecks({ animals: [], events: [] }, { today: TODAY, program: 'ganaderia' });
+    expect(empty.map((r) => [r.status, r.detail.skipped])).toEqual([
+      ['green', 'no_events'], ['green', 'no_animals'], ['green', 'no_pregnant'], ['green', 'no_dams'],
+    ]);
+    expect(healthScore(empty).score).toBeNull();
   });
 });
 

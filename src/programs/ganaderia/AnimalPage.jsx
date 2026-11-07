@@ -9,7 +9,7 @@ import { useRegistrar } from './RegistrarSheet';
 import { ActionSheet } from './Sheet';
 import {
   ChapaTag, BrandChip, StatusBadge, FlagChip, EventIcon, eventSummary, fmtDate, Kpi, Card, Loading, LoadFailed,
-  PregnancyBar, tcount, btnClay, btnPaper,
+  PregnancyBar, tcount, btnClay, btnPaper, catLabel,
 } from './components';
 import { ageParts, expectedCalving, daysBetween, todayISO, addDays, formatNum, isActive, BREEDING_FEMALE } from './lib';
 import AnimalForm from './AnimalForm';
@@ -121,7 +121,7 @@ export default function AnimalPage() {
           <div className="min-w-0">
             <h1 className="font-display text-[32px] md:text-[40px] leading-tight truncate">{animal.name}</h1>
             <div className="text-[14px] text-finca-mist">
-              {[t(`lv.category.${animal.category}`), ageText, animal.breed].filter(Boolean).join(' · ')}
+              {[catLabel(t, animal.category), ageText, animal.breed].filter(Boolean).join(' · ')}
             </div>
             {animal.aliases?.length > 0 && <div className="text-[13px] text-finca-mist truncate">{t('lv.ficha.aka', { names: animal.aliases.join(', ') })}</div>}
           </div>
@@ -250,7 +250,7 @@ export default function AnimalPage() {
                       <ChapaTag animal={c} size="sm" />
                       <span className="flex-1 min-w-0">
                         <span className="block text-[15px] font-semibold truncate">{c.name}</span>
-                        <span className="block text-[13px] text-finca-ink2 truncate">{[t(`lv.category.${c.category}`), c.birth_date ? fmtDate(c.birth_date, locale) : null, !isActive(c) ? t(`lv.status.${c.status}`) : null].filter(Boolean).join(' · ')}</span>
+                        <span className="block text-[13px] text-finca-ink2 truncate">{[catLabel(t, c.category), c.birth_date ? fmtDate(c.birth_date, locale) : null, !isActive(c) ? t(`lv.status.${c.status}`) : null].filter(Boolean).join(' · ')}</span>
                       </span>
                     </Link>
                   </li>

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Stethoscope, Tag, Flag, Milk, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -14,8 +14,11 @@ import {
 } from './lib';
 
 // Inicio: the herd at a glance, what is yours to do today, this morning's
-// milk, and the lots. On a desktop also the last two weeks of milk, the best
-// milkers and the latest events.
+// milk, the lots, and two charts (calvings by month, milk per cow). On a
+// desktop also the last two weeks of milk, the best milkers and the latest
+// events. The charts load after the rest: recharts is only in HerdCharts.
+
+const HomeCharts = lazy(() => import('./HerdCharts'));
 
 const FLAG_ICON = { por_confirmar: Flag, vender: Tag };
 
@@ -191,6 +194,18 @@ export default function HomePage() {
           </div>
         )}
       </section>
+
+      {/* The herd in charts, with the way to all of Informes. */}
+      {view.active.length > 0 && (
+        <section aria-labelledby="lv-charts">
+          <SectionTitle action={<Link to="/ganaderia/informes" className="min-h-[44px] inline-flex items-center gap-1 text-[14px] font-semibold text-finca-green">{t('lv.reports.seeAll')} <ChevronRight size={16} aria-hidden="true" /></Link>}>
+            <span id="lv-charts">{t('lv.reports.homeTitle')}</span>
+          </SectionTitle>
+          <Suspense fallback={<div className="h-[300px] rounded-2xl bg-finca-lineSoft/60" aria-hidden="true" />}>
+            <HomeCharts animals={animals} events={events} today={today} hasCows={view.hasCows} />
+          </Suspense>
+        </section>
+      )}
 
       {/* Desktop: the latest events. */}
       <section className="hidden md:block" aria-labelledby="lv-recent">

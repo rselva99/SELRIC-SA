@@ -3,6 +3,7 @@ import { ChevronRight, CheckCircle2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useT } from '../../i18n/I18nContext';
 import Spinner from '../../components/ui/Spinner';
+import { THEMES } from '../../components/charts/theme';
 import {
   monogram, EVENT_BY_KEY, formatNum, toDate, isActive, pregnancyMonths, gestationMonths,
   expectedCalving, daysBetween, todayISO, GROUP_ORDER,
@@ -161,9 +162,18 @@ export function tcount(t, key, n, vars = {}) {
   return t(n === 1 ? `${key}One` : key, { n, ...vars });
 }
 
+// A category's label. A stored value the vocabulary does not have (a typo
+// from an import) is shown as written, never as a translation key; the herd
+// checks list those animals.
+export function catLabel(t, category, plural = false) {
+  const key = `lv.${plural ? 'categoryPlural' : 'category'}.${category}`;
+  const label = t(key);
+  return label === key ? String(category || '—') : label;
+}
+
 // "3 vacas" / "1 vaca" — the category's own singular and plural.
 export function countCat(n, category, t) {
-  return `${n} ${t(n === 1 ? `lv.category.${category}` : `lv.categoryPlural.${category}`).toLowerCase()}`;
+  return `${n} ${catLabel(t, category, n !== 1).toLowerCase()}`;
 }
 
 // ── Page furniture ──────────────────────────────────────────────────────────
@@ -349,15 +359,17 @@ export function MilkBars({ series, height = 56, labels = false, valueOnLast = fa
 
 // ── Lots ────────────────────────────────────────────────────────────────────
 // The mix of a lot as one bar: cows, young stock, calves, bulls. The counts
-// are always written next to it, so the colours are never the only clue.
-const GROUP_FILL = { hembras: 'bg-finca-green', jovenes: 'bg-finca-mist', crias: 'bg-finca-straw', machos: 'bg-finca-forest' };
+// are always written next to it, so the colours are never the only clue. The
+// hues are the finca chart theme's, in order, so a kind of animal is the same
+// colour here and in the Informes chart.
+export const GROUP_COLOR = Object.fromEntries(GROUP_ORDER.map((g, i) => [g, THEMES.finca.series[i]]));
 
 export function LotBar({ groups, total, className }) {
   if (!total) return <div className={cn('h-2 rounded-full bg-finca-lineSoft', className)} />;
   return (
     <div className={cn('flex h-2 gap-[2px] rounded-full overflow-hidden bg-finca-lineSoft', className)} aria-hidden="true">
       {GROUP_ORDER.filter((g) => groups[g] > 0).map((g) => (
-        <span key={g} className={GROUP_FILL[g]} style={{ width: `${(groups[g] / total) * 100}%` }} />
+        <span key={g} style={{ width: `${(groups[g] / total) * 100}%`, background: GROUP_COLOR[g] }} />
       ))}
     </div>
   );
@@ -371,7 +383,7 @@ export function GroupLegend({ groups, className }) {
     <div className={cn('flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-finca-ink2', className)}>
       {parts.map((g) => (
         <span key={g} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-          <span className={cn('w-2 h-2 rounded-full', GROUP_FILL[g])} aria-hidden="true" />
+          <span className="w-2 h-2 rounded-full" style={{ background: GROUP_COLOR[g] }} aria-hidden="true" />
           {tn(`lv.group.${g}`, groups[g])}
         </span>
       ))}

@@ -4,9 +4,11 @@
 //   runChecks(data, { program, period, today })  →  [{ key, program, severity, status, amount, count, detail }]
 //   healthScore(results)                          →  { score 0–100 | null, green, amber, red, skipped }
 //
-// `data` is what ./fetch.js reads for one workspace; every check is a pure
-// function over it (see ./util.js for the result shape), so the same run
-// works in the browser, in `npm run checks` and in the tests.
+// `data` is what ./fetch.js reads for one workspace — the books, or the herd
+// ({ animals, events }); every check is a pure function over it (see
+// ./util.js for the result shape), so the same run works in the browser, in
+// `npm run checks` and in the tests. A program's checks skip when the data
+// holds none of what they read.
 import * as tbBalanced from './business/tbBalanced.js';
 import * as cashLegSingle from './business/cashLegSingle.js';
 import * as orphanLines from './business/orphanLines.js';
@@ -22,6 +24,10 @@ import * as duplicateCandidates from './business/duplicateCandidates.js';
 import * as closedPeriodEntries from './business/closedPeriodEntries.js';
 import * as unknownDeposits from './business/unknownDeposits.js';
 import * as loanVsLender from './business/loanVsLender.js';
+import * as herdNoCategory from './ganaderia/noCategory.js';
+import * as herdOrphanEvents from './ganaderia/orphanEvents.js';
+import * as herdPregnantNoPalpacion from './ganaderia/pregnantNoPalpacion.js';
+import * as herdDamUnresolved from './ganaderia/damUnresolved.js';
 
 const tag = (program) => (m) => ({ key: m.key, program, severity: m.severity, run: m.run });
 
@@ -33,7 +39,12 @@ export const BUSINESS_CHECKS = [
   payrollCleared, accruedNoCash, loanVsLender,
 ].map(tag('business'));
 
-export const CHECKS = [...BUSINESS_CHECKS];
+// The herd: the timeline's own integrity first, then what the cards say.
+export const HERD_CHECKS = [
+  herdOrphanEvents, herdNoCategory, herdPregnantNoPalpacion, herdDamUnresolved,
+].map(tag('ganaderia'));
+
+export const CHECKS = [...BUSINESS_CHECKS, ...HERD_CHECKS];
 export const checkByKey = (key) => CHECKS.find((c) => c.key === key) || null;
 
 export function runChecks(data, ctx = {}) {

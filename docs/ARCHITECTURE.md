@@ -97,17 +97,18 @@ charts are fetched on use; `programs/ganaderia/HerdRoot.jsx` holds the herd prov
 | `/accountant/*` `/bookkeeping/*` `/ledger` `/journal` `/accounts` `/cash-management` `/assets` `/payroll` | `adminOnly fullOnly` (+ `PinGate` on accountant) | Full package |
 | `/checks` | `adminOnly` | `pages/checks/ChecksPage` — the last run of the integrity checks, run now, drill-down |
 | `/users` `/settings` | `adminOnly program={null}` | shared by every program |
-| `/ganaderia` `/ganaderia/animales[/:slug]` `/ganaderia/eventos` `/ganaderia/lotes` `/ganaderia/informes` | `GanaderiaRoot` (program `ganaderia`) + `HerdProvider` + `RegistrarProvider` | `src/programs/ganaderia/*` (`informes` is a "Pronto" page; `_kit`, every herd component, exists only under `import.meta.env.DEV`) |
+| `/ganaderia` `/ganaderia/animales[/:slug]` `/ganaderia/eventos` `/ganaderia/lotes` `/ganaderia/informes` | `GanaderiaRoot` (program `ganaderia`) + `HerdProvider` + `RegistrarProvider` | `src/programs/ganaderia/*` (`informes`: the herd charts, the pregnancy timeline and the four herd checks; `_kit`, every herd component, exists only under `import.meta.env.DEV`) |
 | `/ceo/*` | internal account → `CeoLayout` | `pages/ceo/CeoPage` (tabs below) |
 
 `ProtectedRoute` order: not signed in → `/login`; internal → `/ceo`; wrong program → that program's home;
 `adminOnly`; `fullOnly` in Simple → `/transactions`; module off → `/dashboard`.
 
 **Shared charts** (`src/components/charts/`, Business and Ganadería; the CEO shell keeps its own in
-`pages/ceo/charts.jsx`): `theme.js` (light and dark tokens — categorical hues in fixed order, checked by
-`tests/chartsTheme.test.js`; dark applies under `<html data-theme="dark">`; locale formatters), `parts.jsx`
-(axis and grid helpers called as functions, the tooltip), `ChartCard` (title, hint, legend, table twin, empty state,
-`role="img"` with a summary), `charts.jsx` (`MonthLines`, `MonthBars`, `NamedBars`, `Waterfall`).
+`pages/ceo/charts.jsx`): `theme.js` (light, dark and finca tokens — categorical hues in fixed order, checked by
+`tests/chartsTheme.test.js`; dark applies under `<html data-theme="dark">`, finca where a page wraps its charts in
+`<ChartThemeName.Provider value="finca">`; locale formatters), `parts.jsx` (axis and grid helpers called as
+functions — `monthAxis`, `dayAxis` … — and the tooltip), `ChartCard` (title, hint, legend, table twin, empty state,
+`role="img"` with a summary), `charts.jsx` (`MonthLines`, `MonthBars`, `NamedBars`, `NamedStack`, `Waterfall`).
 
 **Business shell** — `AppLayout`: the sidebar from 1024 px, a drawer below it. Below 768 px a
 `BusinessBottomNav` (the first four of Dashboard · Bookkeeping or Transactions · Sales · Reports · Inventory
@@ -126,7 +127,11 @@ above it a sidebar. `HerdProvider` and `RegistrarProvider` pass through when a p
 so the herd loads once and Registrar opens from any page. Every form is a `Sheet` (finca tone). Registrar (`RegistrarSheet.jsx`)
 is three steps — what happened, which animal(s), the details — and saves through `recordEvents`, one
 `lv_record_event` per animal and one refresh. The pages' derived numbers are pure helpers in `lib.js` that take
-`today`. The program registry (`src/programs/index.js`) carries each program's list price (`price`,
+`today`. The charts (`HerdCharts.jsx`: calvings by month recorded and expected, milk per cow by week, the herd by
+lot) are the shared charts in the finca theme; Inicio lazy-loads two of them, Informes shows all three, the
+pregnancies by due month, and runs the herd checks on the loaded herd (nothing saved). A kind of animal has one hue
+everywhere (`GROUP_COLOR` = the finca series in `GROUP_ORDER`); a category the vocabulary lacks is shown as
+written (`catLabel`). The program registry (`src/programs/index.js`) carries each program's list price (`price`,
 `priceLabel`), which Settings shows.
 
 **CEO tabs** (`/ceo`, `/ceo/<tab>`; rail in `CeoLayout`, drawer below `lg`): Overview · Pilots · Funnel
@@ -141,7 +146,7 @@ is three steps — what happened, which animal(s), the details — and saves thr
 | `src/lib/ceoDocs.js` | markdown subset → blocks; `{{path\|fmt}}` tokens (`resolve`, `FMT`); `{{table:name}}` computed tables (`TABLES`, `tableFor`); `parseSections` (`##`/`###` with `{#key}`) | Documents, Research findings, Plan, exports |
 | `src/lib/ceoCompetition.js` | ladders, medians, cheaper / free-tier counts, the grouped feature matrix; resolves SelRic's price from `R` via `priceToken` | Competition page and tables |
 | `src/lib/ceoFields.js` | the assumptions schema for the editor and the Excel (labels, types, units; no values) | Model tab, Financial Model, `exportXlsx` |
-| `src/lib/checks/` | the integrity checks: one module per check in `business/` (`key`, `severity`, `run(data, ctx)` → `{ status, amount, count, detail }`), `index.js` (`BUSINESS_CHECKS` in display order, `runChecks`, `healthScore`, `latestByCheck`), `fetch.js` (one workspace's rows, always filtered on `org_id`), `store.js` (`saveResults`, `loadLatest`; a missing table reads as "no runs yet"), `util.js` (account-name patterns, row/result helpers) | `/checks`, `scripts/checks.mjs`, tests |
+| `src/lib/checks/` | the integrity checks: one module per check in `business/` and `ganaderia/` (`key`, `severity`, `run(data, ctx)` → `{ status, amount, count, detail }`), `index.js` (`BUSINESS_CHECKS` and `HERD_CHECKS` in display order, `runChecks`, `healthScore`, `latestByCheck`), `fetch.js` (one workspace's rows — `fetchBusinessData`, `fetchHerdData` — always filtered on `org_id`), `store.js` (`saveResults`, `loadLatest`; a missing table reads as "no runs yet"), `util.js` (account-name patterns, row/result helpers) | `/checks`, `/ganaderia/informes`, `scripts/checks.mjs` (`--program business|ganaderia`), tests |
 | `src/pages/ceo/exportDocx.js` | document sections + `R` → Word (`docx`), lazy-loaded | Documents, Competition, `build_docx.mjs` |
 | `src/pages/ceo/exportXlsx.js` | `R` → the workbook (`exceljs`), lazy-loaded | Financial Model, `build_xlsx.mjs` |
 | `src/pages/ceo/charts.jsx` | palette `C`, `ChartCard` (chart + table twin), axis/grid helpers (called, not rendered), `Tip`, `useNarrow` | every CEO chart |
@@ -211,7 +216,8 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   written by `make_golden.mjs` from one stored version) to the cent; `ceoDocs` parsing and tokens, and every
   token in every seeded document (read from `~/selric-business/docs`); `ceoCompetition` on a synthetic market;
   the herd helpers in `src/programs/ganaderia/lib.js` on a synthetic herd with `today` pinned; every integrity
-  check, clean and with one planted problem each, on the synthetic restaurant (`tests/fixtures/synthetic-business.js`),
+  check, clean and with one planted problem each, on the synthetic restaurant (`tests/fixtures/synthetic-business.js`)
+  and the synthetic finca (`tests/fixtures/synthetic-herd.js`),
   the catalog against the translations, and the store through supabase-js on the mock; the chart series on the same
   restaurant (the cash bridge closes on the last statement's printed balance) and the chart palettes (CVD distance,
   contrast) for light and dark.
@@ -221,10 +227,11 @@ This repo and the bundle are public. Never staged, committed or pasted into code
   (`SMOKE_GAN_*`, a Ganadería test workspace), and **every Business route** against the mock (`tests/fixtures/mock-supabase.js`
   answers every Supabase request in the browser context from the synthetic restaurant — `BIZ` full package, with
   problems and a stored run; `BIZS` the same books in Simple mode with every module on; `BIZ0` an empty workspace;
-  `BIZU` a Simple workspace not set up yet, for `/setup`; no account, nothing reaches the database, any write fails
+  `BIZU` a Simple workspace not set up yet, for `/setup`; `HERD` the synthetic finca, Inicio, Informes and Lotes with
+  every herd chart drawn; no account, nothing reaches the database, any write fails
   the view) at 1366 and 390 px — no console/page error, no failed request, marks in every chart, no horizontal
-  overflow, the page lands on the route it opened (no redirect passes for coverage), and on a phone the Business
-  bottom nav is there. `--only <text>` runs a subset. Screenshots and `report.json` in `.smoke/` (ignored).
+  overflow, no untranslated key in the text, the page lands on the route it opened (no redirect passes for
+  coverage), and on a phone the Business bottom nav is there. `--only <text>` runs a subset. Screenshots and `report.json` in `.smoke/` (ignored).
 - **Commit guard** (`.claude/settings.json` → `.claude/hooks/guard-commit.mjs`): a `git commit` run by Claude is
   blocked on a never-stage path, a key-like staged line, staging in the same command, or a failing check.
 - `verify_model.mjs` (outside the repo) when assumptions change.

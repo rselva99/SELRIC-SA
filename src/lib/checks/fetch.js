@@ -38,6 +38,16 @@ export async function fetchBusinessData(client, orgId) {
   return { categories, transactions, entries, lines, statements, checks, payrollLines, periodClose, lenderStatements: lenderStatementsFrom(bsLines, bsMappings) };
 }
 
+// The herd: every card and every event, with the fields the herd checks read.
+export async function fetchHerdData(client, orgId) {
+  if (!orgId) throw new Error('fetchHerdData: orgId required');
+  const [animals, events] = await Promise.all([
+    read(client, 'lv_animals', 'id, slug, name, aliases, tag, species, category, sex, status, lot, pregnant, preg_date, preg_months, dam_id, dam_name, birth_date', orgId),
+    read(client, 'lv_events', 'id, animal_id, type, date, data', orgId),
+  ]);
+  return { animals, events };
+}
+
 // A loan line of the book balance sheet with a confirmed ending balance is
 // the lender's number for that year end; its mappings name the ledger
 // accounts that make up the loan.

@@ -6,7 +6,7 @@ import { useT } from '../../i18n/I18nContext';
 import { cn } from '../../lib/utils';
 import { useHerd } from './HerdContext';
 import { Sheet } from './Sheet';
-import { ChapaTag, EventIcon, fmtDate, btnClay, btnPaper, fieldCls, labelCls } from './components';
+import { ChapaTag, EventIcon, fmtDate, btnClay, btnPaper, fieldCls, labelCls, catLabel } from './components';
 import {
   EVENT_BY_KEY, FEMALE_EVENTS, BREEDING_FEMALE, CURRENCIES, GESTATION_DAYS,
   todayISO, addDays, isActive, typeOrder, nextTag, matchAnimals, byTag, formatNum,
@@ -376,7 +376,7 @@ export default function RegistrarSheet({ request, onClose }) {
                   <span className="flex-1 min-w-0">
                     <span className="block text-[16px] font-semibold text-finca-ink truncate">{a.name}</span>
                     <span className="block text-[13px] text-finca-ink2 truncate">
-                      {t(`lv.category.${a.category}`)}{a.lot ? ` · ${a.lot}` : ''}{!isActive(a) ? ` · ${t(`lv.status.${a.status}`)}` : ''}
+                      {catLabel(t, a.category)}{a.lot ? ` · ${a.lot}` : ''}{!isActive(a) ? ` · ${t(`lv.status.${a.status}`)}` : ''}
                     </span>
                   </span>
                   {multi ? (

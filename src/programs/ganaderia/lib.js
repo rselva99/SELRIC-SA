@@ -226,6 +226,83 @@ export function lotComposition(animals) {
   return Object.values(lots).sort((x, y) => y.total - x.total || x.lot.localeCompare(y.lot));
 }
 
+// ── Informes: the series the herd charts draw ───────────────────────────────
+
+// 'YYYY-MM' plus n months.
+export function monthAdd(month, n) {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
+}
+
+// Calvings per month: the year behind (the partos recorded) and the months
+// ahead (active pregnant animals by their expected date). A late calving
+// counts as expected in this month: it has not happened yet. The months run
+// to the last expected calving, at most `ahead` months out.
+export function calvingsByMonth(animals, events, today = todayISO(), back = 12, ahead = 10) {
+  const now = today.slice(0, 7);
+  const first = monthAdd(now, -(back - 1));
+  const end = monthAdd(now, ahead);
+  const recorded = {}, expected = {};
+  for (const e of events) {
+    if (e.type !== 'parto' || !e.date) continue;
+    const m = e.date.slice(0, 7);
+    if (m >= first && m <= now) recorded[m] = (recorded[m] || 0) + 1;
+  }
+  let last = now;
+  for (const a of animals) {
+    if (!isActive(a)) continue;
+    const date = expectedCalving(a);
+    if (!date) continue;
+    const m = date.slice(0, 7) < now ? now : date.slice(0, 7);
+    if (m > end) continue;
+    expected[m] = (expected[m] || 0) + 1;
+    if (m > last) last = m;
+  }
+  const out = [];
+  for (let m = first; m <= last; m = monthAdd(m, 1)) {
+    out.push({ month: m, recorded: m <= now ? recorded[m] || 0 : null, expected: m >= now ? expected[m] || 0 : null });
+  }
+  return out;
+}
+
+// Litres per cow per milking day, week by week for the last `weeks` weeks;
+// the newest week ends today and each row is named by its first day. One cow
+// milked twice on a day is one cow-day. A week with no milk is null — a gap
+// in the line, not a zero.
+export function milkPerCow(events, weeks = 12, today = todayISO()) {
+  const from = addDays(today, -(weeks * 7 - 1));
+  const rows = Array.from({ length: weeks }, (_, i) => ({ date: addDays(from, i * 7), liters: 0, cowDays: new Set(), cows: new Set() }));
+  for (const e of events) {
+    if (e.type !== 'leche' || !e.date || e.date < from || e.date > today) continue;
+    const r = rows[Math.floor(daysBetween(from, e.date) / 7)];
+    r.liters += Number(e.data?.liters) || 0;
+    r.cowDays.add(`${e.animal_id}|${e.date}`);
+    r.cows.add(e.animal_id);
+  }
+  return rows.map((r) => {
+    const n = r.cowDays.size;
+    return { date: r.date, liters: Math.round(r.liters * 10) / 10, cows: r.cows.size, cowDays: n, perCow: n ? Math.round((r.liters / n) * 10) / 10 : null };
+  });
+}
+
+// The pregnant animals in calving order, grouped by the month they are due.
+// A late calving sits in this month; a pregnancy with no check date (so no
+// due date) comes last, under month null.
+export function pregnancyTimeline(animals, today = todayISO()) {
+  const now = today.slice(0, 7);
+  const rows = animals
+    .filter((a) => isActive(a) && a.pregnant === true)
+    .map((a) => { const date = expectedCalving(a); return { animal: a, date, days: date ? daysBetween(today, date) : null }; })
+    .sort((x, y) => (x.date || '9999').localeCompare(y.date || '9999') || x.animal.name.localeCompare(y.animal.name));
+  const groups = new Map();
+  for (const r of rows) {
+    const m = r.date ? (r.date.slice(0, 7) < now ? now : r.date.slice(0, 7)) : null;
+    if (!groups.has(m)) groups.set(m, []);
+    groups.get(m).push(r);
+  }
+  return [...groups].map(([month, list]) => ({ month, rows: list }));
+}
+
 // Flags that ask for something to be done (the rest describe the animal).
 export const ACTION_FLAGS = ['por_confirmar', 'vender'];
 

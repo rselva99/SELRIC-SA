@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   pregnancyMonths, overdueForPalpation, todayMilk, milkSeries, topMilkers, lotComposition,
   needsYou, typeOrder, nextTag, matchAnimals, byTag, daysUntil, EVENT_TYPES,
+  monthAdd, calvingsByMonth, milkPerCow, pregnancyTimeline,
 } from '../src/programs/ganaderia/lib.js';
 
 // The herd helpers behind Inicio, Animales, the Ficha and Registrar. Every
@@ -86,6 +87,63 @@ describe('ganaderia lib — lotComposition', () => {
     expect(lots[0].groups).toEqual({ hembras: 2, jovenes: 0, crias: 1, machos: 0 });
     expect(lots[1].groups.jovenes).toBe(1);
     expect(lots[2].groups.machos).toBe(1);
+  });
+});
+
+describe('ganaderia lib — the Informes series', () => {
+  // Canela checked at 5 months on 1 Sep calves 10 Jan; Estrella's calving
+  // (12 Jul) is late; Pinta has no check date; Vendida is no longer here.
+  const herd = [
+    cow({ name: 'Canela', pregnant: true, preg_date: '2026-09-01', preg_months: 5 }),
+    cow({ name: 'Estrella', pregnant: true, preg_date: '2026-01-01', preg_months: 3 }),
+    cow({ name: 'Pinta', pregnant: true }),
+    cow({ name: 'Vendida', pregnant: true, preg_date: '2026-09-01', preg_months: 5, status: 'vendido' }),
+  ];
+  const partos = [
+    { type: 'parto', animal_id: 'A', date: '2025-11-20' },
+    { type: 'parto', animal_id: 'B', date: '2026-10-05' },
+    { type: 'parto', animal_id: 'C', date: '2026-11-01' },
+    { type: 'palpacion', animal_id: 'C', date: '2026-10-05' },
+  ];
+
+  it('adds months across a year end', () => {
+    expect(monthAdd('2026-11', 2)).toBe('2027-01');
+    expect(monthAdd('2026-11', -11)).toBe('2025-12');
+  });
+
+  it('counts calvings recorded over the last year and expected ahead, a late one in this month', () => {
+    const s = calvingsByMonth(herd, partos, TODAY);
+    expect(s.map((r) => r.month)).toEqual([
+      '2025-12', '2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07',
+      '2026-08', '2026-09', '2026-10', '2026-11', '2026-12', '2027-01',
+    ]);
+    expect(s[0]).toEqual({ month: '2025-12', recorded: 0, expected: null });
+    expect(s.find((r) => r.month === '2026-10')).toEqual({ month: '2026-10', recorded: 1, expected: null });
+    expect(s.find((r) => r.month === '2026-11')).toEqual({ month: '2026-11', recorded: 1, expected: 1 });
+    expect(s.find((r) => r.month === '2026-12')).toEqual({ month: '2026-12', recorded: null, expected: 0 });
+    expect(s.at(-1)).toEqual({ month: '2027-01', recorded: null, expected: 1 });
+  });
+
+  it('ends at this month when nothing is expected', () => {
+    expect(calvingsByMonth([], partos, TODAY).at(-1).month).toBe('2026-11');
+  });
+
+  it('gives litres per cow-day by week, a gap for a week with no milk', () => {
+    const events = [milk('A', '2026-10-20', 10), milk('A', '2026-10-20', 6), milk('B', '2026-10-21', 8), milk('A', '2026-11-01', 9), milk('A', '2026-10-11', 50)];
+    expect(milkPerCow(events, 3, TODAY)).toEqual([
+      { date: '2026-10-12', liters: 0, cows: 0, cowDays: 0, perCow: null },
+      { date: '2026-10-19', liters: 24, cows: 2, cowDays: 2, perCow: 12 },
+      { date: '2026-10-26', liters: 9, cows: 1, cowDays: 1, perCow: 9 },
+    ]);
+  });
+
+  it('lists the pregnant animals by due month, the late one now and the undated one last', () => {
+    const t = pregnancyTimeline(herd, TODAY);
+    expect(t.map((g) => [g.month, g.rows.map((r) => r.animal.name)])).toEqual([
+      ['2026-11', ['Estrella']], ['2027-01', ['Canela']], [null, ['Pinta']],
+    ]);
+    expect(t[0].rows[0]).toMatchObject({ date: '2026-07-12', days: -112 });
+    expect(t[1].rows[0]).toMatchObject({ date: '2027-01-10', days: 70 });
   });
 });
 

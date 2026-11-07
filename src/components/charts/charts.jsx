@@ -2,7 +2,7 @@ import { Bar, BarChart, Cell, Line, LineChart, ReferenceLine, ResponsiveContaine
 import { monthLong, useChartTheme } from './theme';
 import { ChartTooltip, catAxisY, grid, gridX, monthAxis, numAxis, numAxisX } from './parts';
 
-// The four shapes the Business and Ganadería charts are drawn with. Each
+// The five shapes the Business and Ganadería charts are drawn with. Each
 // fills its ChartCard; colours come from the theme, numbers are formatted by
 // the caller (fmtAxis for ticks, fmtValue for the tooltip). Animation is off:
 // the charts appear drawn, and nothing moves for people who asked for less
@@ -12,19 +12,21 @@ const MARGIN = { top: 8, right: 8, bottom: 0, left: 0 };
 const trim = (s, n) => (String(s).length > n ? `${String(s).slice(0, n - 1)}…` : String(s));
 
 // Lines over months. series: [{ key, label, color }]; titleOf(month) heads
-// the tooltip (default: the month in full).
-export function MonthLines({ data, series, locale, fmtAxis, fmtValue, extra, zero = true, titleOf }) {
+// the tooltip (default: the month in full). `axis(th)` swaps the month axis
+// for another one from ./parts (dayAxis for weeks), called as a function.
+export function MonthLines({ data, series, locale, fmtAxis, fmtValue, extra, zero = true, titleOf, axis, dots = false }) {
   const th = useChartTheme();
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data} margin={MARGIN}>
         {grid(th)}
-        {monthAxis(th, locale)}
+        {axis ? axis(th) : monthAxis(th, locale)}
         {numAxis(th, fmtAxis)}
         {zero && <ReferenceLine y={0} stroke={th.text} strokeOpacity={0.35} />}
         <Tooltip cursor={{ stroke: th.grid }} content={<ChartTooltip th={th} title={titleOf || ((l) => monthLong(l, locale))} fmt={fmtValue} extra={extra} />} />
         {series.map((s) => (
-          <Line key={s.key} dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false}
+          <Line key={s.key} dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2}
+            dot={dots ? { r: 4, strokeWidth: 2, stroke: th.surface, fill: s.color } : false}
             activeDot={{ r: 4, strokeWidth: 2, stroke: th.surface }} isAnimationActive={false} />
         ))}
       </LineChart>
@@ -33,15 +35,16 @@ export function MonthLines({ data, series, locale, fmtAxis, fmtValue, extra, zer
 }
 
 // Bars over months, side by side or stacked. Stacked segments are parted by a
-// hairline of the surface colour, and only the top one is rounded.
-export function MonthBars({ data, series, stacked = false, locale, fmtAxis, fmtValue, extra, titleOf }) {
+// hairline of the surface colour, and only the top one is rounded. `integers`
+// keeps the ticks on whole numbers, for counts.
+export function MonthBars({ data, series, stacked = false, locale, fmtAxis, fmtValue, extra, titleOf, integers = false }) {
   const th = useChartTheme();
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data} margin={MARGIN} barGap={2} barCategoryGap="22%">
         {grid(th)}
         {monthAxis(th, locale)}
-        {numAxis(th, fmtAxis)}
+        {numAxis(th, fmtAxis, integers ? { allowDecimals: false, width: 32 } : {})}
         <Tooltip cursor={{ fill: th.cursor }} content={<ChartTooltip th={th} title={titleOf || ((l) => monthLong(l, locale))} fmt={fmtValue} extra={extra} />} />
         {series.map((s, i) => (
           <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} maxBarSize={stacked ? 32 : 18} isAnimationActive={false}
@@ -68,6 +71,27 @@ export function NamedBars({ data, color, valueName, fmtAxis, fmtValue, labelWidt
         <Bar dataKey="value" name={valueName} fill={color || th.series[0]} radius={[0, 4, 4, 0]} maxBarSize={20} isAnimationActive={false}>
           {data.map((d) => <Cell key={d.label} fill={d.color || color || th.series[0]} />)}
         </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Horizontal stacked bars for named things made of parts (a lot and its
+// cows, young stock, calves, bulls). data: [{ label, [series.key]: n }].
+// Segments are parted by a hairline of the surface; only the last is rounded.
+export function NamedStack({ data, series, fmtAxis, fmtValue, labelWidth = 120, extra }) {
+  const th = useChartTheme();
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 12, bottom: 0, left: 0 }} barCategoryGap="24%">
+        {gridX(th)}
+        {numAxisX(th, fmtAxis, { allowDecimals: false })}
+        {catAxisY(th, { width: labelWidth, tickFormatter: (v) => trim(v, Math.floor(labelWidth / 6.5)) })}
+        <Tooltip cursor={{ fill: th.cursor }} content={<ChartTooltip th={th} fmt={fmtValue} extra={extra} />} />
+        {series.map((s, i) => (
+          <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} stackId="stack" maxBarSize={22} isAnimationActive={false}
+            stroke={th.surface} strokeWidth={1} radius={i === series.length - 1 ? [0, 4, 4, 0] : 0} />
+        ))}
       </BarChart>
     </ResponsiveContainer>
   );

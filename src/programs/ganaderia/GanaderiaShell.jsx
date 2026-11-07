@@ -27,7 +27,7 @@ const FINCA = [
   { key: 'animals', icon: Tag, path: '/ganaderia/animales', label: (t) => t('nav.lvAnimals') },
   { key: 'events', icon: ClipboardList, path: '/ganaderia/eventos', label: (t) => t('nav.lvEvents') },
   { key: 'lots', icon: Layers, path: '/ganaderia/lotes', label: (t) => t('lv.shell.lots') },
-  { key: 'reports', icon: FileBarChart, path: '/ganaderia/informes', label: (t) => t('lv.shell.reports'), soon: true },
+  { key: 'reports', icon: FileBarChart, path: '/ganaderia/informes', label: (t) => t('lv.shell.reports') },
 ];
 
 function monogram(name) {

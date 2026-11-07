@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 
 // The chart tokens for Business and Ganadería pages. Every chart reads its
 // colours from here, so the charts read as one system.
@@ -16,6 +16,10 @@ import { useEffect, useState } from 'react';
 // Dark is its own set of steps from the same hues, checked against the dark
 // surface. It applies when the page sets data-theme="dark" on <html>; the
 // Business pages do not yet, so they draw light.
+//
+// Finca is the light hues on the herd pages' paper card, with the notebook's
+// ink and rules. Ganadería pages ask for it through <ChartThemeName.Provider
+// value="finca">, so the hues mean the same thing in both programs.
 export const THEMES = {
   light: {
     name: 'light',
@@ -31,12 +35,24 @@ export const THEMES = {
     other: '#5c6660', up: '#55a683', down: '#e8590c', total: '#ced4da',
     cursor: 'rgba(233, 236, 239, 0.06)', empty: '#1d2722',
   },
+  finca: {
+    name: 'finca',
+    surface: '#FFFDF8', border: '#E4DDCF', ink: '#16211B', text: '#5E6D63', grid: '#EEE8DB',
+    series: ['#2f8a63', '#1c4f9c', '#d9480f', '#9775fa'],
+    other: '#B5AC9C', up: '#2f8a63', down: '#d9480f', total: '#3B4740',
+    cursor: 'rgba(22, 33, 27, 0.05)', empty: '#F3EEE3',
+  },
 };
+
+// A page that draws on its own ground names its theme here; everything else
+// follows data-theme on <html>.
+export const ChartThemeName = createContext(null);
 
 const current = () => (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
 
 // The theme the page is in, following data-theme on <html> as it changes.
 export function useChartTheme() {
+  const forced = useContext(ChartThemeName);
   const [name, setName] = useState(current);
   useEffect(() => {
     if (typeof MutationObserver === 'undefined') return undefined;
@@ -44,7 +60,7 @@ export function useChartTheme() {
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => obs.disconnect();
   }, []);
-  return THEMES[name];
+  return THEMES[forced] || THEMES[name];
 }
 
 // ── Formatters (locale from useT: 'en-US' | 'es-US') ────────────────────────
@@ -67,6 +83,12 @@ export function monthShort(month, locale = 'en-US') {
   const [y, m] = String(month).split('-').map(Number);
   const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(locale, { month: 'short', timeZone: 'UTC' }).replace('.', '');
   return `${name} ${String(y).slice(2)}`;
+}
+// 'YYYY-MM-DD' → "Nov 7" / "7 nov".
+export function dayShort(date, locale = 'en-US') {
+  if (!date) return '';
+  const [y, m, d] = String(date).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace('.', '');
 }
 // 'YYYY-MM' → "November 2026".
 export function monthLong(month, locale = 'en-US') {

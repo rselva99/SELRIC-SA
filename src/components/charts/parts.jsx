@@ -1,5 +1,5 @@
 import { CartesianGrid, XAxis, YAxis } from 'recharts';
-import { monthShort } from './theme';
+import { dayShort, monthShort } from './theme';
 
 // Axes and grid for the shared charts. They are functions that return
 // recharts elements and are called as {monthAxis(th, locale)} — never rendered
@@ -13,6 +13,10 @@ export const gridX = (th) => <CartesianGrid horizontal={false} stroke={th.grid} 
 
 export const monthAxis = (th, locale, p = {}) => (
   <XAxis dataKey="month" tickFormatter={(v) => monthShort(v, locale)} tick={tick(th)} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={24} {...p} />
+);
+// Days or weeks: dataKey 'date' ('YYYY-MM-DD'), ticks as "Nov 7".
+export const dayAxis = (th, locale, p = {}) => (
+  <XAxis dataKey="date" tickFormatter={(v) => dayShort(v, locale)} tick={tick(th)} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={24} {...p} />
 );
 export const numAxis = (th, format, p = {}) => (
   <YAxis tickFormatter={(v) => format(v)} tick={tick(th)} tickLine={false} axisLine={false} width={52} {...p} />

@@ -33,6 +33,13 @@ the corral. Pages live under `/ganaderia/*`, wrapped by `GanaderiaRoot` → `Her
 - The program is registered in `src/programs/index.js` (`key`, `status`, `built`, `home`, `accent`);
   a workspace runs it when `org_programs` has the row.
 
+## Informes
+- `HerdCharts.jsx`: calvings by month (recorded and expected), milk per cow by week, the herd by lot —
+  the shared charts (`src/components/charts/`) in the `finca` theme; series come from `lib.js` helpers that take `today`.
+- Informes also lists the pregnancies by due month and runs the four herd checks (`src/lib/checks/ganaderia/`)
+  on the loaded herd; nothing is saved from the page. `npm run checks -- --program ganaderia` runs the same checks.
+- A kind of animal is one hue everywhere (`GROUP_COLOR`); label a category with `catLabel`, never `t('lv.category.' + c)`.
+
 ## Not built (do not imply it is)
-Offline mode, native app, milk / feed / genetics modules, reports, health calendar, pedigree tree,
+Offline mode, native app, milk / feed / genetics modules, health calendar, pedigree tree,
 RFID or scale hardware. The competition analysis ranks an offline PWA for Events and Animals first.

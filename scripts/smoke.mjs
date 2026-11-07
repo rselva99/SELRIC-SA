@@ -6,7 +6,7 @@
 // Two test accounts, from .env (never printed):
 //   SMOKE_CEO_EMAIL / SMOKE_CEO_PASSWORD   a platform admin → the /ceo tabs and the Documents sub-tabs
 //   SMOKE_GAN_EMAIL / SMOKE_GAN_PASSWORD   a Ganadería test workspace → the herd pages
-// and four mocked Business workspaces, served from tests/fixtures (no account,
+// and five mocked workspaces, served from tests/fixtures (no account,
 // no request reaches the real database — every Supabase call is answered by
 // tests/fixtures/mock-supabase.js inside the browser context):
 //   BIZ    the synthetic restaurant, full package, twelve months of books, one
@@ -14,6 +14,8 @@
 //   BIZS   the same restaurant in Simple mode — every Simple route
 //   BIZ0   a brand-new Business workspace with nothing in it
 //   BIZU   a Simple workspace whose portal is not set up yet — /setup
+//   HERD   the synthetic finca, a year of herd records and one planted problem
+//          per herd check — Inicio and Informes with every chart drawn
 // plus the public pages, signed out. `--only <text>` runs the views whose
 // label contains the text (for a quick look; the full run is the gate).
 // Every view is opened at 1366 and 390 px
@@ -26,6 +28,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { makeBusiness } from '../tests/fixtures/synthetic-business.js';
+import { makeHerd } from '../tests/fixtures/synthetic-herd.js';
 import { mockSupabase, fakeSession } from '../tests/fixtures/mock-supabase.js';
 import { runChecks } from '../src/lib/checks/index.js';
 
@@ -44,6 +47,7 @@ const SUPA = (process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || '').repl
 // is computed here, the way "Run checks now" would, and served as stored rows.
 const TODAY = new Date().toISOString().slice(0, 10);
 function mockedWorkspace(who) {
+  if (who === 'HERD') return makeHerd({ today: TODAY, issues: true });
   if (who === 'BIZ') {
     const b = makeBusiness({ today: TODAY, issues: true });
     const runAt = `${TODAY}T06:00:00.000Z`;
@@ -65,7 +69,7 @@ function mockedWorkspace(who) {
   if (who === 'BIZU') tables.organizations = tables.organizations.map((o) => ({ ...o, config: {} }));
   return { ...b, tables };
 }
-const MOCKED = new Set(['BIZ', 'BIZS', 'BIZ0', 'BIZU']);
+const MOCKED = new Set(['BIZ', 'BIZS', 'BIZ0', 'BIZU', 'HERD']);
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, PATCH, PUT, DELETE, HEAD, OPTIONS', 'access-control-expose-headers': 'content-range, content-profile' };
 
 // A browser context whose Supabase is the mock: the session sits in
@@ -111,6 +115,10 @@ const VIEWS = [
   ['GAN', '/ganaderia/eventos', '/ganaderia/eventos'],
   ['GAN', '/ganaderia/lotes', '/ganaderia/lotes'],
   ['GAN', '/ganaderia/informes', '/ganaderia/informes'],
+  // The synthetic finca: the herd charts with data in them.
+  ['HERD', '/ganaderia', 'herd /ganaderia'],
+  ['HERD', '/ganaderia/informes', 'herd /ganaderia/informes'],
+  ['HERD', '/ganaderia/lotes', 'herd /ganaderia/lotes'],
   // Business, full package: every route.
   ['BIZ', '/dashboard', 'biz /dashboard'],
   ['BIZ', '/bookkeeping', 'biz /bookkeeping'],
@@ -191,7 +199,10 @@ const measure = () => {
   const main = document.querySelector('main');
   const overflow = de.scrollWidth > window.innerWidth + 1 || (main && main.scrollWidth > main.clientWidth + 1);
   const nav = document.querySelector('[data-testid="biz-bottom-nav"]');
-  return { charts: charts.length, empty, overflow, title: document.title, bottomNav: !!nav && nav.getBoundingClientRect().height > 0 };
+  // A string the translations do not have shows up as its key (lv.shift.PM).
+  const groups = 'common|nav|site|programs|pending|landing|pricing|waitlist|auth|dash|settings|tx|sales|crm|rep|cats|inv|lv|portal|ceoComp|charts|checks';
+  const rawKeys = [...new Set(document.body.innerText.match(new RegExp(`\\b(?:${groups})\\.[A-Za-z_]+(?:\\.[A-Za-z_]+)*`, 'g')) || [])];
+  return { charts: charts.length, empty, overflow, rawKeys, title: document.title, bottomNav: !!nav && nav.getBoundingClientRect().height > 0 };
 };
 
 // The first load stays under budget: the chunk index.html loads (every page
@@ -258,10 +269,11 @@ async function run() {
           const landed = new URL(S.page.url()).pathname;
           if (landed !== target) { r.ok = false; r.problems.push(`landed on ${landed}`); }
           // Inside the Business shell on a phone, the bottom nav is the way around.
-          if (mocked && w < 768 && target !== '/setup' && !m.bottomNav) { r.ok = false; r.problems.push('no bottom nav on the phone'); }
+          if (mocked && who !== 'HERD' && w < 768 && target !== '/setup' && !m.bottomNav) { r.ok = false; r.problems.push('no bottom nav on the phone'); }
           if (S.log.length) { r.ok = false; r.problems.push(...S.log.slice(0, 3)); }
           if (m.empty) { r.ok = false; r.problems.push(`${m.empty} of ${m.charts} charts without marks`); }
           if (m.overflow) { r.ok = false; r.problems.push('horizontal overflow'); }
+          if (m.rawKeys.length) { r.ok = false; r.problems.push(`untranslated: ${m.rawKeys.slice(0, 3).join(', ')}`); }
           if (S.writes && S.writes.length > writesBefore) { r.ok = false; r.problems.push(`${S.writes.length - writesBefore} write(s) on open: ${S.writes.slice(writesBefore, writesBefore + 2).map((x) => `${x.method} ${x.table}`).join(', ')}`); }
           const file = `${OUT}/${w}-${label.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}.png`;
           await S.page.screenshot({ path: file });

@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { useHerd } from './HerdContext';
 import {
   ChapaTag, StatusBadge, PregnancyBar, Chip, ChipRow, PageTitle, Card, Loading, LoadFailed, fmtDate,
-  btnPaper, fieldCls,
+  btnPaper, fieldCls, catLabel,
 } from './components';
 import { isActive, overdueForPalpation, matchAnimals, byTag, todayISO, ageParts } from './lib';
 import AnimalForm from './AnimalForm';
@@ -158,7 +158,7 @@ export default function AnimalsPage() {
                           <span className="flex-1 min-w-0">
                             <span className="block text-[16px] font-semibold text-finca-ink truncate">{a.name}</span>
                             <span className="block text-[13px] text-finca-ink2 truncate">
-                              {[t(`lv.category.${a.category}`), ageOf(a), searching ? a.lot : null, ev ? `${t(`lv.types.${ev.type}`)} ${fmtDate(ev.date, locale, { day: 'numeric', month: 'short' })}` : null].filter(Boolean).join(' · ')}
+                              {[catLabel(t, a.category), ageOf(a), searching ? a.lot : null, ev ? `${t(`lv.types.${ev.type}`)} ${fmtDate(ev.date, locale, { day: 'numeric', month: 'short' })}` : null].filter(Boolean).join(' · ')}
                             </span>
                           </span>
                           {a.pregnant === true && isActive(a) ? <PregnancyBar animal={a} today={today} className="w-[7.5rem] shrink-0" />
@@ -206,7 +206,7 @@ export default function AnimalsPage() {
                           <Link to={`/ganaderia/animales/${a.slug}`} className="font-semibold text-finca-ink hover:underline">{a.name}</Link>
                           {!isActive(a) && <StatusBadge status={a.status} className="ml-2" />}
                         </td>
-                        <td className="px-3 py-2.5 text-finca-ink2">{t(`lv.category.${a.category}`)}{ageOf(a) ? ` · ${ageOf(a)}` : ''}</td>
+                        <td className="px-3 py-2.5 text-finca-ink2">{catLabel(t, a.category)}{ageOf(a) ? ` · ${ageOf(a)}` : ''}</td>
                         <td className="px-3 py-2.5">
                           {a.pregnant === true && isActive(a) ? <PregnancyBar animal={a} today={today} className="w-44" />
                             : a.sex === 'H' && a.pregnant === false ? <span className="text-finca-ink2">{t('lv.notPregnant')}</span>

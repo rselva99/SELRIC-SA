@@ -25,12 +25,15 @@ function clientFor(options) {
   return { client, handle };
 }
 
+// A Business workspace's run, as the Checks page makes it.
+const BIZ = { today: TODAY, program: 'business' };
+
 describe('checks store — before the migration', () => {
   const b = makeBusiness({ today: TODAY });
   const { client, handle } = clientFor({ tables: b.tables, missing: ['integrity_results', 'integrity_checks'] });
 
   it('saving reports the missing table instead of throwing', async () => {
-    const results = runChecks(b.data, { today: TODAY });
+    const results = runChecks(b.data, BIZ);
     const out = await saveResults(client, { orgId: b.org.id, results, runAt: `${TODAY}T06:00:00.000Z` });
     expect(out).toEqual({ saved: 0, missing: true });
     // The database refused the insert, so nothing was written.
@@ -51,9 +54,9 @@ describe('checks store — before the migration', () => {
 
 describe('checks store — with the tables', () => {
   const b = makeBusiness({ today: TODAY, issues: true });
-  const older = runChecks(makeBusiness({ today: TODAY }).data, { today: TODAY })
+  const older = runChecks(makeBusiness({ today: TODAY }).data, BIZ)
     .map((r) => ({ org_id: b.org.id, check_key: r.key, period: 'all', status: r.status, amount: r.amount, count: r.count, detail: r.detail, run_at: '2026-11-01T06:00:00.000Z' }));
-  const newer = runChecks(b.data, { today: TODAY })
+  const newer = runChecks(b.data, BIZ)
     .map((r) => ({ org_id: b.org.id, check_key: r.key, period: 'all', status: r.status, amount: r.amount, count: r.count, detail: r.detail, run_at: `${TODAY}T06:00:00.000Z` }));
   const other = newer.map((r) => ({ ...r, org_id: 'fe11c0de-0000-4000-8000-0000000000ff', status: 'green', run_at: '2026-11-08T06:00:00.000Z' }));
   const { client, handle } = clientFor({ tables: { ...b.tables, integrity_results: [...older, ...newer, ...other], integrity_checks: [] } });
@@ -67,7 +70,7 @@ describe('checks store — with the tables', () => {
   });
 
   it('saves one row per check, all with the same run time and org', async () => {
-    const results = runChecks(b.data, { today: TODAY });
+    const results = runChecks(b.data, BIZ);
     const out = await saveResults(client, { orgId: b.org.id, results, runAt: `${TODAY}T07:00:00.000Z` });
     expect(out).toMatchObject({ saved: 15, missing: false });
     expect(handle.writes.at(-1)).toMatchObject({ method: 'POST', table: 'integrity_results' });
@@ -77,8 +80,8 @@ describe('checks store — with the tables', () => {
     const data = await fetchBusinessData(client, b.org.id);
     expect(data.transactions).toHaveLength(b.data.transactions.length);
     expect(data.lines).toHaveLength(b.data.lines.length);
-    const viaMock = runChecks(data, { today: TODAY }).map((r) => [r.key, r.status, r.count]);
-    const direct = runChecks(b.data, { today: TODAY }).map((r) => [r.key, r.status, r.count]);
+    const viaMock = runChecks(data, BIZ).map((r) => [r.key, r.status, r.count]);
+    const direct = runChecks(b.data, BIZ).map((r) => [r.key, r.status, r.count]);
     expect(viaMock).toEqual(direct);
   });
 });
