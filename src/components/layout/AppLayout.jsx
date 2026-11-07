@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
@@ -30,7 +30,9 @@ import {
 import { cn } from '../../lib/utils';
 import { PROGRAMS, DEFAULT_PROGRAM, accentOf } from '../../programs';
 import { MODULES } from '../../lib/workspaceConfig';
-import GanaderiaShell from '../../programs/ganaderia/GanaderiaShell';
+import Spinner from '../ui/Spinner';
+// The herd shell is fetched only by a Ganadería workspace.
+const GanaderiaShell = lazy(() => import('../../programs/ganaderia/GanaderiaShell'));
 import BusinessBottomNav from './BusinessBottomNav';
 
 // Sidebar, grouped by what an owner is doing. Labels are translation keys.
@@ -262,7 +264,9 @@ export default function AppLayout() {
 
         <main className="flex-1 overflow-y-auto pb-nav-flat">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-            <Outlet />
+            <Suspense fallback={<div className="py-24 flex justify-center"><Spinner size="lg" /></div>}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>

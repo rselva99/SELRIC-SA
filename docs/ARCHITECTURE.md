@@ -78,6 +78,13 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 
 ## 4. Routes and shells (`src/main.jsx`)
 
+Every layout and page is `React.lazy` in `main.jsx` (one chunk each, behind one `Suspense`; each shell wraps its
+`<Outlet />` in its own, so the sidebar stays while a page loads). The first load is React, the router, Supabase,
+the providers, the translations and the gates — the entry chunk stays under **600 kB**, which the smoke enforces.
+Modules the first load needs stay free of heavy imports: `lib/cn.js`, `lib/supplierMatch.js` and `lib/reportName.js`
+were split out of `utils.js` (date-fns) and `reports.js` (jsPDF) for that; the Claude client and the dashboard
+charts are fetched on use; `programs/ganaderia/HerdRoot.jsx` holds the herd providers.
+
 | Path | Gate | Page |
 |---|---|---|
 | `/` | `RootGate` — always the public landing for `/` itself | `pages/public/LandingPage` |

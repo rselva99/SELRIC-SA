@@ -23,7 +23,7 @@
 // most. Exit 1 on any failure, including missing credentials — a skipped
 // account is a failed check.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { makeBusiness } from '../tests/fixtures/synthetic-business.js';
 import { mockSupabase, fakeSession } from '../tests/fixtures/mock-supabase.js';
@@ -194,12 +194,24 @@ const measure = () => {
   return { charts: charts.length, empty, overflow, title: document.title, bottomNav: !!nav && nav.getBoundingClientRect().height > 0 };
 };
 
+// The first load stays under budget: the chunk index.html loads (every page
+// is a lazy chunk of its own). Only for a local build, not with --url.
+const ENTRY_BUDGET = 600 * 1000;
+function entryBudget() {
+  const html = readFileSync(`${ROOT}dist/index.html`, 'utf8');
+  const entry = /src="\/assets\/([^"]+\.js)"/.exec(html)?.[1];
+  const size = entry ? statSync(`${ROOT}dist/assets/${entry}`).size : 0;
+  const r = { label: `entry chunk ${(size / 1000).toFixed(0)} kB`, width: 'build', ok: !!entry && size < ENTRY_BUDGET, problems: [], charts: 0 };
+  if (!r.ok) r.problems.push(entry ? `over the ${ENTRY_BUDGET / 1000} kB budget` : 'no entry script in dist/index.html');
+  return r;
+}
+
 async function run() {
   mkdirSync(OUT, { recursive: true });
   const server = await serve();
   // Playwright's own Chromium does not run on macOS 13; drive the installed Chrome.
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
-  const results = [];
+  const results = arg('--url') ? [] : [entryBudget()];
   try {
     for (const [w, h] of WIDTHS) {
       const contexts = {};

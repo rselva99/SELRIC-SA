@@ -109,7 +109,9 @@ A manual Browser-pane walk only when the owner asks; the owner signs in there, n
 - Match the surrounding file: comment density, naming, idioms. Comments say *why*, in full sentences.
 - Plain language in the UI and in reports; no jargon the owner did not use.
 - Prefer one shared helper over a second copy (`docParts.jsx`, `charts.jsx`, `ceoDocs.js`).
-- Keep the public bundle lean: heavy libraries behind `import()` on the routes that need them.
+- Keep the public bundle lean: heavy libraries behind `import()` on the routes that need them. Every page is
+  `React.lazy` in `main.jsx`; the entry chunk must stay under 600 kB (the smoke fails it). Never import a page,
+  a chart or a heavy library from a context, a gate or `utils.js`-style helpers the first load shares.
 
 ## When compacting, keep
 

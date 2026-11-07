@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Home, Tag, ClipboardList, Layers, FileBarChart, Users, Settings, Gauge, LogOut, Plus } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { LANGS } from '../../i18n/translations';
 import { cn } from '../../lib/utils';
+import Spinner from '../../components/ui/Spinner';
 import { HerdProvider } from './HerdContext';
 import { RegistrarProvider, useRegistrar } from './RegistrarSheet';
 import { ActionSheet } from './Sheet';
@@ -120,7 +121,9 @@ function ShellFrame() {
 
       <main className="flex-1 min-w-0 overflow-y-auto pb-nav">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 pt-4 md:pt-8">
-          <Outlet />
+          <Suspense fallback={<div className="py-24 flex justify-center"><Spinner size="lg" /></div>}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 

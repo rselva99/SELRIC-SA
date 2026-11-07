@@ -1,55 +1,60 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import { I18nProvider } from './i18n/I18nContext';
-import AppLayout from './components/layout/AppLayout';
-import LandingPage from './pages/public/LandingPage';
-import ProgramPage from './pages/public/ProgramPage';
-import ProgramPendingPage from './pages/public/ProgramPendingPage';
 import { getProgram } from './programs';
-import LoginPage from './pages/auth/LoginPage';
-import SignupPage from './pages/auth/SignupPage';
-import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
-import ResetPasswordPage from './pages/auth/ResetPasswordPage';
-import DashboardPage from './pages/dashboard/DashboardPage';
-import BookkeepingPage from './pages/bookkeeping/BookkeepingPage';
-import ReconciliationPage from './pages/bookkeeping/ReconciliationPage';
-import AccountsPage from './pages/accounts/AccountsPage';
-import ReportsPage from './pages/reports/ReportsPage';
-import SimpleReportsPage from './pages/reports/SimpleReportsPage';
-import FY2024CorrectedClosePage from './pages/reports/FY2024CorrectedClosePage';
-import InventoryPage from './pages/inventory/InventoryPage';
-import ManageUsersPage from './pages/admin/ManageUsersPage';
-import LedgerPage from './pages/ledger/LedgerPage';
-import JournalPage from './pages/journal/JournalPage';
-import TasksPage from './pages/tasks/TasksPage';
-import DailySalesPage from './pages/sales/DailySalesPage';
-import SalesPage from './pages/sales/SalesPage';
-import CustomersPage from './pages/customers/CustomersPage';
-import AccountantPage from './pages/accountant/AccountantPage';
-import StatementReviewMatch from './pages/accountant/StatementReviewMatch';
-import BookBalanceSheetPage from './pages/accountant/BookBalanceSheetPage';
-import AssetsPage from './pages/assets/AssetsPage';
-import CashManagementPage from './pages/cash-management/CashManagementPage';
-import PayrollPage from './pages/payroll/PayrollPage';
-import TransactionsPage from './pages/transactions/TransactionsPage';
-import SettingsPage from './pages/settings/SettingsPage';
-import ChecksPage from './pages/checks/ChecksPage';
-import CeoPage from './pages/ceo/CeoPage';
-import CeoLayout from './components/layout/CeoLayout';
-import SetupPage from './pages/setup/SetupPage';
 import PinGate from './components/PinGate';
-import { HerdProvider } from './programs/ganaderia/HerdContext';
-import GanaderiaHomePage from './programs/ganaderia/HomePage';
-import AnimalsPage from './programs/ganaderia/AnimalsPage';
-import AnimalPage from './programs/ganaderia/AnimalPage';
-import EventsPage from './programs/ganaderia/EventsPage';
-import LotsPage from './programs/ganaderia/LotsPage';
-import InformesPage from './programs/ganaderia/InformesPage';
-import { RegistrarProvider } from './programs/ganaderia/RegistrarSheet';
+import Spinner from './components/ui/Spinner';
+
+// Every layout and page is its own chunk, fetched the first time it is
+// opened: the first load carries only React, the router, Supabase, the
+// providers and the gates below. The shells wrap their <Outlet /> in Suspense,
+// so moving between pages keeps the sidebar and shows a spinner in the page.
+const AppLayout = React.lazy(() => import('./components/layout/AppLayout'));
+const CeoLayout = React.lazy(() => import('./components/layout/CeoLayout'));
+const LandingPage = React.lazy(() => import('./pages/public/LandingPage'));
+const ProgramPage = React.lazy(() => import('./pages/public/ProgramPage'));
+const ProgramPendingPage = React.lazy(() => import('./pages/public/ProgramPendingPage'));
+const LoginPage = React.lazy(() => import('./pages/auth/LoginPage'));
+const SignupPage = React.lazy(() => import('./pages/auth/SignupPage'));
+const ForgotPasswordPage = React.lazy(() => import('./pages/auth/ForgotPasswordPage'));
+const ResetPasswordPage = React.lazy(() => import('./pages/auth/ResetPasswordPage'));
+const DashboardPage = React.lazy(() => import('./pages/dashboard/DashboardPage'));
+const BookkeepingPage = React.lazy(() => import('./pages/bookkeeping/BookkeepingPage'));
+const ReconciliationPage = React.lazy(() => import('./pages/bookkeeping/ReconciliationPage'));
+const AccountsPage = React.lazy(() => import('./pages/accounts/AccountsPage'));
+const ReportsPage = React.lazy(() => import('./pages/reports/ReportsPage'));
+const SimpleReportsPage = React.lazy(() => import('./pages/reports/SimpleReportsPage'));
+const FY2024CorrectedClosePage = React.lazy(() => import('./pages/reports/FY2024CorrectedClosePage'));
+const InventoryPage = React.lazy(() => import('./pages/inventory/InventoryPage'));
+const ManageUsersPage = React.lazy(() => import('./pages/admin/ManageUsersPage'));
+const LedgerPage = React.lazy(() => import('./pages/ledger/LedgerPage'));
+const JournalPage = React.lazy(() => import('./pages/journal/JournalPage'));
+const TasksPage = React.lazy(() => import('./pages/tasks/TasksPage'));
+const DailySalesPage = React.lazy(() => import('./pages/sales/DailySalesPage'));
+const SalesPage = React.lazy(() => import('./pages/sales/SalesPage'));
+const CustomersPage = React.lazy(() => import('./pages/customers/CustomersPage'));
+const AccountantPage = React.lazy(() => import('./pages/accountant/AccountantPage'));
+const StatementReviewMatch = React.lazy(() => import('./pages/accountant/StatementReviewMatch'));
+const BookBalanceSheetPage = React.lazy(() => import('./pages/accountant/BookBalanceSheetPage'));
+const AssetsPage = React.lazy(() => import('./pages/assets/AssetsPage'));
+const CashManagementPage = React.lazy(() => import('./pages/cash-management/CashManagementPage'));
+const PayrollPage = React.lazy(() => import('./pages/payroll/PayrollPage'));
+const TransactionsPage = React.lazy(() => import('./pages/transactions/TransactionsPage'));
+const SettingsPage = React.lazy(() => import('./pages/settings/SettingsPage'));
+const ChecksPage = React.lazy(() => import('./pages/checks/ChecksPage'));
+const CeoPage = React.lazy(() => import('./pages/ceo/CeoPage'));
+const SetupPage = React.lazy(() => import('./pages/setup/SetupPage'));
+const HerdRoot = React.lazy(() => import('./programs/ganaderia/HerdRoot'));
+const GanaderiaHomePage = React.lazy(() => import('./programs/ganaderia/HomePage'));
+const AnimalsPage = React.lazy(() => import('./programs/ganaderia/AnimalsPage'));
+const AnimalPage = React.lazy(() => import('./programs/ganaderia/AnimalPage'));
+const EventsPage = React.lazy(() => import('./programs/ganaderia/EventsPage'));
+const LotsPage = React.lazy(() => import('./programs/ganaderia/LotsPage'));
+const InformesPage = React.lazy(() => import('./programs/ganaderia/InformesPage'));
 import './index.css';
 
 // The Ganadería component kit, for the dev server only: the production build
@@ -118,14 +123,19 @@ function AppEntry() {
 }
 
 // /ganaderia/* — the Batavia Ganadería program. One herd context for all its
-// pages; a Business workspace that lands here is sent back to its dashboard.
-// The Ganadería shell mounts the same providers; these step aside when it has.
+// pages (HerdRoot); a Business workspace that lands here is sent back to its
+// dashboard.
 function GanaderiaRoot() {
   return (
     <ProtectedRoute program="ganaderia">
-      <HerdProvider><RegistrarProvider><Outlet /></RegistrarProvider></HerdProvider>
+      <HerdRoot />
     </ProtectedRoute>
   );
+}
+
+// What a page shows while its chunk arrives.
+function PageLoading() {
+  return <div className="min-h-screen flex items-center justify-center"><Spinner size="lg" /></div>;
 }
 
 // /setup is only for an admin whose Simple-mode workspace is not configured.
@@ -166,6 +176,7 @@ function App() {
       <AuthProvider>
         <I18nProvider>
         <DataProvider>
+          <Suspense fallback={<PageLoading />}>
           <Routes>
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
             <Route path="/signup" element={<PublicRoute><SignupPage /></PublicRoute>} />
@@ -222,6 +233,7 @@ function App() {
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
           <Toaster
             position="top-right"
             toastOptions={{

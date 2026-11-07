@@ -2,8 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, us
 import { supabase } from '../lib/supabase';
 import { fetchAll } from '../lib/fetchAll';
 import { useAuth } from './AuthContext';
-import { fuzzyMatchCategory } from '../lib/utils';
-import { batchCategorize } from '../lib/claude';
+import { fuzzyMatchCategory } from '../lib/supplierMatch';
 
 const DataContext = createContext({});
 
@@ -298,6 +297,8 @@ export function DataProvider({ children }) {
       .select('supplier, category');
     const mappings = scRows || [];
 
+    // The Claude client is fetched only when someone asks for categorizing.
+    const { batchCategorize } = await import('../lib/claude');
     const BATCH_SIZE = 50;
     let totalCategorized = 0;
     const newSuppliers = {};

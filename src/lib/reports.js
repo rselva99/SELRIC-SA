@@ -42,6 +42,7 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { format } from 'date-fns';
+import { reportBusinessName } from './reportName';
 import {
   aggregateForPnL, aggregateForBS, aggregateTrialBalance,
   trialBalanceTypeOrder, trialBalanceTypeLabel,
@@ -234,13 +235,9 @@ function normalizeBSData(input, periodArg) {
   };
 }
 
-// Business name drawn on every PDF header. AuthContext sets it once the
-// signed-in user's organization loads, so each workspace's reports carry its
-// own name. Falls back to the product name if nothing has been set.
-let reportBusinessName = 'SelRic';
-export function setReportBusinessName(name) {
-  reportBusinessName = String(name || '').trim() || 'SelRic';
-}
+// Business name drawn on every PDF header: held in reportName.js (set by
+// AuthContext), re-exported here for the callers that set it through this file.
+export { setReportBusinessName } from './reportName';
 
 function addHeader(doc, title, period) {
   doc.setFillColor(...BRAND_GREEN);
@@ -251,7 +248,7 @@ function addHeader(doc, title, period) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text(safeText(reportBusinessName), PAGE_MARGIN, 22);
+  doc.text(safeText(reportBusinessName()), PAGE_MARGIN, 22);
 
   // Right side: title (top), period (middle), generated-at (bottom).
   doc.setFontSize(12);

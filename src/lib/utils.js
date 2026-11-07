@@ -1,8 +1,9 @@
 import { format, parseISO } from 'date-fns';
 
-export function cn(...classes) {
-  return classes.filter(Boolean).join(' ');
-}
+// cn and fuzzyMatchCategory live in their own modules (the first load needs
+// them without date-fns); re-exported here for every existing import.
+export { cn } from './cn';
+export { fuzzyMatchCategory } from './supplierMatch';
 
 export function formatDate(date, fmt = 'dd MMM yyyy') {
   if (!date) return '—';
@@ -70,41 +71,6 @@ export function getMonthLabel(dateStr) {
 
 export function generateId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-// Fuzzy-match a raw bank description against the supplier→category map.
-// Normalises both sides (lowercase, strip digits + punctuation) and checks
-// whether any known supplier name is a substring of the description.
-// Returns the best-matching category string, or '' if nothing matches.
-export function fuzzyMatchCategory(description, supplierMap) {
-  if (!description || !supplierMap || Object.keys(supplierMap).length === 0) return '';
-
-  const normalize = (s) =>
-    s.toLowerCase()
-      .replace(/\d+/g, '')
-      .replace(/[^a-z\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  const normDesc = normalize(description);
-
-  // Exact lowercase match wins immediately
-  if (supplierMap[description.toLowerCase()]) return supplierMap[description.toLowerCase()];
-
-  // Partial: prefer the longest matching supplier name found inside the description
-  let bestCategory = '';
-  let bestLen = 0;
-
-  for (const [supplier, category] of Object.entries(supplierMap)) {
-    const normSupplier = normalize(supplier);
-    if (normSupplier.length < 3) continue;
-    if (normDesc.includes(normSupplier) && normSupplier.length > bestLen) {
-      bestCategory = category;
-      bestLen = normSupplier.length;
-    }
-  }
-
-  return bestCategory;
 }
 
 export const DEFAULT_CATEGORIES = [

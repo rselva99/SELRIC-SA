@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { setReportBusinessName } from '../lib/reports';
+import { setReportBusinessName } from '../lib/reportName';
 import { resolveConfig, serializeConfig } from '../lib/workspaceConfig';
 
 const AuthContext = createContext({});

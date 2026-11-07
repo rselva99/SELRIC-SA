@@ -7,7 +7,8 @@ import { fetchAll } from '../../lib/fetchAll';
 import { balanceSheet, cashBridge, lastMonths, pnlByMonth } from '../../lib/series';
 import { balanceSheetSheet, cashBridgeSheet, pnlByMonthSheet } from '../../lib/reportWorkbooks';
 import { downloadWorkbook } from '../../lib/workbook';
-import { money, monthLong, monthShort } from '../../components/charts';
+// theme.js, not the charts index: this page draws no chart, so recharts stays out of its chunk.
+import { money, monthLong, monthShort } from '../../components/charts/theme';
 import { useT } from '../../i18n/I18nContext';
 import Spinner from '../../components/ui/Spinner';
 

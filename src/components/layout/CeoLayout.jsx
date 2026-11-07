@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Activity, BookOpen, FileText, Filter, Flag, Gauge, LogOut, Menu, SlidersHorizontal, Swords, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT, LangToggle } from '../../i18n/I18nContext';
 import { cn } from '../../lib/utils';
+import Spinner from '../ui/Spinner';
 
 // The shell for SelRic itself — the company, not a customer. A platform admin
 // whose organization is internal lands here instead of in a workspace, and
@@ -102,7 +103,9 @@ export default function CeoLayout() {
         </header>
         <main className="flex-1 overflow-y-auto">
           <div className="px-4 sm:px-6 lg:px-10 py-5 lg:py-6">
-            <Outlet />
+            <Suspense fallback={<div className="py-24 flex justify-center"><Spinner size="lg" /></div>}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>

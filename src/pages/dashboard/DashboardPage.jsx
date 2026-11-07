@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { Suspense, lazy, useMemo, useState, useEffect } from 'react';
 import { subMonths, startOfMonth, format, addDays } from 'date-fns';
 import { supabase } from '../../lib/supabase';
 import { fetchAll } from '../../lib/fetchAll';
@@ -25,7 +25,9 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import DashboardCharts from './DashboardCharts';
+import Spinner from '../../components/ui/Spinner';
+// The charts (and recharts with them) arrive after the numbers above them.
+const DashboardCharts = lazy(() => import('./DashboardCharts'));
 import { HealthTile } from '../checks/parts';
 import { BUSINESS_CHECKS, healthScore } from '../../lib/checks/index.js';
 import { loadLatest } from '../../lib/checks/store.js';
@@ -303,8 +305,10 @@ export default function DashboardPage() {
 
       {/* ── Twelve months in charts ─────────────────────────────────── */}
       {isAdmin && loaded && !isEmptyWorkspace && (
-        <DashboardCharts transactions={transactions} categories={categories} statements={statements} checks={paperChecks}
-          full={full} show={show} endMonth={format(new Date(), 'yyyy-MM')} />
+        <Suspense fallback={<div className="py-16 flex justify-center"><Spinner size="lg" /></div>}>
+          <DashboardCharts transactions={transactions} categories={categories} statements={statements} checks={paperChecks}
+            full={full} show={show} endMonth={format(new Date(), 'yyyy-MM')} />
+        </Suspense>
       )}
 
       {/* ── Recent transactions ─────────────────────────────────────── */}
