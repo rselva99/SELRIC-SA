@@ -98,6 +98,9 @@ const VIEWS = [
   ['GAN', '/ganaderia/informes', '/ganaderia/informes'],
   ['BIZ', '/dashboard', 'biz /dashboard'],
   ['BIZ', '/checks', 'biz /checks'],
+  ['BIZ', '/reports', 'biz /reports · P&L'],
+  ['BIZ', '/reports', 'biz /reports · balance sheet', 'Balance sheet'],
+  ['BIZ', '/reports', 'biz /reports · cash bridge', 'Cash bridge'],
   ['BIZ0', '/checks', 'biz new /checks'],
   ['BIZ0', '/dashboard', 'biz new /dashboard'],
 ];

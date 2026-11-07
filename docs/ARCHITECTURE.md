@@ -86,7 +86,7 @@ frozen editions of the plan, market analysis, competition and model, admin-only)
 | `/app` | `AppEntry` → the program's home, `/setup`, or `/ceo` | — |
 | `/setup` | Simple-mode admin with an unconfigured portal | `SetupPage` |
 | `/dashboard` | any member | `DashboardPage` — the month in three numbers; health, what needs you, products; twelve months in charts (`DashboardCharts`: profit and cash, sales by account, expense mix; full package adds the cash bridge, sales tax, card fees, checks by status); recent transactions |
-| `/transactions` `/sales` `/customers` `/tasks` `/reports` `/inventory` | `ProtectedRoute` (+ `module=` for Simple portals) | Business, both modes |
+| `/transactions` `/sales` `/customers` `/tasks` `/reports` `/inventory` | `ProtectedRoute` (+ `module=` for Simple portals) | Business, both modes. `/reports` in the full package is `ReportsPage`: summary, `MonthlyStatements` (P&L by month accrual/cash, balance sheet, cash bridge — each a table and an Excel download with formulas), the PDF reports, the auditor package, source documents |
 | `/accountant/*` `/bookkeeping/*` `/ledger` `/journal` `/accounts` `/cash-management` `/assets` `/payroll` | `adminOnly fullOnly` (+ `PinGate` on accountant) | Full package |
 | `/checks` | `adminOnly` | `pages/checks/ChecksPage` — the last run of the integrity checks, run now, drill-down |
 | `/users` `/settings` | `adminOnly program={null}` | shared by every program |
@@ -128,11 +128,15 @@ is three steps — what happened, which animal(s), the details — and saves thr
 | `src/pages/ceo/exportDocx.js` | document sections + `R` → Word (`docx`), lazy-loaded | Documents, Competition, `build_docx.mjs` |
 | `src/pages/ceo/exportXlsx.js` | `R` → the workbook (`exceljs`), lazy-loaded | Financial Model, `build_xlsx.mjs` |
 | `src/pages/ceo/charts.jsx` | palette `C`, `ChartCard` (chart + table twin), axis/grid helpers (called, not rendered), `Tip`, `useNarrow` | every CEO chart |
-| `src/pages/ceo/docParts.jsx` | `Blocks`, `Section` (edit in place), `Versions`, `DocTable`, `saveBlob` | Documents, Competition |
+| `src/pages/ceo/docParts.jsx` | `Blocks`, `Section` (edit in place), `Versions`, `DocTable`, `saveBlob` (re-exported from `lib/download.js`) | Documents, Competition |
+| `src/lib/workbook.js` | sheets as data (`sheet`, `formula`, `sumOf`) → `toWorkbook` / `downloadWorkbook` (`exceljs`, lazy) in the close-package layout: title row 1, frozen header band row 2, no merges, `$#,##0.00`, every total a formula | `reportWorkbooks.js`, `tests/workbook.test.js` |
+| `src/lib/reportWorkbooks.js` | `pnlByMonthSheet`, `balanceSheetSheet` (ends in a check row), `cashBridgeSheet` (ties to the printed ending balance); labels passed in | Reports → `MonthlyStatements` |
 
 Business helpers in `src/lib/`: `series.js` (month-by-month figures for charts and reports, on top of `finance.js`:
 `pnlByMonth` accrual or cash basis, `cashByMonth`, `revenueByCategory`, `expenseMix`, `salesTaxByMonth`, `merchantFeesByMonth`,
-`checkPool`, `cashBridge` + `waterfallBars`), `finance.js`, `reports.js`, `postJournalEntry.js`, `periodClose.js`,
+`checkPool`, `cashBridge` (+ `printedClosing`) + `waterfallBars`, `balanceSheet` at a date — adds the cash side of single-entry
+bank lines, shows profit as retained earnings and this year's net income, reports any `difference`), `download.js` (`saveBlob`),
+`finance.js`, `reports.js`, `postJournalEntry.js`, `periodClose.js`,
 `periodLock.js`, `bookBalanceSheet.js`, `depreciation.js`, `statement*.js`, `workspaceConfig.js`,
 `productImages.js` (downscale, HEIC reject, signed URLs), `fetchAll.js` (paged reads), `claude.js` (→ `api/claude`).
 

@@ -9,7 +9,7 @@
 // trigger books for a bank expense; they sit on 'Cash & Bank', which no P&L
 // line reads, and the cash figures below skip them so a bank line is counted
 // once.
-import { aggregateForPnL, creditOf, debitOf, debitMinusCredit, signedDelta } from './finance.js';
+import { aggregateForBS, aggregateForPnL, creditOf, debitOf, debitMinusCredit, signedDelta } from './finance.js';
 import { DEFAULT_NAMES, isBankRow, isMirror, monthOf, monthsBetween, round2 } from './checks/util.js';
 import { payableMonths } from './checks/business/payableKeptCurrent.js';
 
@@ -174,12 +174,60 @@ export function cashBridge(rows, categories, statements, months) {
     .filter((s) => s.period_start && s.period_start >= from && keep.has(monthOf(s.period_start)) && s.statement_totals && s.statement_totals.beginning_balance != null)
     .sort((a, b) => a.period_start.localeCompare(b.period_start))[0];
   const opening = first ? round2(Number(first.statement_totals.beginning_balance)) : null;
+  // The printed ending balance of the last statement that ends inside the
+  // window: what the bridge's closing balance should tie to.
+  const last = (statements || [])
+    .filter((s) => s.period_end && keep.has(monthOf(s.period_end)) && s.statement_totals && s.statement_totals.ending_balance != null)
+    .sort((a, b) => a.period_end.localeCompare(b.period_end)).at(-1);
   const net = round2(bank.reduce((s, t) => s + signedDelta(t), 0));
   const steps = [
     ...BRIDGE_IN.map((k) => ({ key: k, delta: round2(sums[k]) })),
     ...BRIDGE_OUT.map((k) => ({ key: k, delta: -round2(sums[k]) })),
   ].filter((s) => Math.abs(s.delta) > 0.005);
-  return { opening, steps, net, closing: opening == null ? null : round2(opening + net) };
+  return {
+    opening, steps, net,
+    closing: opening == null ? null : round2(opening + net),
+    printedClosing: last ? round2(Number(last.statement_totals.ending_balance)) : null,
+  };
+}
+
+// The balance sheet at the end of `asOf` ('YYYY-MM-DD'), through
+// aggregateForBS over every live row up to that day. The ledger needs two
+// things added before it balances:
+//   • A bank line booked to anything but an expense is single-entry: a
+//     deposit cleared from merchant clearing, a loan payment, sales tax sent
+//     to the state. Its other side is the bank account itself, so it is added
+//     here on the cash account. That includes a deposit booked to the cash
+//     account (cash sales taken to the bank): the line and its added side
+//     cancel, as moving money within one account should. Expense lines
+//     already carry their cash side (the CASH-LEG-… rows the trigger books),
+//     so they are left alone.
+//   • Profit is never posted to equity; it is shown as retained earnings
+//     (everything before the year of asOf) and net income for the year so far.
+// Equity accounts are listed by name, credit-positive. `difference` is assets
+// less liabilities less equity: zero when the books balance (the
+// debits-equal-credits and cash-leg checks explain it when they do not).
+export function balanceSheet(rows, categories, asOf, { cash = DEFAULT_NAMES.cash } = {}) {
+  const types = typeOf(categories);
+  const cashName = (categories || []).find((c) => cash.test(c.name))?.name || 'Cash & Bank';
+  const upTo = live(rows).filter((t) => String(t.date).slice(0, 10) <= asOf);
+  const implied = upTo
+    .filter((t) => isBankRow(t) && t.category && types.has(t.category) && types.get(t.category) !== 'expense')
+    .map((t) => ({ ...t, id: `implied-${t.id}`, category: cashName, type: t.type === 'debit' ? 'credit' : 'debit', bank_statement_id: null }));
+  const all = [...upTo, ...implied];
+  const bs = aggregateForBS(all, categories);
+  const yearStart = `${asOf.slice(0, 4)}-01-01`;
+  const netOf = (list) => { const p = aggregateForPnL(list, categories); return round2(p.totalRevenue - p.totalExpenses); };
+  const assets = bs.assets.map((x) => ({ account: x.account, amount: round2(x.amount) }));
+  const liabilities = bs.liabilities.map((x) => ({ account: x.account, amount: round2(-x.amount) }));
+  const equity = [
+    ...bs.equity.map((x) => ({ account: x.account, amount: round2(-x.amount) })),
+    { key: 'retained', amount: netOf(all.filter((t) => t.date < yearStart)) },
+    { key: 'netIncome', amount: netOf(all.filter((t) => t.date >= yearStart)) },
+  ];
+  const total = (xs) => round2(xs.reduce((s, x) => s + x.amount, 0));
+  const totalAssets = total(assets), totalLiabilities = total(liabilities), totalEquity = total(equity);
+  return { asOf, assets, liabilities, equity, totalAssets, totalLiabilities, totalEquity, difference: round2(totalAssets - totalLiabilities - totalEquity), impliedCash: implied.length };
 }
 
 // The bridge as bars for a waterfall: each bar spans [low, high]; totals

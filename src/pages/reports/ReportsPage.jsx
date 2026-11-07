@@ -8,6 +8,7 @@ import { formatCurrency, formatDate, formatStatementPeriod } from '../../lib/uti
 import { fetchAllStatementsWithTotals } from '../../lib/statementTotals';
 import { FileText } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
+import MonthlyStatements from './MonthlyStatements';
 import toast from 'react-hot-toast';
 import {
   Download, Eye, BarChart3, Scale, TrendingUp, Calendar, FileCheck2,
@@ -370,6 +371,9 @@ export default function ReportsPage() {
           <p className="text-xl font-display text-surface-800 mt-1">{summary.txnCount}</p>
         </div>
       </div>
+
+      {/* Statements by month, each with its Excel workbook */}
+      <MonthlyStatements categories={categories} year={selectedYear} month={selectedMonth} isFullYear={isFullYear} />
 
       {/* Report Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
